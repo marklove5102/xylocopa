@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES
+from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES, SKIP_PLAN_FOR_P2
 from database import SessionLocal
-from models import Project, Task, TaskStatus
+from models import Priority, Project, Task, TaskStatus
+from plan_manager import PlanManager
 from worker_manager import WorkerManager
 
 logger = logging.getLogger("orchestrator.dispatcher")
@@ -23,6 +24,7 @@ class TaskDispatcher:
 
     def __init__(self, worker_manager: WorkerManager):
         self.worker_mgr = worker_manager
+        self.plan_mgr = PlanManager(worker_manager)
         self.running = False
 
     async def run(self):
@@ -52,8 +54,9 @@ class TaskDispatcher:
 
     def _tick(self, db: Session):
         """Single iteration of the dispatch loop."""
-        # 1. Harvest completed workers
+        # 1. Harvest completed workers (both execution and planning)
         self._harvest_completed(db)
+        self._harvest_planners(db)
 
         # 2. Timeout detection
         self._check_timeouts(db)
@@ -61,7 +64,8 @@ class TaskDispatcher:
         # 3. Auto-retry failed tasks
         self._auto_retry(db)
 
-        # 4. Assign new tasks to workers
+        # 4. Start planning for new tasks, then assign approved tasks
+        self._start_planning(db)
         self._assign_tasks(db)
 
         db.commit()
@@ -110,7 +114,7 @@ class TaskDispatcher:
         """Kill workers that have exceeded their timeout."""
         executing = (
             db.query(Task)
-            .filter(Task.status == TaskStatus.EXECUTING)
+            .filter(Task.status.in_([TaskStatus.EXECUTING, TaskStatus.PLANNING]))
             .filter(Task.started_at.is_not(None))
             .all()
         )
@@ -161,25 +165,23 @@ class TaskDispatcher:
     # ---- Step 4: Assign ----
 
     def _assign_tasks(self, db: Session):
-        """Assign pending tasks to worker containers, respecting limits."""
-        # Count currently executing tasks globally and per project
-        executing = (
-            db.query(Task)
-            .filter(Task.status == TaskStatus.EXECUTING)
-            .all()
-        )
-        total_active = len(executing)
+        """Assign plan-approved pending tasks to worker containers."""
+        # Count currently active containers (executing + planning)
+        active_statuses = [TaskStatus.EXECUTING, TaskStatus.PLANNING]
+        active_tasks = db.query(Task).filter(Task.status.in_(active_statuses)).all()
+        total_active = len(active_tasks)
         project_counts: dict[str, int] = {}
-        for t in executing:
+        for t in active_tasks:
             project_counts[t.project] = project_counts.get(t.project, 0) + 1
 
         if total_active >= MAX_CONCURRENT_WORKERS:
             return
 
-        # Get pending tasks ordered by priority then creation time
+        # Only assign tasks that have been plan-approved (or skipped planning)
         pending = (
             db.query(Task)
             .filter(Task.status == TaskStatus.PENDING)
+            .filter(Task.plan_approved == True)  # noqa: E712
             .order_by(Task.priority.asc(), Task.created_at.asc())
             .all()
         )
@@ -217,6 +219,92 @@ class TaskDispatcher:
                 task.error_message = "Failed to start worker container"
                 task.completed_at = _utcnow()
 
+    # ---- Planning ----
+
+    def _start_planning(self, db: Session):
+        """Start planning workers for new PENDING tasks that need plans."""
+        # Count active containers (executing + planning)
+        active_statuses = [TaskStatus.EXECUTING, TaskStatus.PLANNING]
+        total_active = db.query(Task).filter(Task.status.in_(active_statuses)).count()
+        if total_active >= MAX_CONCURRENT_WORKERS:
+            return
+
+        pending = (
+            db.query(Task)
+            .filter(Task.status == TaskStatus.PENDING)
+            .filter(Task.plan_approved == False)  # noqa: E712
+            .order_by(Task.priority.asc(), Task.created_at.asc())
+            .all()
+        )
+
+        for task in pending:
+            if total_active >= MAX_CONCURRENT_WORKERS:
+                break
+
+            # P2 tasks skip planning if configured
+            if SKIP_PLAN_FOR_P2 and task.priority == Priority.P2:
+                task.plan_approved = True
+                logger.info("Task %s (P2) skipping plan — auto-approved", task.id)
+                continue
+
+            project = db.get(Project, task.project)
+            if not project:
+                task.status = TaskStatus.FAILED
+                task.error_message = f"Project '{task.project}' not found"
+                continue
+
+            try:
+                container_id = self.plan_mgr.start_planning(task, project)
+                task.container_id = container_id
+                task.status = TaskStatus.PLANNING
+                task.started_at = _utcnow()
+                total_active += 1
+                logger.info("Started planning for task %s", task.id)
+            except Exception:
+                logger.exception("Failed to start planner for task %s", task.id)
+                task.status = TaskStatus.FAILED
+                task.error_message = "Failed to start planning container"
+                task.completed_at = _utcnow()
+
+    def _harvest_planners(self, db: Session):
+        """Check planning tasks whose containers have exited."""
+        planning = (
+            db.query(Task)
+            .filter(Task.status == TaskStatus.PLANNING)
+            .filter(Task.container_id.is_not(None))
+            .all()
+        )
+        for task in planning:
+            status = self.worker_mgr.get_status(task.container_id)
+            if status not in ("exited", "removed"):
+                continue
+
+            logs = self.worker_mgr.get_logs(task.container_id)
+
+            if "EXIT_SUCCESS" in logs:
+                task.plan = PlanManager.extract_plan(logs)
+                task.status = TaskStatus.PLAN_REVIEW
+                task.container_id = None
+                logger.info("Task %s plan ready for review", task.id)
+            else:
+                task.plan = "(Planning failed — worker did not produce a plan)"
+                task.status = TaskStatus.PLAN_REVIEW
+                task.container_id = None
+                logger.warning("Task %s planning did not get EXIT_SUCCESS", task.id)
+
+            if status != "removed":
+                self.worker_mgr.stop_worker(task.container_id) if task.container_id else None
+                # Container ID was already cleared, use the old one from logs check
+            # Clean up using the container status we already checked
+            try:
+                containers = self.worker_mgr.docker_client.containers.list(
+                    all=True, filters={"name": f"cc-planner-{task.id}"}
+                )
+                for c in containers:
+                    c.remove(force=True)
+            except Exception:
+                pass
+
     # ---- Recovery ----
 
     def _recover_stale_tasks(self):
@@ -225,7 +313,7 @@ class TaskDispatcher:
         try:
             stale = (
                 db.query(Task)
-                .filter(Task.status == TaskStatus.EXECUTING)
+                .filter(Task.status.in_([TaskStatus.EXECUTING, TaskStatus.PLANNING]))
                 .all()
             )
             for task in stale:

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from config import PROJECT_CONFIGS_PATH
 from database import SessionLocal, get_db, init_db
 from models import Priority, Project, Task, TaskStatus
-from schemas import HealthResponse, ProjectOut, TaskBrief, TaskCreate, TaskOut
+from schemas import HealthResponse, PlanReject, ProjectOut, TaskBrief, TaskCreate, TaskOut
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,14 +71,17 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # Start dispatcher
+    # Start dispatcher and git manager
     try:
         from dispatcher import TaskDispatcher
+        from git_manager import GitManager
         from worker_manager import WorkerManager
         wm = WorkerManager()
         dispatcher = TaskDispatcher(wm)
+        gm = GitManager()
         app.state.dispatcher = dispatcher
         app.state.worker_manager = wm
+        app.state.git_manager = gm
         dispatch_task = asyncio.create_task(dispatcher.run())
         logger.info("Dispatcher started")
     except Exception:
@@ -208,8 +211,8 @@ async def cancel_task(task_id: str, request: Request, db: Session = Depends(get_
     if task.status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
         raise HTTPException(status_code=400, detail=f"Task is already {task.status.value}")
 
-    # Stop the worker container if task is currently executing
-    if task.status == TaskStatus.EXECUTING and task.container_id:
+    # Stop the worker container if task is currently executing or planning
+    if task.status in (TaskStatus.EXECUTING, TaskStatus.PLANNING) and task.container_id:
         try:
             wm = getattr(request.app.state, "worker_manager", None)
             if wm:
@@ -220,6 +223,45 @@ async def cancel_task(task_id: str, request: Request, db: Session = Depends(get_
     db.commit()
     db.refresh(task)
     logger.info("Task %s cancelled", task.id)
+    return task
+
+
+@app.put("/api/tasks/{task_id}/approve", response_model=TaskOut)
+async def approve_plan(task_id: str, db: Session = Depends(get_db)):
+    """Approve a task's plan — moves task back to PENDING for execution."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.PLAN_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Task is not in PLAN_REVIEW state (current: {task.status.value})")
+    task.plan_approved = True
+    task.status = TaskStatus.PENDING
+    task.container_id = None
+    task.started_at = None
+    db.commit()
+    db.refresh(task)
+    logger.info("Task %s plan approved — queued for execution", task.id)
+    return task
+
+
+@app.put("/api/tasks/{task_id}/reject", response_model=TaskOut)
+async def reject_plan(task_id: str, body: PlanReject, db: Session = Depends(get_db)):
+    """Reject a task's plan with revision notes — re-queues for re-planning."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.PLAN_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Task is not in PLAN_REVIEW state (current: {task.status.value})")
+    # Append revision notes to prompt so re-planning considers the feedback
+    task.prompt = f"{task.prompt}\n\n[Revision feedback]: {body.revision_notes}"
+    task.plan = None
+    task.plan_approved = False
+    task.status = TaskStatus.PENDING
+    task.container_id = None
+    task.started_at = None
+    db.commit()
+    db.refresh(task)
+    logger.info("Task %s plan rejected — re-queued for re-planning", task.id)
     return task
 
 
@@ -253,3 +295,44 @@ async def list_workers(request: Request):
     if not wm:
         return []
     return wm.list_workers()
+
+
+# ---- Git ----
+
+@app.get("/api/git/{project}/log")
+async def git_log(project: str, limit: int = 30, request: Request = None, db: Session = Depends(get_db)):
+    """Get recent git commits for a project."""
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    gm = getattr(request.app.state, "git_manager", None)
+    if not gm:
+        raise HTTPException(status_code=503, detail="Git manager not available")
+    return gm.get_log(project, limit=limit)
+
+
+@app.get("/api/git/{project}/branches")
+async def git_branches(project: str, request: Request, db: Session = Depends(get_db)):
+    """Get branches for a project."""
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    gm = getattr(request.app.state, "git_manager", None)
+    if not gm:
+        raise HTTPException(status_code=503, detail="Git manager not available")
+    return gm.get_branches(project)
+
+
+@app.post("/api/git/{project}/merge/{branch}")
+async def git_merge(project: str, branch: str, request: Request, db: Session = Depends(get_db)):
+    """Merge a branch into the current branch for a project."""
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    gm = getattr(request.app.state, "git_manager", None)
+    if not gm:
+        raise HTTPException(status_code=503, detail="Git manager not available")
+    result = gm.merge_branch(project, branch)
+    if not result.get("success"):
+        raise HTTPException(status_code=409, detail=result)
+    return result
