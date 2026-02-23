@@ -31,3 +31,11 @@ PROJECT_CONFIGS_PATH = os.getenv("PROJECT_CONFIGS_PATH", "/app/project-configs")
 # Worker image
 WORKER_IMAGE = os.getenv("WORKER_IMAGE", "cc-worker:latest")
 WORKER_NETWORK = os.getenv("WORKER_NETWORK", "cc-worker-net")
+
+# Claude OAuth — host paths (must be HOST paths, not container paths)
+# Directory: ~/.claude/ (contains .credentials.json, settings, etc.)
+HOST_CLAUDE_DIR = os.getenv("HOST_CLAUDE_DIR", "")
+# Config file: ~/.claude.json (main config file, separate from the directory)
+HOST_CLAUDE_JSON = os.getenv("HOST_CLAUDE_JSON", "")
+# UID of the host user who owns ~/.claude/ — worker runs as this UID to read OAuth tokens
+HOST_USER_UID = os.getenv("HOST_USER_UID", "1000")

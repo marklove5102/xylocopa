@@ -8,7 +8,15 @@ from typing import AsyncGenerator
 import docker
 import docker.errors
 
-from config import WORKER_CPU_LIMIT, WORKER_IMAGE, WORKER_MEM_LIMIT, WORKER_NETWORK
+from config import (
+    HOST_CLAUDE_DIR,
+    HOST_CLAUDE_JSON,
+    HOST_USER_UID,
+    WORKER_CPU_LIMIT,
+    WORKER_IMAGE,
+    WORKER_MEM_LIMIT,
+    WORKER_NETWORK,
+)
 from models import Project, Task
 
 logger = logging.getLogger("orchestrator.worker")
@@ -67,24 +75,58 @@ class WorkerManager:
         except docker.errors.NotFound:
             pass
 
+        volumes = {
+            "cc-projects": {"bind": "/projects", "mode": "rw"},
+            "cc-git-bare": {"bind": "/git-bare", "mode": "rw"},
+        }
+
+        # Mount host's ~/.claude/ and ~/.claude.json as read-only source for OAuth credentials.
+        # We mount them at /claude-config-ro/ and copy to writable HOME at container start,
+        # because claude CLI needs write access to .claude/ (debug logs, stats) and .claude.json.
+        if HOST_CLAUDE_DIR:
+            volumes[HOST_CLAUDE_DIR] = {
+                "bind": "/claude-config-ro/.claude",
+                "mode": "ro",
+            }
+        else:
+            logger.warning("HOST_CLAUDE_DIR not set — worker will have no OAuth credentials")
+
+        if HOST_CLAUDE_JSON:
+            volumes[HOST_CLAUDE_JSON] = {
+                "bind": "/claude-config-ro/.claude.json",
+                "mode": "ro",
+            }
+
+        # Build the startup command: copy OAuth config, set up git, then run claude
+        setup_cmds = (
+            # Copy claude config into writable HOME
+            "cp -a /claude-config-ro/.claude $HOME/.claude 2>/dev/null; "
+            "cp /claude-config-ro/.claude.json $HOME/.claude.json 2>/dev/null; "
+            # Git config (HOME is tmpfs, image's gitconfig is not available)
+            "git config --global user.name 'CC Worker' && "
+            "git config --global user.email 'cc-worker@localhost' && "
+            "git config --global init.defaultBranch main"
+        )
+
         container = self.docker_client.containers.run(
             image=WORKER_IMAGE,
             entrypoint=["bash", "-c"],
             command=[
+                f"{setup_cmds} && "
                 f"cd /projects/{project.name} && "
                 f"claude -p {escaped_prompt} "
                 f"--dangerously-skip-permissions "
                 f"--output-format stream-json --verbose"
             ],
-            volumes={
-                "cc-projects": {"bind": "/projects", "mode": "rw"},
-                "cc-git-bare": {"bind": "/git-bare", "mode": "rw"},
-                os.path.expanduser("~/.claude"): {
-                    "bind": "/home/ccworker/.claude",
-                    "mode": "ro",
-                },
-            },
+            volumes=volumes,
             working_dir=f"/projects/{project.name}",
+            # HOME=/worker-home so claude CLI finds .claude/ there;
+            # no ANTHROPIC_API_KEY — force OAuth from mounted config
+            environment={"HOME": "/worker-home"},
+            # Tmpfs for writable home (git config, claude writes to .claude/, etc.)
+            tmpfs={"/worker-home": f"uid={HOST_USER_UID},gid={HOST_USER_UID}"},
+            # Run as host user's UID so we can read the mounted .claude/ OAuth tokens
+            user=f"{HOST_USER_UID}:{HOST_USER_UID}",
             cpu_quota=int(WORKER_CPU_LIMIT * 100000),
             mem_limit=WORKER_MEM_LIMIT,
             network=WORKER_NETWORK,
