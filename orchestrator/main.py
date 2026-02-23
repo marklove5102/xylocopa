@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from config import PROJECT_CONFIGS_PATH
@@ -336,3 +337,25 @@ async def git_merge(project: str, branch: str, request: Request, db: Session = D
     if not result.get("success"):
         raise HTTPException(status_code=409, detail=result)
     return result
+
+
+# ---- Files ----
+
+@app.get("/api/files/{project}/{path:path}")
+async def serve_project_file(project: str, path: str, db: Session = Depends(get_db)):
+    """Serve a file from a project's directory (images, videos, etc.)."""
+    import mimetypes
+
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+
+    # Resolve and validate path to prevent directory traversal
+    full_path = os.path.normpath(os.path.join("/projects", project, path))
+    if not full_path.startswith(f"/projects/{project}/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    return FileResponse(full_path, media_type=media_type)
