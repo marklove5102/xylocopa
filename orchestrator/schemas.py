@@ -66,6 +66,13 @@ class ProjectOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Plan approval schemas ---
+
+class PlanReject(BaseModel):
+    """Body for rejecting a plan with revision notes."""
+    revision_notes: str = Field(..., min_length=1, description="Feedback for re-planning")
+
+
 # --- System schemas ---
 
 class HealthResponse(BaseModel):
