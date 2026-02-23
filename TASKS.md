@@ -660,7 +660,15 @@ PlanReview.jsx:
 - Two big buttons: ✅ Approve / ❌ Reject
 - Reject shows input for revision notes
 
-Done when: Can see all task statuses, can approve/reject plans
+The task result detail view should support rendering rich media:
+- Images (plots, loss curves, confusion matrices)
+- Tables (metrics comparison)
+- Video (simulation recordings, e.g. mp4)
+Use an expandable card per task that renders markdown with embedded media.
+Media files should be served from the cc-projects volume via a
+/api/files/{project}/{path} endpoint.
+
+Done when: Can see all task statuses, can approve/reject plans, can view rich media results
 ```
 
 ### Task 3.4: Worker Monitor + System Status
