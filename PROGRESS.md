@@ -89,3 +89,4 @@
 ### Lessons learned
 - Don't try to track directories that are in .gitignore, even with .gitkeep
 - Use `name:` on Docker networks that need to be referenced by containers created outside compose
+- Docker Compose only creates networks used by at least one service — unused network definitions are silently skipped. Orchestrator must be on cc-worker-net to talk to workers.
