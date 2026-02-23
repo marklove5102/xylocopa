@@ -53,3 +53,39 @@
 
 ### Lessons learned
 - entrypoint.sh needs to be COPY'd in Dockerfile with --chown for non-root user to execute it
+
+---
+
+## [2026-02-23] Task 0.3: Orchestrator Docker Image | Project: cc-orchestrator
+
+### What was done
+- Created orchestrator/Dockerfile (python:3.11-slim, git, curl, pip deps)
+- Created orchestrator/requirements.txt (fastapi, uvicorn, sqlalchemy, docker SDK, etc.)
+- Created orchestrator/main.py (minimal FastAPI app with /api/health endpoint, CORS, lifespan hooks)
+- Created orchestrator/.dockerignore
+
+### Problems encountered
+- None
+
+### Lessons learned
+- Keep main.py minimal for Phase 0 — just health endpoint. Phase 1 adds CRUD and dispatcher.
+
+---
+
+## [2026-02-23] Task 0.4: Docker Compose Orchestration | Project: cc-orchestrator
+
+### What was done
+- Created docker-compose.yml with orchestrator + frontend services
+- Defined cc-internal (service comms) and cc-worker-net (worker containers) networks
+- cc-worker-net uses `name:` key so dynamically created containers can reference it by name
+- 5 named volumes: cc-orch-db, cc-orch-backups, cc-projects, cc-git-bare, cc-logs
+- Frontend placeholder: nginx with reverse proxy for /api/* and /ws/* to orchestrator
+- Static landing page with dark theme and backend connectivity check
+- Added projects/registry.yaml and project CLAUDE.md template
+
+### Problems encountered
+- logs/.gitkeep rejected by git add because logs/ is in .gitignore — skipped it
+
+### Lessons learned
+- Don't try to track directories that are in .gitignore, even with .gitkeep
+- Use `name:` on Docker networks that need to be referenced by containers created outside compose
