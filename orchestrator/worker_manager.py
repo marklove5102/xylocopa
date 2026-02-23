@@ -69,10 +69,13 @@ class WorkerManager:
 
         container = self.docker_client.containers.run(
             image=WORKER_IMAGE,
-            command=["bash", "-c",
-                     f"claude -p {escaped_prompt} "
-                     f"--dangerously-skip-permissions "
-                     f"--output-format stream-json --verbose"],
+            entrypoint=["bash", "-c"],
+            command=[
+                f"cd /projects/{project.name} && "
+                f"claude -p {escaped_prompt} "
+                f"--dangerously-skip-permissions "
+                f"--output-format stream-json --verbose"
+            ],
             volumes={
                 "cc-projects": {"bind": "/projects", "mode": "rw"},
                 "cc-git-bare": {"bind": "/git-bare", "mode": "rw"},

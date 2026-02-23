@@ -1,11 +1,12 @@
 """CC Orchestrator — FastAPI entry point."""
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -70,8 +71,30 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # TODO: start dispatcher (Task 1.4)
+    # Start dispatcher
+    try:
+        from dispatcher import TaskDispatcher
+        from worker_manager import WorkerManager
+        wm = WorkerManager()
+        dispatcher = TaskDispatcher(wm)
+        app.state.dispatcher = dispatcher
+        app.state.worker_manager = wm
+        dispatch_task = asyncio.create_task(dispatcher.run())
+        logger.info("Dispatcher started")
+    except Exception:
+        logger.exception("Failed to start dispatcher — running without scheduling")
+        dispatch_task = None
+
     yield
+
+    # Shutdown dispatcher
+    if dispatch_task:
+        dispatcher.stop()
+        dispatch_task.cancel()
+        try:
+            await dispatch_task
+        except asyncio.CancelledError:
+            pass
     logger.info("CC Orchestrator shutting down...")
 
 
@@ -177,7 +200,7 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/tasks/{task_id}", response_model=TaskOut)
-async def cancel_task(task_id: str, db: Session = Depends(get_db)):
+async def cancel_task(task_id: str, request: Request, db: Session = Depends(get_db)):
     """Cancel a pending or executing task."""
     task = db.get(Task, task_id)
     if not task:
@@ -185,7 +208,14 @@ async def cancel_task(task_id: str, db: Session = Depends(get_db)):
     if task.status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
         raise HTTPException(status_code=400, detail=f"Task is already {task.status.value}")
 
-    # TODO: if EXECUTING, stop the worker container (Task 1.3/1.4)
+    # Stop the worker container if task is currently executing
+    if task.status == TaskStatus.EXECUTING and task.container_id:
+        try:
+            wm = getattr(request.app.state, "worker_manager", None)
+            if wm:
+                wm.stop_worker(task.container_id)
+        except Exception:
+            logger.warning("Failed to stop container for task %s", task.id)
     task.status = TaskStatus.CANCELLED
     db.commit()
     db.refresh(task)
@@ -212,3 +242,14 @@ async def retry_task(task_id: str, db: Session = Depends(get_db)):
     db.refresh(task)
     logger.info("Task %s queued for retry (#%d)", task.id, task.retries)
     return task
+
+
+# ---- Workers ----
+
+@app.get("/api/workers")
+async def list_workers(request: Request):
+    """List all active worker containers."""
+    wm = getattr(request.app.state, "worker_manager", None)
+    if not wm:
+        return []
+    return wm.list_workers()
