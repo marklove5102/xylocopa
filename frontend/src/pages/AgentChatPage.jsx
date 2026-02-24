@@ -80,61 +80,37 @@ function ChatBubble({ message, project }) {
   );
 }
 
-// --- Typing Indicator ---
+// --- Typing Indicator (shown when executing but no streaming content yet) ---
 
-function TypingIndicator({ messages }) {
-  // Find the message being executed to show context
-  const executingMsg = [...(messages || [])].reverse().find(
-    (m) => m.status === "EXECUTING" && m.role === "USER"
-  );
-  const lastUserMsg = !executingMsg && [...(messages || [])].reverse().find(
-    (m) => m.role === "USER"
-  );
-  const contextMsg = executingMsg || lastUserMsg;
-  const preview = contextMsg?.content
-    ? contextMsg.content.length > 80
-      ? contextMsg.content.slice(0, 80) + "…"
-      : contextMsg.content
-    : null;
-
+function TypingIndicator() {
   return (
-    <>
-      {preview && (
-        <div className="flex justify-start my-2">
-          <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%]">
-            <p className="text-xs text-dim leading-snug">
-              Working on: {preview}
-            </p>
+    <div className="flex justify-start my-2">
+      <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5 flex items-center gap-[5px]">
+        <span className="typing-dot" style={{ animationDelay: "0ms" }} />
+        <span className="typing-dot" style={{ animationDelay: "200ms" }} />
+        <span className="typing-dot" style={{ animationDelay: "400ms" }} />
+      </div>
+    </div>
+  );
+}
+
+// --- Streaming Bubble (live output while agent is executing) ---
+
+function StreamingBubble({ content, project }) {
+  return (
+    <div className="flex justify-start my-2">
+      <div className="max-w-[85%]">
+        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md">
+          <div className="text-sm">
+            {renderMarkdown(content, project)}
+          </div>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-xs text-dim">Streaming...</span>
           </div>
         </div>
-      )}
-      <div className="flex justify-start my-2">
-        <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5 flex items-center gap-[5px]">
-          <span className="typing-dot" style={{ animationDelay: "0ms" }} />
-          <span className="typing-dot" style={{ animationDelay: "200ms" }} />
-          <span className="typing-dot" style={{ animationDelay: "400ms" }} />
-        </div>
       </div>
-      <style>{`
-        .typing-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background-color: #9ca3af;
-          animation: typingPulse 1.4s infinite ease-in-out;
-        }
-        @keyframes typingPulse {
-          0%, 60%, 100% {
-            transform: translateY(0);
-            opacity: 0.4;
-          }
-          30% {
-            transform: translateY(-4px);
-            opacity: 1;
-          }
-        }
-      `}</style>
-    </>
+    </div>
   );
 }
 
@@ -282,6 +258,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const [starLoading, setStarLoading] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(() => isPushEnabled());
   const [pushLoading, setPushLoading] = useState(false);
+  const [streamingContent, setStreamingContent] = useState(null);
   const messagesEndRef = useRef(null);
   const toastTimer = useRef(null);
   const health = useHealthStatus();
@@ -388,19 +365,42 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
     }
   };
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  // Auto-scroll to bottom on new messages or streaming content
+  const scrollContainerRef = useRef(null);
+  const userScrolledUp = useRef(false);
 
-  // WebSocket: re-fetch on new_message events for this agent
+  // Detect if user has scrolled up (to avoid forcing scroll during streaming)
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUp.current = distFromBottom > 100;
+  }, []);
+
+  useEffect(() => {
+    if (!userScrolledUp.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, streamingContent]);
+
+  // WebSocket: re-fetch on new_message events, handle streaming
   const { lastEvent } = useWebSocket();
   useEffect(() => {
     if (!lastEvent) return;
-    if (
-      (lastEvent.type === "new_message" && lastEvent.data?.agent_id === id) ||
-      (lastEvent.type === "agent_update" && lastEvent.data?.agent_id === id)
-    ) {
+    if (lastEvent.type === "agent_stream" && lastEvent.data?.agent_id === id) {
+      setStreamingContent(lastEvent.data.content);
+      return;
+    }
+    if (lastEvent.type === "new_message" && lastEvent.data?.agent_id === id) {
+      setStreamingContent(null);
+      loadData();
+      return;
+    }
+    if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id === id) {
+      // Clear streaming when agent is no longer executing
+      if (lastEvent.data.status !== "EXECUTING") {
+        setStreamingContent(null);
+      }
       loadData();
     }
   }, [lastEvent, id, loadData]);
@@ -649,7 +649,11 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       </div>
 
       {/* Messages — offset for fixed header */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 pt-[70px] max-w-2xl mx-auto w-full">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 pt-[70px] max-w-2xl mx-auto w-full"
+      >
         {messages.map((msg) => (
           <ChatBubble key={msg.id} message={msg} project={agent.project} />
         ))}
@@ -659,8 +663,12 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           <PlanReviewBar onApprove={handleApprove} onReject={handleReject} />
         )}
 
-        {/* Typing indicator */}
-        {isExecuting && <TypingIndicator messages={messages} />}
+        {/* Streaming output or typing indicator while executing */}
+        {isExecuting && (
+          streamingContent
+            ? <StreamingBubble content={streamingContent} project={agent.project} />
+            : <TypingIndicator />
+        )}
 
         <div ref={messagesEndRef} />
       </div>
