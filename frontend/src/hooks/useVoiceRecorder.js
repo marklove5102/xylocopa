@@ -33,6 +33,17 @@ export default function useVoiceRecorder({ onTranscript, onError }) {
 
   const startRecording = useCallback(async () => {
     setMicError(null);
+
+    // Check browser support / secure context before attempting
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (window.location.protocol === "http:" && window.location.hostname !== "localhost") {
+        setMicError("Microphone requires HTTPS. Open this page via https:// or localhost.");
+      } else {
+        setMicError("Your browser does not support microphone access.");
+      }
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -85,11 +96,13 @@ export default function useVoiceRecorder({ onTranscript, onError }) {
       }, MAX_RECORDING_MS);
     } catch (err) {
       if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-        setMicError("Microphone permission denied.");
-      } else if (err.name === "NotFoundError") {
-        setMicError("No microphone found.");
+        setMicError("Microphone blocked — click the lock icon in your browser's address bar to allow access.");
+      } else if (err.name === "NotFoundError" || err.name === "NotReadableError") {
+        setMicError("No microphone detected — plug one in or check your system audio settings.");
+      } else if (err.name === "AbortError") {
+        setMicError("Microphone access was interrupted — try again.");
       } else {
-        setMicError("Could not access microphone.");
+        setMicError("Could not access microphone — check browser permissions and ensure HTTPS.");
       }
     }
   }, [onTranscript, onError]);

@@ -130,6 +130,18 @@ class PlanReject(BaseModel):
     revision_notes: str = Field(..., min_length=1, description="Feedback for re-planning")
 
 
+# --- Session schemas (from ~/.claude/history.jsonl) ---
+
+class SessionSummary(BaseModel):
+    session_id: str
+    first_message: str
+    message_count: int
+    created_at: int           # Unix ms
+    last_activity_at: int     # Unix ms
+    project_path: str
+    linked_agent_id: str | None = None
+
+
 # --- System schemas ---
 
 class HealthResponse(BaseModel):

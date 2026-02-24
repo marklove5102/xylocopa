@@ -2,6 +2,12 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
+import {
+  fetchHealth as apiFetchHealth,
+  fetchAgents as apiFetchAgents,
+  fetchProcesses as apiFetchProcesses,
+  fetchSystemStats,
+} from "../lib/api";
 
 const HEALTH_COLORS = {
   ok: "bg-green-500",
@@ -56,9 +62,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch("/api/health");
-      if (!res.ok) throw new Error(res.statusText);
-      setHealth(await res.json());
+      const data = await apiFetchHealth();
+      setHealth(data);
       setHealthError(false);
     } catch {
       setHealthError(true);
@@ -67,9 +72,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
 
   const fetchAgents = useCallback(async () => {
     try {
-      const res = await fetch("/api/agents?limit=200");
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await apiFetchAgents("limit=200");
       setAgents(data);
       const counts = {};
       for (const a of data) counts[a.status] = (counts[a.status] || 0) + 1;
@@ -79,17 +82,13 @@ export default function MonitorPage({ theme, onToggleTheme }) {
 
   const fetchProcesses = useCallback(async () => {
     try {
-      const res = await fetch("/api/processes");
-      if (!res.ok) return;
-      setProcesses(await res.json());
+      setProcesses(await apiFetchProcesses());
     } catch { /* retry next poll */ }
   }, []);
 
   const fetchSysStats = useCallback(async () => {
     try {
-      const res = await fetch("/api/system/stats");
-      if (!res.ok) return;
-      setSysStats(await res.json());
+      setSysStats(await fetchSystemStats());
     } catch { /* retry next poll */ }
   }, []);
 

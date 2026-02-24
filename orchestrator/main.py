@@ -37,6 +37,7 @@ from schemas import (
     ProjectOut,
     ProjectWithStats,
     SendMessage,
+    SessionSummary,
 )
 from auth import (
     create_token,
@@ -823,6 +824,85 @@ async def list_project_agents(
     if status:
         q = q.filter(Agent.status == status)
     return q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc()).limit(limit).all()
+
+
+# ---- Sessions (from ~/.claude/history.jsonl) ----
+
+@app.get("/api/projects/{name}/sessions", response_model=list[SessionSummary])
+async def list_project_sessions(name: str, db: Session = Depends(get_db)):
+    """List all past Claude conversations for a project from history.jsonl."""
+    import json
+    from config import CLAUDE_HISTORY_PATH, PROJECTS_DIR
+
+    projects_dir = PROJECTS_DIR or "/projects"
+    history_path = CLAUDE_HISTORY_PATH
+
+    if not os.path.isfile(history_path):
+        return []
+
+    # Group entries by sessionId
+    sessions: dict[str, list[dict]] = {}
+    try:
+        with open(history_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                sid = entry.get("sessionId")
+                if not sid:
+                    continue
+                sessions.setdefault(sid, []).append(entry)
+    except Exception:
+        logger.exception("Failed to read history.jsonl")
+        return []
+
+    # Filter sessions matching this project by path basename or full path
+    matched: dict[str, list[dict]] = {}
+    for sid, entries in sessions.items():
+        project_path = entries[0].get("project", "")
+        if not project_path:
+            continue
+        basename = os.path.basename(project_path.rstrip("/"))
+        canonical = os.path.join(projects_dir, name)
+        if basename == name or project_path.rstrip("/") == canonical.rstrip("/"):
+            matched[sid] = entries
+
+    # Build agent session_id lookup for linking
+    linked_agents: dict[str, str] = {}
+    agent_rows = (
+        db.query(Agent.id, Agent.session_id)
+        .filter(Agent.project == name, Agent.session_id.is_not(None))
+        .all()
+    )
+    for aid, asid in agent_rows:
+        linked_agents[asid] = aid
+
+    # Build summaries
+    results = []
+    for sid, entries in matched.items():
+        entries.sort(key=lambda e: e.get("timestamp", 0))
+        first_msg = entries[0].get("display", "")
+        created = entries[0].get("timestamp", 0)
+        last = entries[-1].get("timestamp", 0)
+        project_path = entries[0].get("project", "")
+
+        results.append(SessionSummary(
+            session_id=sid,
+            first_message=first_msg,
+            message_count=len(entries),
+            created_at=created,
+            last_activity_at=last,
+            project_path=project_path,
+            linked_agent_id=linked_agents.get(sid),
+        ))
+
+    # Sort by most recent first
+    results.sort(key=lambda s: s.last_activity_at, reverse=True)
+    return results
 
 
 # ---- Tasks (agent-sourced: each USER message = one task) ----

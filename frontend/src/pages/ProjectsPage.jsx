@@ -179,7 +179,7 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
       className="p-2 rounded-lg text-label hover:text-heading hover:bg-input transition-colors"
     >
       <svg className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M20.49 9A9 9 0 005.64 5.64L4 4m16.36 16.36A9 9 0 0120.49 9" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-2.64-6.36L21 3v5h-5" />
       </svg>
     </button>
   );

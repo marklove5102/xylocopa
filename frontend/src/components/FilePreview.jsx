@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { authedFetch } from "../lib/api";
 
 // --- CSV parser (handles quoted fields) ---
 
@@ -120,7 +121,7 @@ function CsvPreview({ src, filename }) {
   const loadCsv = useCallback(async () => {
     setState("loading");
     try {
-      const res = await fetch(src);
+      const res = await authedFetch(src);
       if (!res.ok) throw new Error("fetch failed");
       const text = await res.text();
       const parsed = parseCSV(text);

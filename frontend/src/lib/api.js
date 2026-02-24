@@ -15,6 +15,19 @@ export function clearAuthToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Low-level fetch with auth headers. Returns the raw Response object.
+ * Use this when you need to inspect status codes or handle non-JSON responses.
+ */
+export async function authedFetch(url, opts = {}) {
+  const headers = { ...opts.headers };
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return fetch(`${BASE}${url}`, { ...opts, headers });
+}
+
 async function request(url, opts = {}) {
   const headers = { "Content-Type": "application/json", ...opts.headers };
   const token = getAuthToken();
@@ -71,6 +84,8 @@ export const fetchProjectAgents = (name, params = "") =>
   request(`/api/projects/${name}/agents${params ? `?${params}` : ""}`);
 export const fetchProjectWorktrees = (name) =>
   request(`/api/projects/${name}/worktrees`);
+export const fetchProjectSessions = (name) =>
+  request(`/api/projects/${name}/sessions`);
 
 // --- Tasks (agent-sourced: each USER message = one task) ---
 export const fetchTasks = (params = "") =>
@@ -116,8 +131,14 @@ export const fetchGitLog = (project, limit = 30) =>
   request(`/api/git/${project}/log?limit=${limit}`);
 export const fetchGitBranches = (project) =>
   request(`/api/git/${project}/branches`);
+export const fetchGitStatus = (project) =>
+  request(`/api/git/${project}/status`);
 export const mergeGitBranch = (project, branch) =>
   request(`/api/git/${project}/merge/${branch}`, { method: "POST" });
+
+// --- System ---
+export const fetchSystemStats = () => request("/api/system/stats");
+export const fetchProcesses = () => request("/api/processes");
 
 // --- Voice ---
 export async function transcribeVoice(audioBlob) {

@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import PageHeader from "../components/PageHeader";
+import {
+  fetchProjects as apiFetchProjects,
+  fetchGitLog,
+  fetchGitBranches,
+  fetchGitStatus,
+  mergeGitBranch,
+} from "../lib/api";
 
 /** Format a date string into a human-readable relative time. */
 function relativeTime(dateStr) {
@@ -84,13 +91,11 @@ export default function GitPage({ theme, onToggleTheme }) {
   // --- Fetch projects ---
   useEffect(() => {
     let cancelled = false;
-    async function fetchProjects() {
+    async function fetchProjectsList() {
       setLoadingProjects(true);
       setError(null);
       try {
-        const res = await fetch("/api/projects");
-        if (!res.ok) throw new Error(`Failed to load projects (${res.status})`);
-        const data = await res.json();
+        const data = await apiFetchProjects();
         if (!cancelled) {
           setProjects(data);
           if (data.length > 0) {
@@ -103,7 +108,7 @@ export default function GitPage({ theme, onToggleTheme }) {
         if (!cancelled) setLoadingProjects(false);
       }
     }
-    fetchProjects();
+    fetchProjectsList();
     return () => { cancelled = true; };
   }, []);
 
@@ -122,9 +127,9 @@ export default function GitPage({ theme, onToggleTheme }) {
 
       // Fetch all in parallel
       const [commitRes, branchRes, statusRes] = await Promise.allSettled([
-        fetch(`/api/git/${selectedProject}/log?limit=30`).then((r) => r.ok ? r.json() : []),
-        fetch(`/api/git/${selectedProject}/branches`).then((r) => r.ok ? r.json() : []),
-        fetch(`/api/git/${selectedProject}/status`).then((r) => r.ok ? r.json() : null),
+        fetchGitLog(selectedProject).catch(() => []),
+        fetchGitBranches(selectedProject).catch(() => []),
+        fetchGitStatus(selectedProject).catch(() => null),
       ]);
 
       if (!cancelled) {
@@ -147,29 +152,17 @@ export default function GitPage({ theme, onToggleTheme }) {
       if (!selectedProject || mergingBranch) return;
       setMergingBranch(branchName);
       try {
-        const res = await fetch(`/api/git/${selectedProject}/merge/${branchName}`, {
-          method: "POST",
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) {
-          addToast(
-            `Merged "${branchName}" successfully.`,
-            "success"
-          );
-          // Refresh commits, branches, and status
-          const [commitRes, branchRes, statusRes] = await Promise.all([
-            fetch(`/api/git/${selectedProject}/log?limit=30`),
-            fetch(`/api/git/${selectedProject}/branches`),
-            fetch(`/api/git/${selectedProject}/status`),
-          ]);
-          if (commitRes.ok) setCommits(await commitRes.json());
-          if (branchRes.ok) setBranches(await branchRes.json());
-          if (statusRes.ok) setStatus(await statusRes.json());
-        } else {
-          const msg =
-            data?.detail || data?.message || data?.error || `Merge failed (${res.status})`;
-          addToast(msg, "error");
-        }
+        const data = await mergeGitBranch(selectedProject, branchName);
+        addToast(`Merged "${branchName}" successfully.`, "success");
+        // Refresh commits, branches, and status
+        const [newCommits, newBranches, newStatus] = await Promise.all([
+          fetchGitLog(selectedProject).catch(() => []),
+          fetchGitBranches(selectedProject).catch(() => []),
+          fetchGitStatus(selectedProject).catch(() => null),
+        ]);
+        setCommits(newCommits);
+        setBranches(newBranches);
+        setStatus(newStatus);
       } catch (err) {
         addToast(`Merge error: ${err.message}`, "error");
       } finally {

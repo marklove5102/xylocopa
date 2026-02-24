@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fetchHealth } from "../lib/api";
 
 /** Polls /api/health every 15s and returns the health object (or null while loading). */
 export default function useHealthStatus() {
@@ -9,9 +10,7 @@ export default function useHealthStatus() {
 
     const check = async () => {
       try {
-        const res = await fetch("/api/health");
-        if (!res.ok) throw new Error(res.statusText);
-        const data = await res.json();
+        const data = await fetchHealth();
         if (!cancelled) setHealth(data);
       } catch {
         if (!cancelled) setHealth({ status: "error", db: "unknown", claude_cli: "unknown" });
