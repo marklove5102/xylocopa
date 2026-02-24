@@ -40,9 +40,16 @@ def create_token(jwt_secret: str, expires_minutes: int | None = None) -> str:
     """Create a signed token with expiry.
 
     Format: base64(json_payload).base64(signature)
+
+    The server-side expiry is generous (24h by default). The frontend
+    handles inactivity-based lock independently by tracking user
+    interactions and clearing the token after AUTH_TIMEOUT_MINUTES
+    of no activity.
     """
     if expires_minutes is None:
-        expires_minutes = AUTH_TIMEOUT_MINUTES
+        # 24-hour server-side expiry; frontend enforces the shorter
+        # inactivity timeout via its own idle tracker.
+        expires_minutes = 24 * 60
     payload = {
         "exp": time.time() + expires_minutes * 60,
         "iat": time.time(),
