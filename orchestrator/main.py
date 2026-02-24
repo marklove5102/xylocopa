@@ -306,8 +306,8 @@ async def system_stats():
 
 @app.get("/api/projects", response_model=list[ProjectWithStats])
 async def list_projects(db: Session = Depends(get_db)):
-    """List all registered projects with task and agent statistics."""
-    projects = db.query(Project).order_by(Project.name).all()
+    """List all active (non-archived) projects with task and agent statistics."""
+    projects = db.query(Project).filter(Project.archived == False).order_by(Project.name).all()
     results = []
     for proj in projects:
         # Task stats (derived from agent USER messages)
@@ -368,24 +368,154 @@ async def list_projects(db: Session = Depends(get_db)):
     return results
 
 
+@app.get("/api/projects/folders")
+async def list_all_folders(request: Request, db: Session = Depends(get_db)):
+    """List ALL folders in /projects/ with activation status, container status, and stats."""
+    projects_dir = "/projects"
+    try:
+        all_dirs = sorted([
+            d for d in os.listdir(projects_dir)
+            if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")
+        ])
+    except FileNotFoundError:
+        all_dirs = []
+
+    db_projects = {p.name: p for p in db.query(Project).all()}
+
+    # Check running containers
+    running_containers = set()
+    wm = getattr(request.app.state, "worker_manager", None)
+    if wm:
+        try:
+            for c in wm.list_containers():
+                if c.get("status") == "running" and c.get("project"):
+                    running_containers.add(c["project"])
+        except Exception:
+            pass
+
+    results = []
+    for dirname in all_dirs:
+        proj = db_projects.get(dirname)
+        active = proj is not None and not proj.archived
+
+        agent_count = db.query(func.count(Agent.id)).filter(
+            Agent.project == dirname
+        ).scalar()
+        last_activity = db.query(func.max(Agent.last_message_at)).filter(
+            Agent.project == dirname
+        ).scalar()
+
+        entry = {
+            "name": dirname,
+            "display_name": proj.display_name if proj else dirname,
+            "active": active,
+            "container_running": dirname in running_containers,
+            "agent_count": agent_count,
+            "last_activity": last_activity,
+            "git_remote": proj.git_remote if proj else None,
+            "description": proj.description if proj else None,
+        }
+
+        # Richer stats for active projects
+        if active:
+            agent_active_count = (
+                db.query(func.count(Agent.id))
+                .filter(
+                    Agent.project == dirname,
+                    Agent.status.in_([
+                        AgentStatus.IDLE, AgentStatus.EXECUTING,
+                        AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
+                        AgentStatus.STARTING,
+                    ]),
+                )
+                .scalar()
+            )
+            task_total = (
+                db.query(func.count(Message.id))
+                .join(Agent, Message.agent_id == Agent.id)
+                .filter(Agent.project == dirname, Message.role == MessageRole.USER)
+                .scalar()
+            )
+            entry["agent_active"] = agent_active_count
+            entry["task_total"] = task_total
+
+        results.append(entry)
+
+    return results
+
+
+@app.get("/api/projects/trash")
+async def list_trash_folders():
+    """List deleted project folders in .trash."""
+    trash_dir = "/projects/.trash"
+    try:
+        dirs = sorted([
+            d for d in os.listdir(trash_dir)
+            if os.path.isdir(os.path.join(trash_dir, d))
+        ])
+    except FileNotFoundError:
+        dirs = []
+    return [{"name": d} for d in dirs]
+
+
+@app.delete("/api/projects/trash/{name}", status_code=200)
+async def delete_trash_folder(name: str):
+    """Permanently delete a project folder from .trash."""
+    import shutil
+    target = os.path.join("/projects/.trash", name)
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=404, detail=f"Trash folder '{name}' not found")
+    shutil.rmtree(target)
+    logger.info("Permanently deleted trash folder: %s", target)
+    return {"status": "deleted", "name": name}
+
+
+@app.post("/api/projects/trash/{name}/restore", status_code=200)
+async def restore_trash_folder(name: str):
+    """Restore a project folder from .trash back to /projects."""
+    import shutil
+    src = os.path.join("/projects/.trash", name)
+    if not os.path.isdir(src):
+        raise HTTPException(status_code=404, detail=f"Trash folder '{name}' not found")
+    dst = os.path.join("/projects", name)
+    if os.path.exists(dst):
+        raise HTTPException(status_code=409, detail=f"Folder '{name}' already exists in /projects")
+    shutil.move(src, dst)
+    logger.info("Restored trash folder %s to %s", src, dst)
+    return {"status": "restored", "name": name}
+
+
 @app.post("/api/projects", response_model=ProjectOut, status_code=201)
 async def create_project(body: ProjectCreate, request: Request, db: Session = Depends(get_db)):
-    """Create a new project. Auto-clones git repo if URL provided."""
-    if db.get(Project, body.name):
-        raise HTTPException(status_code=409, detail=f"Project '{body.name}' already exists")
+    """Create or re-activate a project. Un-archives if previously archived."""
+    existing = db.get(Project, body.name)
+    if existing:
+        if existing.archived:
+            # Re-activate archived project — preserves all history
+            existing.archived = False
+            if body.git_url:
+                existing.git_remote = body.git_url
+            if body.description:
+                existing.description = body.description
+            db.commit()
+            db.refresh(existing)
+            logger.info("Project '%s' re-activated from archive", body.name)
+            proj = existing
+        else:
+            raise HTTPException(status_code=409, detail=f"Project '{body.name}' already exists")
+    else:
+        proj = Project(
+            name=body.name,
+            display_name=body.name,
+            path=f"/projects/{body.name}",
+            git_remote=body.git_url,
+            description=body.description,
+        )
+        db.add(proj)
+        db.commit()
+        db.refresh(proj)
 
-    proj = Project(
-        name=body.name,
-        display_name=body.name,
-        path=f"/projects/{body.name}",
-        git_remote=body.git_url,
-        description=body.description,
-    )
-    db.add(proj)
-    db.commit()
-    db.refresh(proj)
-
-    # Clone or create project directory on the host
+    # Ensure project directory and start container
     wm = getattr(request.app.state, "worker_manager", None)
     if wm:
         try:
@@ -395,6 +525,27 @@ async def create_project(body: ProjectCreate, request: Request, db: Session = De
                 wm.ensure_project_dir(body.name)
         except Exception:
             logger.warning("Failed to set up project directory for %s", body.name)
+
+        # Auto-init git repo if not already one
+        project_path = os.path.join("/projects", body.name)
+        if os.path.isdir(project_path) and not os.path.isdir(os.path.join(project_path, ".git")):
+            try:
+                import subprocess
+                subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
+                subprocess.run(["git", "add", "-A"], cwd=project_path, check=True, capture_output=True)
+                subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=project_path, check=True, capture_output=True)
+                logger.info("Auto-initialized git repo for %s", body.name)
+            except Exception:
+                logger.warning("Failed to auto-init git repo for %s", body.name)
+
+        # Start container so agents can resume immediately
+        try:
+            container_id = wm.ensure_project_container(proj)
+            proj.container_id = container_id
+            db.commit()
+            db.refresh(proj)
+        except Exception:
+            logger.warning("Failed to start container for %s", body.name)
 
     # Append to registry.yaml
     registry_path = os.path.join(PROJECT_CONFIGS_PATH, "registry.yaml")
@@ -421,13 +572,24 @@ async def create_project(body: ProjectCreate, request: Request, db: Session = De
     return proj
 
 
-@app.delete("/api/projects/{name}", status_code=200)
-async def delete_project(name: str, request: Request, db: Session = Depends(get_db)):
-    """Delete a project (must have no active agents)."""
-    proj = db.get(Project, name)
-    if not proj:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+def _remove_from_registry(name: str):
+    """Remove a project entry from registry.yaml."""
+    registry_path = os.path.join(PROJECT_CONFIGS_PATH, "registry.yaml")
+    try:
+        if not os.path.exists(registry_path):
+            return
+        with open(registry_path) as f:
+            data = yaml.safe_load(f) or {}
+        projects = data.get("projects") or []
+        data["projects"] = [p for p in projects if p.get("name") != name]
+        with open(registry_path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False)
+    except Exception:
+        logger.warning("Failed to remove %s from registry.yaml", name)
 
+
+def _check_no_active_agents(name: str, db: Session):
+    """Raise 409 if the project has active agents."""
     active_agents = (
         db.query(Agent)
         .filter(
@@ -440,22 +602,89 @@ async def delete_project(name: str, request: Request, db: Session = Depends(get_
         )
         .count()
     )
-
     if active_agents > 0:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot delete project with {active_agents} active agent(s)",
+            detail=f"Cannot modify project with {active_agents} active agent(s)",
         )
 
-    # Clean up session volume for this project
-    wm = getattr(request.app.state, "worker_manager", None)
-    if wm:
-        wm.remove_session_volume(name)
 
-    db.delete(proj)
+@app.post("/api/projects/{name}/archive", status_code=200)
+async def archive_project(name: str, request: Request, db: Session = Depends(get_db)):
+    """Archive a project — stops agents, kills container, marks archived. Keeps all data."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+    if proj.archived:
+        raise HTTPException(status_code=400, detail="Project is already archived")
+
+    # Stop all active agents for this project
+    active_agents = (
+        db.query(Agent)
+        .filter(
+            Agent.project == name,
+            Agent.status.notin_([AgentStatus.STOPPED, AgentStatus.ERROR]),
+        )
+        .all()
+    )
+    for agent in active_agents:
+        agent.status = AgentStatus.STOPPED
+        db.add(Message(
+            agent_id=agent.id,
+            role=MessageRole.SYSTEM,
+            content="Agent stopped — project archived",
+            status=MessageStatus.COMPLETED,
+        ))
+    stopped_count = len(active_agents)
+
+    # Stop the project container
+    wm = getattr(request.app.state, "worker_manager", None)
+    if wm and proj.container_id:
+        try:
+            wm.stop_project_container(proj.container_id)
+        except Exception:
+            logger.warning("Failed to stop container for project %s", name)
+        proj.container_id = None
+
+    proj.archived = True
     db.commit()
-    logger.info("Project '%s' deleted", name)
-    return {"detail": f"Project '{name}' deleted"}
+    _remove_from_registry(name)
+    logger.info("Project '%s' archived (stopped %d agents)", name, stopped_count)
+    return {"detail": f"Project '{name}' archived — {stopped_count} agent(s) stopped"}
+
+
+@app.delete("/api/projects/{name}", status_code=200)
+async def delete_project(name: str, request: Request, db: Session = Depends(get_db)):
+    """Delete a project — unregisters and moves files to .trash. Works even if not registered."""
+    import shutil
+
+    proj = db.get(Project, name)
+
+    # If registered, clean up DB + container resources
+    if proj:
+        _check_no_active_agents(name, db)
+        wm = getattr(request.app.state, "worker_manager", None)
+        if wm:
+            wm.remove_session_volume(name)
+        db.delete(proj)
+        db.commit()
+        _remove_from_registry(name)
+
+    # Move files to .trash regardless of DB registration
+    src = os.path.join("/projects", name)
+    if os.path.isdir(src):
+        trash_dir = "/projects/.trash"
+        os.makedirs(trash_dir, exist_ok=True)
+        dst = os.path.join(trash_dir, name)
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        shutil.move(src, dst)
+        logger.info("Moved %s to %s", src, dst)
+    elif not proj:
+        raise HTTPException(status_code=404, detail=f"Folder '{name}' not found")
+
+    logger.info("Project '%s' deleted (moved to .trash)", name)
+    return {"detail": f"Project '{name}' deleted — files moved to .trash"}
 
 
 @app.get("/api/projects/{name}/agents", response_model=list[AgentBrief])
@@ -465,10 +694,7 @@ async def list_project_agents(
     limit: int = 50,
     db: Session = Depends(get_db),
 ):
-    """List agents for a specific project."""
-    proj = db.get(Project, name)
-    if not proj:
-        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+    """List agents for a project (works for active, archived, and unregistered projects)."""
     q = db.query(Agent).filter(Agent.project == name)
     if status:
         q = q.filter(Agent.status == status)
@@ -570,6 +796,8 @@ async def create_agent(body: AgentCreate, db: Session = Depends(get_db)):
     project = db.get(Project, body.project)
     if not project:
         raise HTTPException(status_code=400, detail=f"Project '{body.project}' not found")
+    if project.archived:
+        raise HTTPException(status_code=400, detail="Cannot create agents for archived projects — activate first")
 
     # Generate agent name from first ~50 chars of prompt
     name = body.prompt[:50].strip()
@@ -627,6 +855,14 @@ async def list_agents(
     )
 
 
+@app.get("/api/agents/unread")
+async def agents_unread_count(db: Session = Depends(get_db)):
+    """Total unread message count across all agents."""
+    from sqlalchemy import func
+    total = db.query(func.sum(Agent.unread_count)).scalar() or 0
+    return {"unread": int(total)}
+
+
 @app.get("/api/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, db: Session = Depends(get_db)):
     """Get full agent details."""
@@ -674,6 +910,8 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     project = db.get(Project, agent.project)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if project.archived:
+        raise HTTPException(status_code=400, detail="Cannot resume agents for archived projects — activate first")
 
     wm = getattr(request.app.state, "worker_manager", None)
     if not wm:

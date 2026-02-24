@@ -24,6 +24,15 @@ function AgentRow({ agent, onClick }) {
   const state = agentBotState(agent.status);
   const statusDotColor = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
   const statusTextColor = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyId = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(agent.id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   return (
     <button
@@ -31,7 +40,14 @@ function AgentRow({ agent, onClick }) {
       onClick={onClick}
       className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
     >
-      <BotIcon state={state} className="w-10 h-10 shrink-0" />
+      <div className="relative shrink-0" onClick={handleCopyId} title={`Copy ID: ${agent.id}`}>
+        <BotIcon state={state} className="w-10 h-10 cursor-pointer hover:opacity-70 transition-opacity" />
+        {copied && (
+          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
+            Copied!
+          </span>
+        )}
+      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-heading truncate flex-1">

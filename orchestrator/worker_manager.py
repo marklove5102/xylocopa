@@ -8,6 +8,7 @@ import docker.errors
 
 from config import (
     CLAUDE_CODE_OAUTH_TOKEN,
+    HOST_CLAUDE_DIR,
     HOST_PROJECTS_DIR,
     HOST_USER_UID,
     WORKER_CPU_LIMIT,
@@ -139,36 +140,46 @@ class WorkerManager:
     # Persistent agent containers
     # =====================================================================
 
-    def _ensure_session_volume(self, project_name: str) -> str:
-        """Ensure a named volume for Claude session data exists with correct ownership.
-        Returns volume name."""
-        vol_name = f"cc-session-{project_name}"
-        created = False
+    def _ensure_session_symlink(self, project_name: str):
+        """Create a symlink so `claude --resume` on the host finds container sessions.
+
+        Inside the container, sessions are stored under the project key
+        derived from /projects/{name}.  On the host, `claude --resume`
+        looks for the key derived from HOST_PROJECTS_DIR/{name}.
+        A symlink bridges the two.
+        """
+        if not HOST_CLAUDE_DIR or not HOST_PROJECTS_DIR:
+            return
+        import os
+
+        uid = int(HOST_USER_UID)
+        projects_dir = os.path.join(HOST_CLAUDE_DIR, "projects")
+        # Container key: /projects/{name} → -projects-{name}
+        container_key = f"-projects-{project_name}"
+        # Host key: /home/user/cc-projects/{name} → -home-user-cc-projects-{name}
+        host_key = HOST_PROJECTS_DIR.replace("/", "-").lstrip("-")
+        host_key = f"-{host_key}-{project_name}"
+
+        src = os.path.join(projects_dir, host_key)
+        dst = os.path.join(projects_dir, container_key)
+
+        # Ensure the container key dir exists (sessions will be written there)
+        os.makedirs(dst, exist_ok=True)
+        os.chown(dst, uid, uid)
+
+        if os.path.islink(src):
+            return  # already linked
+        if os.path.isdir(src) and not os.listdir(src):
+            os.rmdir(src)  # empty dir, replace with symlink
+        elif os.path.exists(src):
+            return  # non-empty dir, don't clobber
+
         try:
-            self.docker_client.volumes.get(vol_name)
-            logger.debug("Session volume %s already exists", vol_name)
-        except docker.errors.NotFound:
-            self.docker_client.volumes.create(
-                name=vol_name,
-                driver="local",
-                labels={"managed-by": "cc-orchestrator", "project": project_name},
-            )
-            created = True
-            logger.info("Created session volume %s", vol_name)
-
-        if created:
-            # New volume root dir is owned by root — fix ownership with a
-            # throwaway container so the non-root worker can write to it.
-            self.docker_client.containers.run(
-                image="alpine",
-                command=["chown", f"{HOST_USER_UID}:{HOST_USER_UID}", "/vol"],
-                volumes={vol_name: {"bind": "/vol", "mode": "rw"}},
-                auto_remove=True,
-                detach=False,
-            )
-            logger.debug("Set ownership on %s to uid %s", vol_name, HOST_USER_UID)
-
-        return vol_name
+            os.symlink(container_key, src)
+            os.lchown(src, uid, uid)
+            logger.info("Session symlink: %s -> %s", src, dst)
+        except OSError:
+            logger.warning("Failed to create session symlink for %s", project_name)
 
     def remove_session_volume(self, project_name: str):
         """Remove the session volume for a project (call on project deletion)."""
@@ -198,13 +209,11 @@ class WorkerManager:
         except docker.errors.NotFound:
             pass
 
-        # Named volume keeps .claude/ session data across container restarts
-        session_vol = self._ensure_session_volume(project.name)
-
         volumes = self._base_volumes(rw=True)
-        # Mount session volume at $HOME/.claude/ — persists sessions + refreshed tokens.
-        # Tmpfs stays for $HOME (scratch space), the named volume sub-mount takes precedence.
-        volumes[session_vol] = {"bind": "/worker-home/.claude", "mode": "rw"}
+        # Mount host ~/.claude/ so sessions persist and are accessible from host
+        if HOST_CLAUDE_DIR:
+            volumes[HOST_CLAUDE_DIR] = {"bind": "/worker-home/.claude", "mode": "rw"}
+            self._ensure_session_symlink(project.name)
 
         container = self.docker_client.containers.run(
             image=WORKER_IMAGE,
@@ -223,8 +232,8 @@ class WorkerManager:
             name=container_name,
         )
         logger.info(
-            "Started project container %s (project: %s, session_vol: %s)",
-            container_name, project.name, session_vol,
+            "Started project container %s (project: %s)",
+            container_name, project.name,
         )
         return container.id
 

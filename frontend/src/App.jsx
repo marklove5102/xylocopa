@@ -1,5 +1,7 @@
+import { useState, useEffect } from "react";
 import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 import ProjectsPage from "./pages/ProjectsPage";
+import TrashPage from "./pages/TrashPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
 import AgentsPage from "./pages/AgentsPage";
 import AgentChatPage from "./pages/AgentChatPage";
@@ -8,6 +10,7 @@ import NewPage from "./pages/NewPage";
 import MonitorPage from "./pages/MonitorPage";
 import GitPage from "./pages/GitPage";
 import useTheme from "./hooks/useTheme";
+import { fetchUnreadCount } from "./lib/api";
 
 const tabs = [
   {
@@ -21,6 +24,7 @@ const tabs = [
   },
   {
     to: "/agents",
+    key: "agents",
     label: "Agents",
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -63,6 +67,14 @@ export default function App() {
   const themeProps = { theme, onToggleTheme: toggle };
   const location = useLocation();
   const hideNav = location.pathname.match(/^\/agents\/[^/]+$/);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    const poll = () => fetchUnreadCount().then((r) => setUnread(r.unread)).catch(() => {});
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="flex flex-col h-dvh bg-page text-heading min-w-[320px] overflow-x-hidden">
@@ -71,6 +83,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage {...themeProps} />} />
+          <Route path="/projects/trash" element={<TrashPage {...themeProps} />} />
           <Route path="/projects/:name" element={<ProjectDetailPage {...themeProps} />} />
           <Route path="/agents" element={<AgentsPage {...themeProps} />} />
           <Route path="/agents/:id" element={<AgentChatPage {...themeProps} />} />
@@ -105,7 +118,7 @@ export default function App() {
                   key={tab.to}
                   to={tab.to}
                   className={({ isActive }) =>
-                    `flex flex-col items-center justify-center min-h-[44px] py-2 transition-colors ${
+                    `relative flex flex-col items-center justify-center min-h-[44px] py-2 transition-colors ${
                       isActive
                         ? "text-cyan-400"
                         : "text-dim hover:text-body"
@@ -114,6 +127,11 @@ export default function App() {
                 >
                   {tab.icon}
                   <span className="text-xs mt-1">{tab.label}</span>
+                  {tab.key === "agents" && unread > 0 && (
+                    <span className="absolute top-1.5 left-[calc(50%+6px)] inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
                 </NavLink>
               )
             )}

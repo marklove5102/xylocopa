@@ -8,7 +8,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # Control worker containers
       - cc-orch-db:/app/db
       - cc-orch-backups:/app/backups
-      - ${HOST_PROJECTS_DIR:?Set HOST_PROJECTS_DIR in .env}:/projects:ro  # Host project code
+      - ${HOST_PROJECTS_DIR:?Set HOST_PROJECTS_DIR in .env}:/projects:rw  # Host project code (rw for archive/trash)
+      - ${HOST_CLAUDE_DIR:?Set HOST_CLAUDE_DIR in .env}:${HOST_CLAUDE_DIR}:rw  # Host ~/.claude for session symlinks
       - cc-logs:/app/logs
       - ./projects:/app/project-configs:ro           # Project registry configs
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro   # GPU monitoring

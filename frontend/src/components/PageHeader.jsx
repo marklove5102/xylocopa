@@ -13,7 +13,7 @@ const MoonIcon = (
   </svg>
 );
 
-export default function PageHeader({ title, theme, onToggleTheme, children }) {
+export default function PageHeader({ title, theme, onToggleTheme, actions, children }) {
   const navigate = useNavigate();
   const health = useHealthStatus();
 
@@ -29,7 +29,8 @@ export default function PageHeader({ title, theme, onToggleTheme, children }) {
   return (
     <div className="sticky top-0 z-10 bg-page border-b border-divider">
       <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-        <h1 className="text-xl font-bold text-heading flex-1">{title}</h1>
+        <h1 className="text-xl font-bold text-heading flex-1 shrink-0">{title}</h1>
+        {actions}
         <button
           type="button"
           onClick={() => navigate("/monitor")}

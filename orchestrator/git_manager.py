@@ -1,6 +1,7 @@
 """Git Manager — read-only git operations via temporary Docker containers."""
 
 import logging
+import os
 
 import docker
 from docker.errors import ContainerError, NotFound
@@ -11,6 +12,9 @@ logger = logging.getLogger("orchestrator.git")
 
 # Use a lightweight image for git operations
 GIT_IMAGE = "alpine/git"
+
+# Host path for bind-mounting into git containers
+_HOST_PROJECTS = os.environ.get("HOST_PROJECTS_DIR", "/projects")
 
 
 class GitManager:
@@ -25,7 +29,7 @@ class GitManager:
             output = self.docker_client.containers.run(
                 image=GIT_IMAGE,
                 command=git_args,
-                volumes={"cc-projects": {"bind": "/projects", "mode": "ro"}},
+                volumes={_HOST_PROJECTS: {"bind": "/projects", "mode": "ro"}},
                 working_dir=f"/projects/{project_name}",
                 user=f"{HOST_USER_UID}:{HOST_USER_UID}",
                 environment={
@@ -53,7 +57,7 @@ class GitManager:
                 image=GIT_IMAGE,
                 entrypoint=["sh", "-c"],
                 command=[command],
-                volumes={"cc-projects": {"bind": "/projects", "mode": "rw"}},
+                volumes={_HOST_PROJECTS: {"bind": "/projects", "mode": "rw"}},
                 working_dir=f"/projects/{project_name}",
                 user=f"{HOST_USER_UID}:{HOST_USER_UID}",
                 environment={

@@ -105,6 +105,15 @@ def init_db():
                 ))
             conn.commit()
 
+        # Add archived column to projects if missing
+        result = conn.execute(text("PRAGMA table_info(projects)"))
+        columns = {row[1] for row in result}
+        if "archived" not in columns:
+            conn.execute(text(
+                "ALTER TABLE projects ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+
         # Drop old priority column now that mode has been migrated
         result = conn.execute(text("PRAGMA table_info(agents)"))
         columns = {row[1] for row in result}
