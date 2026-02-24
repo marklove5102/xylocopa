@@ -17,7 +17,7 @@ import ModePicker from "../components/ModePicker";
 import WorktreePicker from "../components/WorktreePicker";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import { relativeTime } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName } from "../lib/constants";
 
 const AGENT_TABS = [
   { key: "starred", label: "Starred" },
@@ -100,6 +100,11 @@ function AgentRow({ agent, onClick, starred, onToggleStar, project }) {
         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDot}`} />
           <span className={`text-xs lowercase ${statusText}`}>{agent.status.toLowerCase().replace("_", " ")}</span>
+          {agent.model && (
+            <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated">
+              {modelDisplayName(agent.model)}
+            </span>
+          )}
           {agent.branch && (
             <span className="inline-flex items-center gap-1 text-xs text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded font-mono">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -307,6 +312,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Agent creation
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState("AUTO");
+  const [model, setModel] = useState(MODEL_OPTIONS[0].value);
   const [worktree, setWorktree] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -402,10 +408,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     if (!prompt.trim()) { showToast("Enter a description.", "error"); return; }
     setSubmitting(true);
     try {
-      const agent = await createAgent({ project: name, prompt: prompt.trim(), mode, worktree });
+      const agent = await createAgent({ project: name, prompt: prompt.trim(), mode, model, worktree });
       showToast("Agent created!");
       setPrompt("");
       setMode("AUTO");
+      setModel(MODEL_OPTIONS[0].value);
       setWorktree(null);
       navigate(`/agents/${agent.id}`);
     } catch (err) {
@@ -569,6 +576,22 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           />
         </div>
         <ModePicker value={mode} onChange={setMode} />
+        <div className="grid grid-cols-3 gap-3">
+          {MODEL_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setModel(opt.value)}
+              className={`min-h-[44px] rounded-lg text-sm font-medium transition-colors ${
+                model === opt.value
+                  ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/20"
+                  : "bg-elevated text-body hover:bg-hover"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         <button
           type="submit"
           disabled={submitting || !prompt.trim()}

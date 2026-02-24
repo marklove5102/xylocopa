@@ -87,6 +87,58 @@ def verify_token(token: str, jwt_secret: str) -> bool:
         return False
 
 
+class LoginRateLimiter:
+    """In-memory rate limiter with exponential backoff.
+
+    After `threshold` failures, locks the IP for `base_seconds * 2^(n - threshold)`
+    seconds, capped at `max_seconds`. Restarting the server clears all state.
+    """
+
+    def __init__(self, threshold: int = 5, base_seconds: int = 60, max_seconds: int = 3600):
+        self.threshold = threshold
+        self.base_seconds = base_seconds
+        self.max_seconds = max_seconds
+        # ip -> {"failures": int, "locked_until": float}
+        self._state: dict[str, dict] = {}
+
+    def _lockout_duration(self, failures: int) -> int:
+        exponent = failures - self.threshold
+        return min(self.base_seconds * (2 ** exponent), self.max_seconds)
+
+    def check(self, ip: str) -> tuple[bool, int]:
+        """Check if IP is locked. Returns (is_locked, seconds_remaining)."""
+        entry = self._state.get(ip)
+        if not entry:
+            return False, 0
+        if entry["failures"] < self.threshold:
+            return False, 0
+        remaining = entry["locked_until"] - time.time()
+        if remaining <= 0:
+            return False, 0
+        return True, int(remaining) + 1
+
+    def record_failure(self, ip: str) -> tuple[bool, int]:
+        """Record a failed attempt. Returns (now_locked, lock_seconds)."""
+        entry = self._state.get(ip)
+        if not entry:
+            entry = {"failures": 0, "locked_until": 0.0}
+            self._state[ip] = entry
+        entry["failures"] += 1
+        if entry["failures"] >= self.threshold:
+            duration = self._lockout_duration(entry["failures"])
+            entry["locked_until"] = time.time() + duration
+            return True, duration
+        return False, 0
+
+    def record_success(self, ip: str) -> None:
+        """Clear failure count on successful login."""
+        self._state.pop(ip, None)
+
+
+# Singleton — lives in memory, cleared on server restart
+login_limiter = LoginRateLimiter()
+
+
 def get_jwt_secret(db_session) -> str:
     """Get the JWT secret from SystemConfig, creating if missing."""
     from models import SystemConfig

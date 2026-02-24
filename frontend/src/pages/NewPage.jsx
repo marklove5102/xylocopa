@@ -198,16 +198,16 @@ function NewAgentForm({ showToast, navigate }) {
 
       <div className="rounded-xl bg-surface shadow-card p-4">
         <label className="block text-sm font-medium text-label mb-3">Model</label>
-        <div className="flex gap-2 flex-wrap">
+        <div className="grid grid-cols-3 gap-3">
           {MODEL_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => setModel(opt.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`min-h-[44px] rounded-lg text-sm font-medium transition-colors ${
                 model === opt.value
-                  ? "bg-cyan-600 text-white"
-                  : "bg-input text-label hover:bg-elevated hover:text-body"
+                  ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/20"
+                  : "bg-elevated text-body hover:bg-hover"
               }`}
             >
               {opt.label}
