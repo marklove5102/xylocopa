@@ -46,6 +46,7 @@ from auth import (
     create_token,
     get_jwt_secret,
     get_password_hash,
+    login_limiter,
     set_password_hash,
     verify_password,
     verify_token,
@@ -306,7 +307,17 @@ async def auth_set_password(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login")
 async def auth_login(request: Request, db: Session = Depends(get_db)):
-    """Login with password. Returns JWT token."""
+    """Login with password. Returns JWT token. Rate-limited with exponential backoff."""
+    ip = request.client.host if request.client else "unknown"
+
+    # Check if this IP is locked out
+    locked, remaining = login_limiter.check(ip)
+    if locked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Try again in {remaining}s.",
+        )
+
     pw_hash = get_password_hash(db)
     if pw_hash is None:
         raise HTTPException(status_code=400, detail="No password set — use /api/auth/set-password")
@@ -314,8 +325,14 @@ async def auth_login(request: Request, db: Session = Depends(get_db)):
     body = await request.json()
     password = body.get("password", "")
     if not verify_password(password, pw_hash):
-        raise HTTPException(status_code=401, detail="Wrong password")
+        now_locked, lock_secs = login_limiter.record_failure(ip)
+        detail = "Wrong password"
+        if now_locked:
+            detail += f". Locked out for {lock_secs}s."
+            logger.warning("Login locked for %s after repeated failures (%ds)", ip, lock_secs)
+        raise HTTPException(status_code=401, detail=detail)
 
+    login_limiter.record_success(ip)
     jwt_secret = get_jwt_secret(db)
     token = create_token(jwt_secret)
     return {"token": token, "expires_minutes": AUTH_TIMEOUT_MINUTES}
