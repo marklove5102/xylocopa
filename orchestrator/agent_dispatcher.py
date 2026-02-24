@@ -75,9 +75,13 @@ def _format_tool_summary(name: str, input_data: dict) -> str | None:
     return f"> `{name}`"
 
 
-def _extract_result(logs: str) -> str:
-    """Extract agent response text and tool call summaries from stream-json."""
-    parts = []  # ordered list of text strings and tool summary strings
+def _parse_stream_parts(logs: str) -> tuple[list[tuple[str, str]], dict | None]:
+    """Parse stream-json logs into an ordered list of (kind, content) parts.
+
+    Returns (parts, result_event) where parts is a list of
+    ("text", text_string) or ("tool", summary_string) tuples.
+    """
+    parts = []
     result_event = None
     for line in logs.strip().splitlines():
         line = line.strip()
@@ -107,6 +111,36 @@ def _extract_result(logs: str) -> str:
                                 parts.append(("tool", summary))
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
+    return parts, result_event
+
+
+def _format_parts(parts: list[tuple[str, str]]) -> str:
+    """Format parsed parts into a single markdown-ish string."""
+    if not parts:
+        return ""
+    groups = []
+    current_tools = []
+    for kind, content in parts:
+        if kind == "tool":
+            current_tools.append(content)
+        else:
+            if current_tools:
+                groups.append("\n".join(current_tools))
+                current_tools = []
+            groups.append(content)
+    if current_tools:
+        groups.append("\n".join(current_tools))
+
+    text = "\n\n".join(groups)
+    # Strip legacy EXIT_SUCCESS / EXIT_FAILURE markers
+    text = re.sub(r"\n?EXIT_SUCCESS\s*$", "", text).strip()
+    text = re.sub(r"\n?EXIT_FAILURE:?.*$", "", text).strip()
+    return text
+
+
+def _extract_result(logs: str) -> str:
+    """Extract agent response text and tool call summaries from stream-json."""
+    parts, result_event = _parse_stream_parts(logs)
 
     # Friendly error messages for known error patterns
     if result_event and result_event.get("is_error"):
@@ -115,26 +149,9 @@ def _extract_result(logs: str) -> str:
             if isinstance(err, str) and "No conversation found with session ID" in err:
                 return "This session's conversation data is no longer available. It may have been cleaned up or created on a different machine. Please start a new conversation instead."
 
-    if parts:
-        # Group consecutive tool summaries together, separate with blank lines
-        groups = []
-        current_tools = []
-        for kind, content in parts:
-            if kind == "tool":
-                current_tools.append(content)
-            else:
-                if current_tools:
-                    groups.append("\n".join(current_tools))
-                    current_tools = []
-                groups.append(content)
-        if current_tools:
-            groups.append("\n".join(current_tools))
-
-        text = "\n\n".join(groups)
-        # Strip legacy EXIT_SUCCESS / EXIT_FAILURE markers
-        text = re.sub(r"\n?EXIT_SUCCESS\s*$", "", text).strip()
-        text = re.sub(r"\n?EXIT_FAILURE:?.*$", "", text).strip()
-        return text or "(no output)"
+    text = _format_parts(parts)
+    if text:
+        return text
 
     # Fallback: return last chunk of raw output
     lines = logs.strip().splitlines()
@@ -196,6 +213,9 @@ class AgentDispatcher:
         # agent_id -> consecutive retry count
         self._stale_session_retries: dict[str, int] = {}
         self._max_stale_retries = 3
+
+        # Streaming output loops: agent_id -> asyncio.Task
+        self._stream_tasks: dict[str, asyncio.Task] = {}
 
     def get_active_sessions(self) -> list[tuple[str, str]]:
         """Return (session_id, project_path) for all agents with sessions.
@@ -460,6 +480,7 @@ class AgentDispatcher:
 
         for agent_id in done_agents:
             self._active_execs.pop(agent_id, None)
+            self._cancel_stream_task(agent_id)
 
     # ---- Step 2: Harvest planners ----
 
@@ -575,6 +596,7 @@ class AgentDispatcher:
 
         for agent_id in timed_out:
             self._active_execs.pop(agent_id, None)
+            self._cancel_stream_task(agent_id)
 
     # ---- Step 4: Start new agents ----
 
@@ -786,6 +808,9 @@ class AgentDispatcher:
                 pending_msg.status = MessageStatus.EXECUTING
                 executing_count += 1
 
+                # Start streaming output to frontend
+                self._start_stream_task(agent.id, output_file)
+
                 logger.info(
                     "Dispatched message %s to agent %s (resume=%s)",
                     pending_msg.id, agent.id, bool(resume_session_id),
@@ -860,6 +885,69 @@ class AgentDispatcher:
             lines.append(f"[{role}]: {content}")
         lines.append("--- End of history ---\n")
         return "\n".join(lines)
+
+    # ---- Streaming output ----
+
+    async def _stream_output_loop(self, agent_id: str, output_file: str):
+        """Tail an agent's output file and emit incremental content via WS.
+
+        Runs as an asyncio task for the duration of an exec.  Reads new
+        lines from the output file every 0.5s, parses stream-json, and
+        broadcasts the accumulated text snapshot so the frontend can
+        display it progressively.
+        """
+        from websocket import emit_agent_stream
+
+        file_pos = 0
+        last_content = ""
+
+        while True:
+            await asyncio.sleep(0.5)
+
+            # Check if the exec is still tracked (may have been harvested)
+            if agent_id not in self._active_execs:
+                break
+
+            try:
+                with open(output_file, "r", errors="replace") as f:
+                    f.seek(file_pos)
+                    new_data = f.read()
+                    file_pos = f.tell()
+            except (FileNotFoundError, OSError):
+                continue
+
+            if not new_data:
+                continue
+
+            # Re-read entire file to parse from scratch (stream-json
+            # events can span multiple reads and we need the full picture)
+            try:
+                with open(output_file, "r", errors="replace") as f:
+                    full_logs = f.read()
+            except (FileNotFoundError, OSError):
+                continue
+
+            parts, _ = _parse_stream_parts(full_logs)
+            content = _format_parts(parts)
+
+            if content and content != last_content:
+                last_content = content
+                self._emit(emit_agent_stream(agent_id, content))
+
+    def _start_stream_task(self, agent_id: str, output_file: str):
+        """Start a streaming output task for an agent exec."""
+        # Cancel any existing stream task
+        self._cancel_stream_task(agent_id)
+        task = asyncio.ensure_future(
+            self._stream_output_loop(agent_id, output_file)
+        )
+        self._stream_tasks[agent_id] = task
+
+    def _cancel_stream_task(self, agent_id: str):
+        """Cancel and clean up a streaming task."""
+        task = self._stream_tasks.pop(agent_id, None)
+        if task and not task.done():
+            task.cancel()
 
     # ---- Recovery ----
 

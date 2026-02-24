@@ -120,3 +120,11 @@ async def emit_new_message(agent_id: str, message_id: str):
         "agent_id": agent_id,
         "message_id": message_id,
     })
+
+
+async def emit_agent_stream(agent_id: str, content: str):
+    """Send incremental streaming content for an executing agent."""
+    await ws_manager.broadcast("agent_stream", {
+        "agent_id": agent_id,
+        "content": content,
+    })
