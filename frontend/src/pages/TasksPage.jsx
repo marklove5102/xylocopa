@@ -51,17 +51,10 @@ export default function TasksPage({ theme, onToggleTheme }) {
         ? tasks.filter((t) => ["FAILED", "TIMEOUT", "CANCELLED"].includes(t.status))
         : tasks.filter((t) => t.status === activeTab);
 
-  // Sort: active states first, then by created_at desc
-  const statusOrder = {
-    PLAN_REVIEW: 0, EXECUTING: 1, PLANNING: 2, PENDING: 3,
-    COMPLETED: 4, FAILED: 5, TIMEOUT: 6, CANCELLED: 7,
-  };
-  const sorted = [...filtered].sort((a, b) => {
-    const oa = statusOrder[a.status] ?? 99;
-    const ob = statusOrder[b.status] ?? 99;
-    if (oa !== ob) return oa - ob;
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-  });
+  // Sort: newest first by created_at
+  const sorted = [...filtered].sort((a, b) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">

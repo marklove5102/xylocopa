@@ -39,6 +39,10 @@ DB_PATH = os.getenv("DB_PATH", "./data/orchestrator.db")
 LOG_DIR = os.getenv("LOG_DIR", "./logs")
 BACKUP_DIR = os.getenv("BACKUP_DIR", "./backups")
 
+# Session cache
+SESSION_CACHE_INTERVAL = int(os.getenv("SESSION_CACHE_INTERVAL", "30"))
+CLAUDE_HOME = os.path.expanduser("~/.claude")
+
 # Project configs
 PROJECT_CONFIGS_PATH = os.getenv("PROJECT_CONFIGS_PATH", "./project-configs")
 

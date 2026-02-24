@@ -83,13 +83,38 @@ function ChatBubble({ message, project }) {
 
 // --- Typing Indicator ---
 
-function TypingIndicator() {
+function TypingIndicator({ messages }) {
+  // Find the message being executed to show context
+  const executingMsg = [...(messages || [])].reverse().find(
+    (m) => m.status === "EXECUTING" && m.role === "USER"
+  );
+  const lastUserMsg = !executingMsg && [...(messages || [])].reverse().find(
+    (m) => m.role === "USER"
+  );
+  const contextMsg = executingMsg || lastUserMsg;
+  const preview = contextMsg?.content
+    ? contextMsg.content.length > 80
+      ? contextMsg.content.slice(0, 80) + "…"
+      : contextMsg.content
+    : null;
+
   return (
-    <div className="flex justify-start my-2">
-      <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5 flex items-center gap-[5px]">
-        <span className="typing-dot" style={{ animationDelay: "0ms" }} />
-        <span className="typing-dot" style={{ animationDelay: "200ms" }} />
-        <span className="typing-dot" style={{ animationDelay: "400ms" }} />
+    <>
+      {preview && (
+        <div className="flex justify-start my-2">
+          <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%]">
+            <p className="text-xs text-dim leading-snug">
+              Working on: {preview}
+            </p>
+          </div>
+        </div>
+      )}
+      <div className="flex justify-start my-2">
+        <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5 flex items-center gap-[5px]">
+          <span className="typing-dot" style={{ animationDelay: "0ms" }} />
+          <span className="typing-dot" style={{ animationDelay: "200ms" }} />
+          <span className="typing-dot" style={{ animationDelay: "400ms" }} />
+        </div>
       </div>
       <style>{`
         .typing-dot {
@@ -110,7 +135,7 @@ function TypingIndicator() {
           }
         }
       `}</style>
-    </div>
+    </>
   );
 }
 
@@ -204,7 +229,7 @@ function ChatInput({ onSend, disabled, disabledReason }) {
   };
 
   return (
-    <div className="border-t border-divider bg-surface px-3 py-2 safe-area-pb">
+    <div className="border-t border-input bg-surface px-3 py-2 pb-[max(12px,env(safe-area-inset-bottom,12px))]">
       <div className="flex items-end gap-2 max-w-2xl mx-auto">
         <textarea
           ref={textareaRef}
@@ -625,7 +650,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         )}
 
         {/* Typing indicator */}
-        {isExecuting && <TypingIndicator />}
+        {isExecuting && <TypingIndicator messages={messages} />}
 
         <div ref={messagesEndRef} />
       </div>

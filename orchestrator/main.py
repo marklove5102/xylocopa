@@ -131,10 +131,18 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    # Disable Claude Code session auto-cleanup
+    try:
+        from session_cache import ensure_cleanup_disabled
+        ensure_cleanup_disabled()
+    except Exception:
+        logger.exception("Failed to disable session cleanup")
+
     # Start dispatchers and git manager
     dispatch_task = None
     agent_dispatch_task = None
     backup_task = None
+    session_cache_task = None
     try:
         from agent_dispatcher import AgentDispatcher
         from dispatcher import TaskDispatcher
@@ -151,6 +159,15 @@ async def lifespan(app: FastAPI):
         dispatch_task = asyncio.create_task(dispatcher.run())
         agent_dispatch_task = asyncio.create_task(agent_dispatcher.run())
         logger.info("Dispatchers started")
+
+        # Start session cache loop
+        try:
+            from session_cache import run_session_cache_loop
+            session_cache_task = asyncio.create_task(
+                run_session_cache_loop(agent_dispatcher.get_active_sessions)
+            )
+        except Exception:
+            logger.exception("Failed to start session cache loop")
     except Exception:
         logger.exception("Failed to start dispatchers — running without scheduling")
 
@@ -165,7 +182,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    for task in (dispatch_task, agent_dispatch_task, backup_task):
+    for task in (dispatch_task, agent_dispatch_task, backup_task, session_cache_task):
         if task:
             task.cancel()
             try:
