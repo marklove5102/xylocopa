@@ -51,7 +51,7 @@ echo "Setting up environment variables..."
 if [ ! -f .env ]; then
     cp .env.example .env
     # Auto-fill HOST_PROJECTS_DIR and HOST_USER_UID
-    sed -i "s|/home/YOUR_USERNAME/cc-projects|$HOME/cc-projects|g" .env
+    sed -i "s|/home/YOUR_USERNAME/agenthive-projects|$HOME/agenthive-projects|g" .env
     sed -i "s|/home/YOUR_USERNAME/.claude|$HOME/.claude|g" .env
     sed -i "s|HOST_USER_UID=1000|HOST_USER_UID=$(id -u)|g" .env
     ok "Created .env (copied from .env.example, auto-filled paths)"
@@ -65,7 +65,7 @@ fi
 
 # 3b. Create host projects directory
 source .env 2>/dev/null || true
-PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/cc-projects}"
+PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/agenthive-projects}"
 if [ ! -d "$PROJECTS_DIR" ]; then
     mkdir -p "$PROJECTS_DIR"
     ok "Created projects directory: $PROJECTS_DIR"

@@ -42,7 +42,7 @@ Lab Computer (Host — DO NOT TOUCH)
 ├── Docker volumes (auto-managed):
 │   ├── cc-orch-db          ← SQLite database
 │   ├── cc-orch-backups     ← Automatic backups
-│   ├── cc-projects         ← All project code
+│   ├── agenthive-projects         ← All project code
 │   │   ├── crowd-nav/
 │   │   ├── vla-delivery/
 │   │   └── ...
@@ -147,7 +147,7 @@ services:
       - cc-orch-db:/app/db
       - cc-orch-backups:/app/backups
       - /var/run/docker.sock:/var/run/docker.sock  # Control worker containers
-      - cc-projects:/projects:ro    # Read-only access to project code
+      - agenthive-projects:/projects:ro    # Read-only access to project code
       - ./logs:/app/logs
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -165,7 +165,7 @@ services:
 volumes:
   cc-orch-db:
   cc-orch-backups:
-  cc-projects:
+  agenthive-projects:
   cc-git-bare:
   cc-logs:
 ```
@@ -181,7 +181,7 @@ container = docker_client.containers.run(
     command=f'claude -p "{prompt}" --dangerously-skip-permissions '
             f'--output-format stream-json --verbose',
     volumes={
-        'cc-projects': {'bind': '/projects', 'mode': 'rw'},
+        'agenthive-projects': {'bind': '/projects', 'mode': 'rw'},
         'cc-git-bare': {'bind': '/git-bare', 'mode': 'rw'},
     },
     working_dir=f'/projects/{project_name}',
@@ -350,7 +350,7 @@ Orchestrator                          Docker
     │                                    │
     ├─ create container ────────────────►│ worker-{task_id}
     │   (image: cc-worker,               │
-    │    volume: cc-projects,            │
+    │    volume: agenthive-projects,            │
     │    working_dir: /projects/{name})  │
     │                                    │
     ├─ stream logs ◄─────────────────────│ claude -p "..." --stream-json

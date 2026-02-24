@@ -33,18 +33,45 @@ _(coming soon)_
 - **Claude subscription** — Claude Max or Pro (uses OAuth token, no separate API billing)
 - **OpenAI API key** (optional, for voice input)
 
+## Folder Layout
+
+After installation, your home directory will look like this:
+
+```
+~/
+├── agenthive-main/              ← This repo (orchestrator, frontend, configs)
+│   ├── install.sh               ← One-command installer
+│   ├── run.sh                   ← Host-mode launcher (no Docker)
+│   ├── docker-compose.yml       ← Docker service definitions
+│   ├── orchestrator/            ← FastAPI backend
+│   ├── frontend/                ← React + Vite frontend
+│   ├── worker/                  ← Worker container image
+│   ├── scripts/                 ← Helper scripts (init, add-project, restore)
+│   ├── certs/                   ← Self-signed SSL certificates
+│   ├── project-configs/         ← Project registry (registry.yaml)
+│   ├── data/                    ← SQLite database (host-mode)
+│   └── .env                     ← Environment variables
+│
+└── agenthive-projects/          ← All managed project code
+    ├── crowd-nav/
+    ├── vla-delivery/
+    └── ...
+```
+
+`agenthive-main` contains the orchestration system itself. `agenthive-projects` contains the actual project repositories that agents work on. They are kept separate so you can back up, move, or resize them independently.
+
 ## Quick Install
 
 Run the automated installer (requires sudo for Docker and system dependencies):
 
 ```bash
-git clone https://github.com/jyao97/AgentHive.git
-cd AgentHive
+git clone https://github.com/jyao97/AgentHive.git agenthive-main
+cd agenthive-main
 chmod +x install.sh
 ./install.sh
 ```
 
-The installer handles everything: system packages, Docker, Node.js, Python venv, Claude CLI, SSL certs, `.env` setup, Docker image builds, and service startup.
+The installer handles everything: system packages, Docker, Node.js, Python venv, Claude CLI, SSL certs, `.env` setup, Docker image builds, and service startup. It creates `~/agenthive-projects/` automatically.
 
 After installation, open `https://<your-ip>:3000` in a browser.
 
@@ -55,8 +82,8 @@ If you prefer to set things up step by step:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/jyao97/AgentHive.git
-cd AgentHive
+git clone https://github.com/jyao97/AgentHive.git agenthive-main
+cd agenthive-main
 ```
 
 ### 2. Install system dependencies
@@ -97,7 +124,7 @@ Fill in the required values:
 
 ```bash
 # Required
-HOST_PROJECTS_DIR=/home/YOUR_USERNAME/cc-projects
+HOST_PROJECTS_DIR=/home/YOUR_USERNAME/agenthive-projects
 CLAUDE_CODE_OAUTH_TOKEN=
 HOST_USER_UID=1000    # output of: id -u
 
@@ -114,7 +141,7 @@ HOST_CLAUDE_DIR=/home/YOUR_USERNAME/.claude
 ### 5. Create projects directory
 
 ```bash
-mkdir -p ~/cc-projects
+mkdir -p ~/agenthive-projects   # Separate directory for project code
 ```
 
 ### 6. Generate self-signed SSL certificates
@@ -159,7 +186,7 @@ curl -k https://localhost:3000
 ./scripts/add-project.sh my-project https://github.com/user/my-project.git
 ```
 
-This clones the repo into `~/cc-projects/my-project/`, creates a `CLAUDE.md` template if missing, and adds it to `projects/registry.yaml`.
+This clones the repo into `~/agenthive-projects/my-project/`, creates a `CLAUDE.md` template if missing, and registers it in `project-configs/registry.yaml`.
 
 ### 9. Access the UI
 
@@ -210,7 +237,7 @@ Browser / Phone (https://host:3000)
                      ├── Isolated per-task
                      ├── CPU/RAM limited
                      ├── No SSH, no sudo, non-root
-                     └── Volume: ~/cc-projects (shared)
+                     └── Volume: ~/agenthive-projects/ (shared)
 ```
 
 ## Configuration
