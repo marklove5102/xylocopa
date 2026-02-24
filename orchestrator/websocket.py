@@ -85,10 +85,10 @@ async def emit_task_update(task_id: str, status: str, project: str):
     })
 
 
-async def emit_worker_update(action: str, container_name: str, project: str = ""):
+async def emit_worker_update(action: str, process_name: str, project: str = ""):
     await ws_manager.broadcast("worker_update", {
         "action": action,  # "created" | "destroyed"
-        "container": container_name,
+        "process": process_name,
         "project": project,
     })
 

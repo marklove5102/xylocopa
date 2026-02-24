@@ -686,7 +686,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           <div className="bg-surface rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-card">
             <h3 className="text-lg font-bold text-heading">Stop Agent?</h3>
             <p className="text-sm text-label">
-              This will stop and remove the agent's container. You won't be able to send more messages.
+              This will stop the agent. You won't be able to send more messages.
             </p>
             <div className="flex gap-3">
               <button

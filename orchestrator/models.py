@@ -75,7 +75,7 @@ class Task(Base):
     )
     plan: Mapped[str | None] = mapped_column(Text, nullable=True)
     plan_approved: Mapped[bool] = mapped_column(Boolean, default=False)
-    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)  # stores pid_str
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     retries: Mapped[int] = mapped_column(Integer, default=0)
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -99,7 +99,6 @@ class Agent(Base):
     status: Mapped[AgentStatus] = mapped_column(
         Enum(AgentStatus), nullable=False, default=AgentStatus.STARTING, index=True
     )
-    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     worktree: Mapped[str | None] = mapped_column(String(200), nullable=True)
     plan: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -141,7 +140,6 @@ class Project(Base):
     path: Mapped[str] = mapped_column(String(500), nullable=False)
     git_remote: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     max_concurrent: Mapped[int] = mapped_column(Integer, default=2)
     default_model: Mapped[str] = mapped_column(
         String(100), default="claude-opus-4-6"

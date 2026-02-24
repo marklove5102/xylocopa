@@ -45,7 +45,6 @@ class AgentOut(BaseModel):
     name: str
     mode: AgentMode
     status: AgentStatus
-    container_id: str | None = None
     branch: str | None = None
     worktree: str | None = None
     plan: str | None = None
