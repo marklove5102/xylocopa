@@ -35,6 +35,8 @@ WORKER_NETWORK = os.getenv("WORKER_NETWORK", "cc-worker-net")
 # Host paths (must be HOST paths, not container paths — used when creating worker containers)
 # Projects directory on the host (bind-mounted into workers as /projects)
 HOST_PROJECTS_DIR = os.getenv("HOST_PROJECTS_DIR", "")
+# Host ~/.claude directory — shared with containers for session persistence
+HOST_CLAUDE_DIR = os.getenv("HOST_CLAUDE_DIR", "")
 
 # Claude auth — 1-year OAuth token from `claude setup-token`
 CLAUDE_CODE_OAUTH_TOKEN = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")

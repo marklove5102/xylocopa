@@ -18,8 +18,16 @@ async function request(url, opts = {}) {
 export const fetchProjects = () => request("/api/projects");
 export const createProject = (data) =>
   request("/api/projects", { method: "POST", body: JSON.stringify(data) });
+export const fetchAllFolders = () => request("/api/projects/folders");
+export const archiveProject = (name) =>
+  request(`/api/projects/${name}/archive`, { method: "POST" });
+export const fetchTrashFolders = () => request("/api/projects/trash");
 export const deleteProject = (name) =>
   request(`/api/projects/${name}`, { method: "DELETE" });
+export const deleteTrashFolder = (name) =>
+  request(`/api/projects/trash/${name}`, { method: "DELETE" });
+export const restoreTrashFolder = (name) =>
+  request(`/api/projects/trash/${name}/restore`, { method: "POST" });
 export const fetchProjectAgents = (name, params = "") =>
   request(`/api/projects/${name}/agents${params ? `?${params}` : ""}`);
 export const fetchProjectWorktrees = (name) =>
@@ -34,6 +42,7 @@ export const fetchTask = (id) => request(`/api/tasks/${id}`);
 export const fetchAgents = (params = "") =>
   request(`/api/agents${params ? `?${params}` : ""}`);
 export const fetchAgent = (id) => request(`/api/agents/${id}`);
+export const fetchUnreadCount = () => request("/api/agents/unread");
 export const createAgent = (data) =>
   request("/api/agents", { method: "POST", body: JSON.stringify(data) });
 export const stopAgent = (id) =>

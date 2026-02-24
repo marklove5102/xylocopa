@@ -102,12 +102,13 @@ class ProjectOut(BaseModel):
     description: str | None = None
     max_concurrent: int = 2
     default_model: str = "claude-sonnet-4-5-20250514"
+    archived: bool = False
 
     model_config = {"from_attributes": True}
 
 
 class ProjectCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
     git_url: str | None = None
     description: str | None = None
 

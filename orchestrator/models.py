@@ -145,6 +145,7 @@ class Project(Base):
     default_model: Mapped[str] = mapped_column(
         String(100), default="claude-sonnet-4-5-20250514"
     )
+    archived: Mapped[bool] = mapped_column(default=False)
 
 
 class SystemConfig(Base):

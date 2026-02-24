@@ -1,19 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchProjects } from "../lib/api";
+import { fetchAllFolders, fetchTrashFolders, createProject, archiveProject } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import BotIcon from "../components/BotIcon";
 import PageHeader from "../components/PageHeader";
 
-function botState(proj) {
-  if (proj.agent_active > 0 || proj.task_running > 0) return "running";
-  if (proj.task_failed > 0) return "error";
-  if (proj.agent_total > 0 || proj.task_completed > 0) return "completed";
+function botState(folder) {
+  if (!folder.active) return "idle";
+  if ((folder.agent_active || 0) > 0) return "running";
+  if (folder.agent_count > 0) return "completed";
   return "idle";
 }
 
-function ProjectCard({ project, onClick }) {
-  const state = botState(project);
+function FolderCard({ folder, onClick, onActivate, onArchive, busy }) {
+  const state = botState(folder);
+
   return (
     <button
       type="button"
@@ -23,36 +24,75 @@ function ProjectCard({ project, onClick }) {
       <div className="flex items-start gap-4">
         <BotIcon state={state} className="w-10 h-10 shrink-0" />
         <div className="min-w-0 flex-1">
-          <h3 className="text-base font-semibold text-heading truncate">
-            {project.display_name || project.name}
-          </h3>
-          {project.git_remote && (
-            <p className="text-xs text-dim truncate mt-0.5">{project.git_remote}</p>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-heading truncate">
+              {folder.display_name || folder.name}
+            </h3>
+            {folder.active ? (
+              <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-emerald-500/15 text-emerald-400 tracking-wide">
+                Active
+              </span>
+            ) : (
+              <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-zinc-500/15 text-zinc-400 tracking-wide">
+                Inactive
+              </span>
+            )}
+            {folder.container_running && (
+              <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Container running" />
+            )}
+          </div>
+          {folder.git_remote && (
+            <p className="text-xs text-dim truncate mt-0.5">{folder.git_remote}</p>
           )}
-          {project.description && (
-            <p className="text-xs text-label mt-1 line-clamp-2">{project.description}</p>
+          {folder.description && (
+            <p className="text-xs text-label mt-1 line-clamp-2">{folder.description}</p>
           )}
         </div>
       </div>
 
       {/* Stats row */}
       <div className="flex items-center gap-4 mt-4 text-xs">
-        <span className="text-label">
-          <span className="font-medium text-heading">{project.agent_total}</span> agents
-        </span>
-        {project.agent_active > 0 && (
-          <span className="text-cyan-400">{project.agent_active} active</span>
-        )}
-        {project.task_total > 0 && (
+        {folder.agent_count > 0 && (
           <span className="text-label">
-            <span className="font-medium text-heading">{project.task_total}</span> tasks
+            <span className="font-medium text-heading">{folder.agent_count}</span> agent{folder.agent_count !== 1 ? "s" : ""}
           </span>
         )}
-        {project.last_activity && (
-          <span className="ml-auto text-dim">
-            {relativeTime(project.last_activity)}
+        {folder.active && (folder.agent_active || 0) > 0 && (
+          <span className="text-cyan-400">{folder.agent_active} active</span>
+        )}
+        {folder.active && (folder.task_total || 0) > 0 && (
+          <span className="text-label">
+            <span className="font-medium text-heading">{folder.task_total}</span> tasks
           </span>
         )}
+        {!folder.active && folder.agent_count === 0 && (
+          <span className="text-dim">No history</span>
+        )}
+        <span className="ml-auto flex items-center gap-2">
+          {folder.last_activity && (
+            <span className="text-dim">{relativeTime(folder.last_activity)}</span>
+          )}
+          {/* Activate / Archive button */}
+          {!folder.active ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={(e) => { e.stopPropagation(); onActivate(folder.name); }}
+              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50 transition-colors"
+            >
+              {busy ? "..." : "Activate"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={(e) => { e.stopPropagation(); onArchive(folder.name); }}
+              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
+            >
+              {busy ? "..." : "Archive"}
+            </button>
+          )}
+        </span>
       </div>
     </button>
   );
@@ -60,21 +100,54 @@ function ProjectCard({ project, onClick }) {
 
 export default function ProjectsPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null); // folder name currently being toggled
+  const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState("ALL");
+  const [trashCount, setTrashCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchProjects();
-      setProjects(data);
+      const [data, trash] = await Promise.all([
+        fetchAllFolders(),
+        fetchTrashFolders(),
+      ]);
+      setFolders(data);
+      setTrashCount(trash.length);
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
+
+  const handleActivate = async (name) => {
+    setBusy(name);
+    try {
+      await createProject({ name });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleArchive = async (name) => {
+    setBusy(name);
+    try {
+      await archiveProject(name);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -82,12 +155,64 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     return () => clearInterval(interval);
   }, [load]);
 
+  const activeCount = folders.filter((f) => f.active).length;
+  const inactiveCount = folders.filter((f) => !f.active).length;
+
+  const filtered = folders
+    .filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active))
+    .sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  const FILTER_TABS = [
+    { key: "ALL", label: "All", count: folders.length },
+    { key: "ACTIVE", label: "Active", count: activeCount },
+    { key: "INACTIVE", label: "Inactive", count: inactiveCount },
+  ];
+
+  const refreshButton = (
+    <button
+      type="button"
+      onClick={() => { setRefreshing(true); load(); }}
+      title="Refresh"
+      className="p-2 rounded-lg text-label hover:text-heading hover:bg-input transition-colors"
+    >
+      <svg className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M20.49 9A9 9 0 005.64 5.64L4 4m16.36 16.36A9 9 0 0120.49 9" />
+      </svg>
+    </button>
+  );
+
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
-      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} />
+      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} actions={refreshButton}>
+        <div className="flex gap-1 px-4 pb-3">
+          {FILTER_TABS.map((tab) => {
+            const isActive = filter === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setFilter(tab.key)}
+                className={`min-h-[36px] px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-cyan-600 text-white"
+                    : "bg-surface text-label hover:bg-input hover:text-body"
+                }`}
+              >
+                {tab.label}
+                <span className={`ml-1.5 text-xs ${isActive ? "text-cyan-200" : "text-faint"}`}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </PageHeader>
       <div className="pb-20 p-4 max-w-2xl mx-auto w-full">
 
-      {loading && projects.length === 0 && (
+      {loading && folders.length === 0 && (
         <div className="flex justify-center py-12">
           <span className="text-dim text-sm animate-pulse">Loading projects...</span>
         </div>
@@ -102,25 +227,39 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
         </div>
       )}
 
-      {!loading && !error && projects.length === 0 && (
+      {!loading && !error && filtered.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-faint">
           <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
-          <p className="text-sm">No projects registered</p>
-          <p className="text-xs mt-1 text-ghost">Create one from the New tab</p>
+          <p className="text-sm">
+            {folders.length === 0 ? "No project folders found" : `No ${filter.toLowerCase()} projects`}
+          </p>
         </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {projects.map((proj) => (
-          <ProjectCard
-            key={proj.name}
-            project={proj}
-            onClick={() => navigate(`/projects/${proj.name}`)}
+        {filtered.map((folder) => (
+          <FolderCard
+            key={folder.name}
+            folder={folder}
+            onClick={() => navigate(`/projects/${folder.name}`)}
+            onActivate={handleActivate}
+            onArchive={handleArchive}
+            busy={busy === folder.name}
           />
         ))}
       </div>
+
+      {trashCount > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate("/projects/trash")}
+          className="block mx-auto mt-8 text-sm text-faint hover:text-dim transition-colors"
+        >
+          Deleted projects ({trashCount})
+        </button>
+      )}
       </div>
     </div>
   );

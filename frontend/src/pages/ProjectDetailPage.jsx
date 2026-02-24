@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  fetchProjects,
+  fetchAllFolders,
   fetchProjectAgents,
   createAgent,
+  createProject,
   deleteProject as deleteProjectApi,
+  archiveProject as archiveProjectApi,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -20,9 +22,9 @@ const AGENT_TABS = [
 ];
 
 function projectBotState(proj) {
-  if (proj.agent_active > 0) return "running";
-  if (proj.task_failed > 0) return "error";
-  if (proj.agent_total > 0) return "completed";
+  if (!proj.active) return "idle";
+  if ((proj.agent_active || 0) > 0) return "running";
+  if (proj.agent_count > 0) return "completed";
   return "idle";
 }
 
@@ -36,6 +38,15 @@ function agentBotState(status) {
 function AgentRow({ agent, onClick }) {
   const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
   const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyId = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(agent.id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   return (
     <button
@@ -43,7 +54,14 @@ function AgentRow({ agent, onClick }) {
       onClick={onClick}
       className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
     >
-      <BotIcon state={agentBotState(agent.status)} className="w-9 h-9 shrink-0" />
+      <div className="relative shrink-0" onClick={handleCopyId} title={`Copy ID: ${agent.id}`}>
+        <BotIcon state={agentBotState(agent.status)} className="w-9 h-9 cursor-pointer hover:opacity-70 transition-opacity" />
+        {copied && (
+          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
+            Copied!
+          </span>
+        )}
+      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-heading truncate flex-1">{agent.name}</h3>
@@ -94,7 +112,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const toastTimer = useRef(null);
   const textareaRef = useRef(null);
 
-  // Delete confirmation
+  // Activate / Archive / Delete
+  const [activating, setActivating] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -120,16 +140,16 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Fetch project + agents
   const loadData = useCallback(async () => {
     try {
-      const [projects, agentList] = await Promise.all([
-        fetchProjects(),
+      const [folders, agentList] = await Promise.all([
+        fetchAllFolders(),
         fetchProjectAgents(name),
       ]);
-      const proj = projects.find((p) => p.name === name);
-      if (!proj) {
+      const folder = folders.find((f) => f.name === name);
+      if (!folder) {
         navigate("/projects", { replace: true });
         return;
       }
-      setProject(proj);
+      setProject(folder);
       setAgents(agentList);
     } catch {
       // silently retry
@@ -170,6 +190,34 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       showToast("Failed: " + err.message, "error");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Activate project
+  const handleActivate = async () => {
+    setActivating(true);
+    try {
+      await createProject({ name });
+      showToast("Project activated!");
+      await loadData();
+    } catch (err) {
+      showToast("Activate failed: " + err.message, "error");
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  // Archive project
+  const handleArchive = async () => {
+    setArchiving(true);
+    try {
+      await archiveProjectApi(name);
+      showToast("Project archived");
+      await loadData();
+    } catch (err) {
+      showToast("Archive failed: " + err.message, "error");
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -222,12 +270,29 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           <div className="flex items-center gap-3">
             <BotIcon state={projectBotState(project)} className="w-10 h-10 shrink-0" />
             <div className="min-w-0 flex-1">
-              <h1 className="text-lg font-bold text-heading truncate">{project.display_name || project.name}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-heading truncate">{project.display_name || project.name}</h1>
+                {project.active ? (
+                  <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-emerald-500/15 text-emerald-400 tracking-wide">Active</span>
+                ) : (
+                  <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-zinc-500/15 text-zinc-400 tracking-wide">Inactive</span>
+                )}
+              </div>
               <div className="flex items-center gap-3 text-xs">
-                <span className="text-label">
-                  <span className="font-medium text-heading">{project.agent_total}</span> agents
-                </span>
-                {project.agent_active > 0 && (
+                {project.container_running ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Container running
+                  </span>
+                ) : project.active ? (
+                  <span className="text-dim">Container stopped</span>
+                ) : null}
+                {project.agent_count > 0 && (
+                  <span className="text-label">
+                    <span className="font-medium text-heading">{project.agent_count}</span> agent{project.agent_count !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {project.active && (project.agent_active || 0) > 0 && (
                   <span className="text-cyan-400">{project.agent_active} active</span>
                 )}
               </div>
@@ -238,7 +303,26 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
       <div className="pb-20 p-4 max-w-2xl mx-auto w-full space-y-5">
 
-      {/* New agent form */}
+      {/* Inactive project banner */}
+      {!project.active && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-amber-300">This project is inactive</p>
+            <p className="text-xs text-amber-400/70 mt-0.5">Activate to create new agents and run tasks</p>
+          </div>
+          <button
+            type="button"
+            disabled={activating}
+            onClick={handleActivate}
+            className="shrink-0 px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-500 disabled:opacity-50 transition-colors"
+          >
+            {activating ? "Activating..." : "Activate"}
+          </button>
+        </div>
+      )}
+
+      {/* New agent form — active projects only */}
+      {project.active && (
       <form onSubmit={handleSubmit} className="rounded-xl bg-surface shadow-card p-4 space-y-3">
         <label className="block text-sm font-medium text-label">New Agent</label>
         <div className="relative">
@@ -276,6 +360,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           {submitting ? "Creating..." : "Create Agent"}
         </button>
       </form>
+      )}
 
       {/* Agent tabs */}
       <div>
@@ -326,10 +411,41 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       {/* Project settings */}
       <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
         <h2 className="text-sm font-semibold text-label uppercase tracking-wider">Settings</h2>
+        {project.active ? (
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-body">Archive Project</p>
+              <p className="text-xs text-dim">Deactivate — code and history stay, re-activate anytime</p>
+            </div>
+            <button
+              type="button"
+              disabled={archiving}
+              onClick={handleArchive}
+              className="px-4 py-2 rounded-lg bg-amber-600/20 text-amber-400 text-sm font-medium hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
+            >
+              {archiving ? "Archiving..." : "Archive"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-body">Activate Project</p>
+              <p className="text-xs text-dim">Register this folder to create agents and run tasks</p>
+            </div>
+            <button
+              type="button"
+              disabled={activating}
+              onClick={handleActivate}
+              className="px-4 py-2 rounded-lg bg-cyan-600/20 text-cyan-400 text-sm font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
+            >
+              {activating ? "Activating..." : "Activate"}
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-body">Delete Project</p>
-            <p className="text-xs text-dim">Remove this project and all its data</p>
+            <p className="text-xs text-dim">Move files to .trash</p>
           </div>
           <button
             type="button"
