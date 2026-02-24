@@ -13,6 +13,7 @@ import LoginPage from "./pages/LoginPage";
 import useTheme from "./hooks/useTheme";
 import { authCheck, clearAuthToken, fetchUnreadCount, getAuthToken } from "./lib/api";
 import { isPushSupported, isPushEnabled, setupPushNotifications } from "./lib/pushNotifications";
+import useIdleLock from "./hooks/useIdleLock";
 
 const tabs = [
   {
@@ -69,6 +70,9 @@ function AuthGuard({ children }) {
   const [checked, setChecked] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [serverDown, setServerDown] = useState(false);
+
+  // Auto-lock after 30 min of inactivity (clears token + redirects to login)
+  useIdleLock(navigate);
 
   useEffect(() => {
     const token = getAuthToken();

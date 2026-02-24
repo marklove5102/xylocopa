@@ -900,7 +900,6 @@ class AgentDispatcher:
 
         file_pos = 0
         last_content = ""
-
         while True:
             await asyncio.sleep(0.5)
 
@@ -942,6 +941,7 @@ class AgentDispatcher:
             self._stream_output_loop(agent_id, output_file)
         )
         self._stream_tasks[agent_id] = task
+        logger.info("Started stream task for agent %s -> %s", agent_id, output_file)
 
     def _cancel_stream_task(self, agent_id: str):
         """Cancel and clean up a streaming task."""
