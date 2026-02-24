@@ -1,0 +1,763 @@
+"""Agent Dispatcher — scheduling loop for persistent agent containers."""
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
+
+from config import MAX_CONCURRENT_WORKERS, MAX_IDLE_AGENTS
+from database import SessionLocal
+from log_config import save_worker_log
+from models import (
+    Agent,
+    AgentMode,
+    AgentStatus,
+    Message,
+    MessageRole,
+    MessageStatus,
+    Project,
+    Task,
+)
+from plan_manager import PlanManager
+from worker_manager import WorkerManager
+
+logger = logging.getLogger("orchestrator.agent_dispatcher")
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+def _truncate(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "\n... [truncated]"
+
+
+def _extract_result(logs: str) -> str:
+    """Extract agent response text from stream-json output."""
+    import json
+    parts = []
+    for line in logs.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            if event.get("type") == "assistant" and "message" in event:
+                msg = event["message"]
+                if isinstance(msg, dict):
+                    for block in msg.get("content", []):
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(block["text"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+
+    if parts:
+        text = "\n".join(parts)
+        # Strip legacy EXIT_SUCCESS / EXIT_FAILURE markers
+        import re
+        text = re.sub(r"\n?EXIT_SUCCESS\s*$", "", text).strip()
+        text = re.sub(r"\n?EXIT_FAILURE:?.*$", "", text).strip()
+        return text or "(no output)"
+
+    # Fallback: return last chunk of raw output
+    lines = logs.strip().splitlines()
+    return "\n".join(lines[-20:]) if lines else "(no output)"
+
+
+def _is_result_error(logs: str) -> bool:
+    """Check if the stream-json result event indicates an error."""
+    import json
+    for line in logs.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            if event.get("type") == "result":
+                return event.get("is_error", False)
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+    return False
+
+
+def _extract_session_id(logs: str) -> str | None:
+    """Extract session_id from the result event in stream-json output."""
+    import json
+    for line in logs.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            if event.get("type") == "result" and event.get("session_id"):
+                return event["session_id"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+    return None
+
+
+class AgentDispatcher:
+    """Dispatch loop for persistent agent containers."""
+
+    def __init__(self, worker_manager: WorkerManager):
+        self.worker_mgr = worker_manager
+        self.plan_mgr = PlanManager(worker_manager)
+        self.running = False
+
+        # In-memory tracking of active execs
+        # agent_id -> {exec_id, output_file, message_id, started_at}
+        self._active_execs: dict[str, dict] = {}
+
+        # Planner containers (ephemeral, for P1 agents)
+        # agent_id -> container_id
+        self._active_planners: dict[str, str] = {}
+
+    def get_active_processes(self) -> list[dict]:
+        """Return info about currently running Claude processes."""
+        results = []
+        for agent_id, info in self._active_execs.items():
+            elapsed = (_utcnow() - info["started_at"]).total_seconds()
+            results.append({
+                "agent_id": agent_id,
+                "message_id": info["message_id"],
+                "started_at": info["started_at"].isoformat(),
+                "elapsed_seconds": int(elapsed),
+            })
+        for agent_id, container_id in self._active_planners.items():
+            results.append({
+                "agent_id": agent_id,
+                "type": "planner",
+                "started_at": None,
+                "elapsed_seconds": None,
+            })
+        return results
+
+    async def run(self):
+        """Start the agent dispatcher loop."""
+        self.running = True
+        logger.info("Agent dispatcher started")
+
+        self._recover_agents()
+
+        while self.running:
+            try:
+                if not self.worker_mgr.ping():
+                    await asyncio.sleep(5)
+                    continue
+
+                db = SessionLocal()
+                try:
+                    self._tick(db)
+                finally:
+                    db.close()
+            except Exception:
+                logger.exception("Agent dispatcher tick failed")
+            await asyncio.sleep(2)
+
+        logger.info("Agent dispatcher stopped")
+
+    def stop(self):
+        self.running = False
+
+    def _emit(self, coro):
+        try:
+            asyncio.ensure_future(coro)
+        except Exception:
+            pass
+
+    def _tick(self, db: Session):
+        # 1. Check container health for all non-stopped agents
+        self._check_container_health(db)
+
+        # 2. Harvest completed execs
+        self._harvest_completed_execs(db)
+
+        # 3. Harvest completed planners
+        self._harvest_planners(db)
+
+        # 4. Check exec timeouts
+        self._check_exec_timeouts(db)
+
+        # 5. Start new agent containers
+        self._start_new_agents(db)
+
+        # 6. Start planning for agents that need it
+        self._start_planning(db)
+
+        # 7. Dispatch pending messages to idle agents
+        self._dispatch_pending_messages(db)
+
+        db.commit()
+
+    # ---- Step 1: Container health ----
+
+    def _check_container_health(self, db: Session):
+        """Verify project containers are still running. On crash: mark all agents ERROR."""
+        # Check at project level — each project has one shared container
+        projects = db.query(Project).filter(
+            Project.container_id.is_not(None)
+        ).all()
+
+        for project in projects:
+            status = self.worker_mgr.get_status(project.container_id)
+            if status not in ("removed", "exited", "dead"):
+                continue
+
+            logger.warning(
+                "Project %s container crashed (status=%s)", project.name, status
+            )
+            project.container_id = None
+
+            # Mark all active agents in this project as ERROR
+            alive_statuses = [
+                AgentStatus.IDLE, AgentStatus.EXECUTING,
+                AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
+            ]
+            agents = db.query(Agent).filter(
+                Agent.project == project.name,
+                Agent.status.in_(alive_statuses),
+            ).all()
+
+            for agent in agents:
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content=f"Project container crashed (status: {status})",
+                    status=MessageStatus.COMPLETED,
+                )
+                db.add(msg)
+
+                agent.status = AgentStatus.ERROR
+                agent.container_id = None
+                agent.last_message_preview = "Container crashed"
+                agent.last_message_at = _utcnow()
+                agent.unread_count += 1
+
+                self._active_execs.pop(agent.id, None)
+                self._active_planners.pop(agent.id, None)
+
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+
+    # ---- Step 2: Harvest completed execs ----
+
+    def _harvest_completed_execs(self, db: Session):
+        """Check active execs that have finished."""
+        done_agents = []
+        for agent_id, info in list(self._active_execs.items()):
+            if self.worker_mgr.is_exec_running(info["exec_id"]):
+                continue
+
+            # Exec finished — read output
+            agent = db.get(Agent, agent_id)
+            if not agent or agent.status == AgentStatus.STOPPED:
+                done_agents.append(agent_id)
+                continue
+
+            # Use project container to read output
+            project = db.get(Project, agent.project)
+            container_id = (project.container_id if project else None) or agent.container_id
+            logs = self.worker_mgr.read_exec_output(
+                container_id, info["output_file"]
+            ) if container_id else ""
+            result_text = _extract_result(logs)
+
+            # Extract and store session_id for --resume on follow-ups
+            sid = _extract_session_id(logs)
+            if sid:
+                agent.session_id = sid
+
+            # Update the message that triggered this exec
+            message = db.get(Message, info["message_id"])
+            if message:
+                message.status = MessageStatus.COMPLETED
+                message.completed_at = _utcnow()
+
+            # Determine success/failure from stream-json result event
+            is_error = _is_result_error(logs)
+            if is_error:
+                resp = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.AGENT,
+                    content=result_text or "Agent encountered an error",
+                    status=MessageStatus.FAILED,
+                    stream_log=_truncate(logs, 50000),
+                    error_message=result_text[:200] if result_text else "Unknown error",
+                )
+                db.add(resp)
+                agent.status = AgentStatus.IDLE
+            else:
+                resp = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.AGENT,
+                    content=result_text,
+                    status=MessageStatus.COMPLETED,
+                    stream_log=_truncate(logs, 50000),
+                )
+                db.add(resp)
+                agent.status = AgentStatus.IDLE
+
+            # Update agent denormalized fields
+            preview = (result_text or "")[:200]
+            agent.last_message_preview = preview
+            agent.last_message_at = _utcnow()
+            agent.unread_count += 1
+
+            save_worker_log(f"agent-{agent.id}", logs)
+
+            from websocket import emit_agent_update, emit_new_message
+            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+            self._emit(emit_new_message(agent.id, resp.id))
+
+            done_agents.append(agent_id)
+
+        for agent_id in done_agents:
+            self._active_execs.pop(agent_id, None)
+
+    # ---- Step 3: Harvest planners ----
+
+    def _harvest_planners(self, db: Session):
+        """Check planning containers that have finished."""
+        done = []
+        for agent_id, container_id in list(self._active_planners.items()):
+            status = self.worker_mgr.get_status(container_id)
+            if status not in ("exited", "removed"):
+                continue
+
+            agent = db.get(Agent, agent_id)
+            if not agent:
+                done.append(agent_id)
+                continue
+
+            logs = self.worker_mgr.get_logs(container_id)
+
+            if "EXIT_SUCCESS" in logs:
+                plan_text = PlanManager.extract_plan(logs)
+                agent.plan = plan_text
+                agent.status = AgentStatus.PLAN_REVIEW
+
+                # Add plan as system message
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content=f"## Plan\n\n{plan_text}",
+                    status=MessageStatus.COMPLETED,
+                )
+                db.add(msg)
+                agent.last_message_preview = "Plan ready for review"
+                agent.last_message_at = _utcnow()
+                agent.unread_count += 1
+
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+            else:
+                agent.plan = "(Planning failed)"
+                agent.status = AgentStatus.PLAN_REVIEW
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content="Planning failed — worker did not produce a plan.",
+                    status=MessageStatus.FAILED,
+                )
+                db.add(msg)
+                agent.last_message_preview = "Planning failed"
+                agent.last_message_at = _utcnow()
+                agent.unread_count += 1
+
+            # Clean up planner container
+            try:
+                containers = self.worker_mgr.docker_client.containers.list(
+                    all=True, filters={"name": f"cc-planner-{agent.id}"}
+                )
+                for c in containers:
+                    c.remove(force=True)
+            except Exception:
+                pass
+
+            done.append(agent_id)
+
+        for agent_id in done:
+            self._active_planners.pop(agent_id, None)
+
+    # ---- Step 4: Timeouts ----
+
+    def _check_exec_timeouts(self, db: Session):
+        """Kill execs that exceed timeout. Agent goes back to IDLE (container stays)."""
+        now = _utcnow()
+        timed_out = []
+        for agent_id, info in list(self._active_execs.items()):
+            agent = db.get(Agent, agent_id)
+            if not agent:
+                timed_out.append(agent_id)
+                continue
+
+            started = info["started_at"]
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            elapsed = (now - started).total_seconds()
+
+            if elapsed > agent.timeout_seconds:
+                logger.warning(
+                    "Agent %s exec timed out after %ds (limit %ds)",
+                    agent.id, int(elapsed), agent.timeout_seconds,
+                )
+
+                # Kill the exec by running kill inside the container
+                try:
+                    container = self.worker_mgr.docker_client.containers.get(agent.container_id)
+                    container.exec_run(["pkill", "-f", "claude"], user="root")
+                except Exception:
+                    pass
+
+                # Read whatever output was produced
+                logs = self.worker_mgr.read_exec_output(
+                    agent.container_id, info["output_file"]
+                )
+
+                # Update message
+                message = db.get(Message, info["message_id"])
+                if message:
+                    message.status = MessageStatus.TIMEOUT
+                    message.error_message = f"Timed out after {int(elapsed)}s"
+                    message.completed_at = now
+
+                # Create system message
+                sys_msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content=f"Message timed out after {int(elapsed)}s",
+                    status=MessageStatus.COMPLETED,
+                )
+                db.add(sys_msg)
+
+                agent.status = AgentStatus.IDLE
+                agent.last_message_preview = f"Timed out after {int(elapsed)}s"
+                agent.last_message_at = now
+                agent.unread_count += 1
+
+                timed_out.append(agent_id)
+
+        for agent_id in timed_out:
+            self._active_execs.pop(agent_id, None)
+
+    # ---- Step 5: Start new agents ----
+
+    def _start_new_agents(self, db: Session):
+        """Start containers for STARTING agents (shared per-project container)."""
+        starting = db.query(Agent).filter(Agent.status == AgentStatus.STARTING).all()
+
+        for agent in starting:
+            project = db.get(Project, agent.project)
+            if not project:
+                agent.status = AgentStatus.ERROR
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content=f"Project '{agent.project}' not found",
+                    status=MessageStatus.FAILED,
+                )
+                db.add(msg)
+                continue
+
+            try:
+                container_id = self.worker_mgr.ensure_project_container(project)
+                project.container_id = container_id
+                agent.container_id = container_id
+                agent.status = AgentStatus.IDLE
+
+                sys_msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content="Agent started",
+                    status=MessageStatus.COMPLETED,
+                )
+                db.add(sys_msg)
+
+                logger.info("Agent %s started (project container %s)", agent.id, container_id[:12])
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+            except Exception:
+                logger.exception("Failed to start container for agent %s", agent.id)
+                agent.status = AgentStatus.ERROR
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content="Failed to start container",
+                    status=MessageStatus.FAILED,
+                )
+                db.add(msg)
+
+    # ---- Step 6: Planning ----
+
+    def _start_planning(self, db: Session):
+        """Start planning for PLAN-mode agents that need it."""
+        # Agents in IDLE that have pending messages AND need planning
+        idle_agents = db.query(Agent).filter(
+            Agent.status == AgentStatus.IDLE,
+            Agent.plan_approved == False,  # noqa: E712
+            Agent.mode == AgentMode.PLAN,
+        ).all()
+
+        # Auto-approve INTERVIEW and AUTO agents (they don't go through planning)
+        auto_agents = db.query(Agent).filter(
+            Agent.status == AgentStatus.IDLE,
+            Agent.plan_approved == False,  # noqa: E712
+            Agent.mode.in_([AgentMode.AUTO, AgentMode.INTERVIEW]),
+        ).all()
+        for agent in auto_agents:
+            agent.plan_approved = True
+
+        # Count active planning containers
+        planning_count = len(self._active_planners)
+        executing_count = len(self._active_execs)
+        total_active = planning_count + executing_count
+
+        for agent in idle_agents:
+            if agent.id in self._active_planners:
+                continue
+            if total_active >= MAX_CONCURRENT_WORKERS:
+                break
+
+            # Check agent has a pending user message (the initial prompt)
+            has_pending = db.query(Message).filter(
+                Message.agent_id == agent.id,
+                Message.role == MessageRole.USER,
+                Message.status == MessageStatus.PENDING,
+            ).first()
+            if not has_pending:
+                continue
+
+            project = db.get(Project, agent.project)
+            if not project:
+                continue
+
+            try:
+                # Create a temporary Task-like object for PlanManager
+                fake_task = Task(
+                    id=agent.id,
+                    project=agent.project,
+                    prompt=has_pending.content,
+                )
+                container_id = self.plan_mgr.start_planning(fake_task, project)
+                self._active_planners[agent.id] = container_id
+                agent.status = AgentStatus.PLANNING
+                total_active += 1
+
+                sys_msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.SYSTEM,
+                    content="Generating plan...",
+                    status=MessageStatus.COMPLETED,
+                )
+                db.add(sys_msg)
+
+                logger.info("Started planning for agent %s", agent.id)
+            except Exception:
+                logger.exception("Failed to start planner for agent %s", agent.id)
+
+    # ---- Step 7: Dispatch pending messages ----
+
+    def _dispatch_pending_messages(self, db: Session):
+        """For IDLE agents with PENDING user messages, exec claude."""
+        idle_agents = db.query(Agent).filter(
+            Agent.status == AgentStatus.IDLE,
+            Agent.plan_approved == True,  # noqa: E712
+        ).all()
+
+        # Count currently executing
+        executing_count = db.query(Agent).filter(
+            Agent.status == AgentStatus.EXECUTING
+        ).count()
+
+        for agent in idle_agents:
+            if agent.id in self._active_execs:
+                continue
+            if executing_count >= MAX_CONCURRENT_WORKERS:
+                break
+
+            # Check per-project concurrency
+            project = db.get(Project, agent.project)
+            if not project:
+                continue
+            proj_executing = db.query(Agent).filter(
+                Agent.project == agent.project,
+                Agent.status == AgentStatus.EXECUTING,
+            ).count()
+            if proj_executing >= project.max_concurrent:
+                continue
+
+            # Find the oldest pending user message
+            pending_msg = (
+                db.query(Message)
+                .filter(
+                    Message.agent_id == agent.id,
+                    Message.role == MessageRole.USER,
+                    Message.status == MessageStatus.PENDING,
+                )
+                .order_by(Message.created_at.asc())
+                .first()
+            )
+            if not pending_msg:
+                continue
+
+            # Ensure project container is running
+            container_id = project.container_id
+            if not container_id or self.worker_mgr.get_status(container_id) != "running":
+                try:
+                    container_id = self.worker_mgr.ensure_project_container(project)
+                    project.container_id = container_id
+                except Exception:
+                    logger.exception("Failed to ensure container for project %s", project.name)
+                    continue
+            agent.container_id = container_id
+
+            # Build the prompt
+            prompt = self._build_agent_prompt(agent, project, pending_msg.content)
+
+            # Use --resume with session_id if available
+            resume_session_id = agent.session_id if agent.session_id else None
+
+            try:
+                exec_id, output_file = self.worker_mgr.exec_claude_in_agent(
+                    container_id, prompt, project, agent,
+                    resume_session_id=resume_session_id,
+                )
+                self._active_execs[agent.id] = {
+                    "exec_id": exec_id,
+                    "output_file": output_file,
+                    "message_id": pending_msg.id,
+                    "started_at": _utcnow(),
+                }
+                agent.status = AgentStatus.EXECUTING
+                if agent.worktree:
+                    agent.branch = f"worktree-{agent.worktree}"
+                pending_msg.status = MessageStatus.EXECUTING
+                executing_count += 1
+
+                logger.info(
+                    "Dispatched message %s to agent %s (resume=%s)",
+                    pending_msg.id, agent.id, bool(resume_session_id),
+                )
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+            except Exception:
+                logger.exception(
+                    "Failed to exec claude for agent %s", agent.id
+                )
+                pending_msg.status = MessageStatus.FAILED
+                pending_msg.error_message = "Failed to start claude exec"
+
+    def _build_agent_prompt(self, agent: Agent, project: Project, user_message: str) -> str:
+        """Build the prompt sent to claude for an agent message."""
+        base = (
+            f"You are working in project: {project.display_name}\n"
+            f"Project path: /projects/{project.name}\n"
+            f"\n"
+            f"First read the project's CLAUDE.md to understand project conventions.\n"
+            f"\n"
+            f"{user_message}"
+        )
+        if agent.mode == AgentMode.INTERVIEW:
+            return (
+                f"{base}\n\n"
+                f"You are in INTERVIEW mode. Answer questions, explore and explain code, "
+                f"discuss approaches — but do NOT modify any files or make commits."
+            )
+        return (
+            f"{base}\n\n"
+            f"If you make code changes, commit with message format: "
+            f"[agent-{agent.id}] short description"
+        )
+
+    # ---- Recovery ----
+
+    def _recover_agents(self):
+        """On startup, check project containers and recover agent states."""
+        db = SessionLocal()
+        try:
+            # First, recover project container state
+            projects = db.query(Project).filter(
+                Project.container_id.is_not(None)
+            ).all()
+            for project in projects:
+                status = self.worker_mgr.get_status(project.container_id)
+                if status != "running":
+                    logger.warning(
+                        "Project %s container gone (status=%s), clearing",
+                        project.name, status,
+                    )
+                    project.container_id = None
+
+            # Then recover agents
+            alive_statuses = [
+                AgentStatus.IDLE, AgentStatus.EXECUTING,
+                AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
+                AgentStatus.STARTING,
+            ]
+            agents = db.query(Agent).filter(
+                Agent.status.in_(alive_statuses)
+            ).all()
+
+            for agent in agents:
+                if agent.status == AgentStatus.STARTING:
+                    continue
+
+                project = db.get(Project, agent.project)
+                has_container = project and project.container_id
+
+                if has_container:
+                    agent.container_id = project.container_id
+                    if agent.status == AgentStatus.EXECUTING:
+                        agent.status = AgentStatus.IDLE
+                        msg = Message(
+                            agent_id=agent.id,
+                            role=MessageRole.SYSTEM,
+                            content="Agent recovered after restart — set to IDLE",
+                            status=MessageStatus.COMPLETED,
+                        )
+                        db.add(msg)
+                    elif agent.status == AgentStatus.PLANNING:
+                        agent.status = AgentStatus.IDLE
+                        agent.plan_approved = False
+                else:
+                    # No project container — set IDLE, container will be
+                    # created on demand when a message is dispatched
+                    agent.container_id = None
+                    if agent.status in (AgentStatus.EXECUTING, AgentStatus.PLANNING):
+                        agent.status = AgentStatus.IDLE
+                        msg = Message(
+                            agent_id=agent.id,
+                            role=MessageRole.SYSTEM,
+                            content="Container lost after restart — agent set to IDLE",
+                            status=MessageStatus.COMPLETED,
+                        )
+                        db.add(msg)
+
+                # Reset any EXECUTING messages to FAILED
+                executing_msgs = db.query(Message).filter(
+                    Message.agent_id == agent.id,
+                    Message.status == MessageStatus.EXECUTING,
+                ).all()
+                for m in executing_msgs:
+                    m.status = MessageStatus.FAILED
+                    m.error_message = "Orchestrator restarted"
+
+            if agents:
+                db.commit()
+                logger.info("Recovered %d agents on startup", len(agents))
+        finally:
+            db.close()
+
+
+def _extract_error_line(logs: str) -> str:
+    """Extract error message from EXIT_FAILURE line."""
+    for line in logs.strip().splitlines():
+        if "EXIT_FAILURE" in line:
+            idx = line.find("EXIT_FAILURE:")
+            if idx >= 0:
+                return line[idx + len("EXIT_FAILURE:"):].strip()
+            return line.strip()
+    return "Unknown error"

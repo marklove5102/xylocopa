@@ -4,53 +4,92 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from models import Priority, TaskStatus
+from models import AgentMode, AgentStatus, MessageRole, MessageStatus
 
 
-# --- Task schemas ---
+# --- Task schemas (agent-sourced: each task = a user prompt → agent response cycle) ---
 
-class TaskCreate(BaseModel):
+class AgentTaskBrief(BaseModel):
+    """A task is a user message sent to an agent, with derived status."""
+    id: str
+    agent_id: str
+    agent_name: str
+    project: str
+    mode: AgentMode
+    prompt: str
+    status: str
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class AgentTaskDetail(AgentTaskBrief):
+    """Task detail with the conversation thread for this prompt."""
+    conversation: list["MessageOut"] = []
+
+
+# --- Agent schemas ---
+
+class AgentCreate(BaseModel):
     project: str
     prompt: str
-    priority: Priority = Priority.P1
+    mode: AgentMode = AgentMode.AUTO
+    worktree: str | None = None  # None = shared main, string = worktree name
     timeout_seconds: int = 600
 
 
-class TaskOut(BaseModel):
+class AgentOut(BaseModel):
     id: str
     project: str
-    prompt: str
-    priority: Priority
-    status: TaskStatus
-    plan: str | None = None
-    plan_approved: bool = False
+    name: str
+    mode: AgentMode
+    status: AgentStatus
     container_id: str | None = None
     branch: str | None = None
-    retries: int = 0
-    result_summary: str | None = None
+    worktree: str | None = None
+    plan: str | None = None
+    plan_approved: bool = False
+    last_message_preview: str | None = None
+    last_message_at: datetime | None = None
+    unread_count: int = 0
+    created_at: datetime
+    timeout_seconds: int = 600
+
+    model_config = {"from_attributes": True}
+
+
+class AgentBrief(BaseModel):
+    """Compact agent representation for list views."""
+    id: str
+    project: str
+    name: str
+    mode: AgentMode
+    status: AgentStatus
+    branch: str | None = None
+    worktree: str | None = None
+    last_message_preview: str | None = None
+    last_message_at: datetime | None = None
+    unread_count: int = 0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MessageOut(BaseModel):
+    id: str
+    agent_id: str
+    role: MessageRole
+    content: str
+    status: MessageStatus
     stream_log: str | None = None
     error_message: str | None = None
     created_at: datetime
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    timeout_seconds: int = 600
-
-    model_config = {"from_attributes": True}
-
-
-class TaskBrief(BaseModel):
-    """Compact task representation for list views."""
-    id: str
-    project: str
-    prompt: str
-    priority: Priority
-    status: TaskStatus
-    retries: int = 0
-    created_at: datetime
-    started_at: datetime | None = None
     completed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SendMessage(BaseModel):
+    content: str = Field(..., min_length=1)
 
 
 # --- Project schemas ---
@@ -60,10 +99,27 @@ class ProjectOut(BaseModel):
     display_name: str
     path: str
     git_remote: str | None = None
+    description: str | None = None
     max_concurrent: int = 2
     default_model: str = "claude-sonnet-4-5-20250514"
 
     model_config = {"from_attributes": True}
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    git_url: str | None = None
+    description: str | None = None
+
+
+class ProjectWithStats(ProjectOut):
+    task_total: int = 0
+    task_completed: int = 0
+    task_failed: int = 0
+    task_running: int = 0
+    agent_total: int = 0
+    agent_active: int = 0
+    last_activity: datetime | None = None
 
 
 # --- Plan approval schemas ---

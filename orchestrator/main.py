@@ -9,16 +9,65 @@ import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from config import PROJECT_CONFIGS_PATH
 from database import SessionLocal, get_db, init_db
 from log_config import setup_logging
-from models import Priority, Project, Task, TaskStatus
-from schemas import HealthResponse, PlanReject, ProjectOut, TaskBrief, TaskCreate, TaskOut
+from models import (
+    Agent,
+    AgentStatus,
+    Message,
+    MessageRole,
+    MessageStatus,
+    AgentMode,
+    Project,
+)
+from schemas import (
+    AgentBrief,
+    AgentCreate,
+    AgentOut,
+    AgentTaskBrief,
+    AgentTaskDetail,
+    HealthResponse,
+    MessageOut,
+    PlanReject,
+    ProjectCreate,
+    ProjectOut,
+    ProjectWithStats,
+    SendMessage,
+)
 
 setup_logging()
 logger = logging.getLogger("orchestrator")
+
+
+def _utcnow():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _effective_task_status(msg: Message, agent: Agent) -> str:
+    """Derive a user-facing task status from message + agent state."""
+    if msg.status == MessageStatus.COMPLETED:
+        return "COMPLETED"
+    if msg.status == MessageStatus.FAILED:
+        return "FAILED"
+    if msg.status == MessageStatus.TIMEOUT:
+        return "TIMEOUT"
+    if msg.status == MessageStatus.EXECUTING:
+        return "EXECUTING"
+    # PENDING — derive from agent state
+    if agent.status == AgentStatus.PLANNING:
+        return "PLANNING"
+    if agent.status == AgentStatus.PLAN_REVIEW:
+        return "PLAN_REVIEW"
+    if agent.status == AgentStatus.ERROR:
+        return "FAILED"
+    if agent.status == AgentStatus.STOPPED:
+        return "CANCELLED"
+    return "PENDING"
 
 
 def load_registry(db: Session):
@@ -42,6 +91,7 @@ def load_registry(db: Session):
             existing.display_name = p.get("display_name", p["name"])
             existing.path = p.get("path", f'/projects/{p["name"]}')
             existing.git_remote = p.get("git_remote")
+            existing.description = p.get("description")
             existing.max_concurrent = p.get("max_concurrent", 2)
             existing.default_model = p.get("default_model", "claude-sonnet-4-5-20250514")
         else:
@@ -50,6 +100,7 @@ def load_registry(db: Session):
                 display_name=p.get("display_name", p["name"]),
                 path=p.get("path", f'/projects/{p["name"]}'),
                 git_remote=p.get("git_remote"),
+                description=p.get("description"),
                 max_concurrent=p.get("max_concurrent", 2),
                 default_model=p.get("default_model", "claude-sonnet-4-5-20250514"),
             ))
@@ -70,23 +121,28 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # Start dispatcher and git manager
+    # Start dispatchers and git manager
     dispatch_task = None
+    agent_dispatch_task = None
     backup_task = None
     try:
+        from agent_dispatcher import AgentDispatcher
         from dispatcher import TaskDispatcher
         from git_manager import GitManager
         from worker_manager import WorkerManager
         wm = WorkerManager()
         dispatcher = TaskDispatcher(wm)
+        agent_dispatcher = AgentDispatcher(wm)
         gm = GitManager()
         app.state.dispatcher = dispatcher
+        app.state.agent_dispatcher = agent_dispatcher
         app.state.worker_manager = wm
         app.state.git_manager = gm
         dispatch_task = asyncio.create_task(dispatcher.run())
-        logger.info("Dispatcher started")
+        agent_dispatch_task = asyncio.create_task(agent_dispatcher.run())
+        logger.info("Dispatchers started")
     except Exception:
-        logger.exception("Failed to start dispatcher — running without scheduling")
+        logger.exception("Failed to start dispatchers — running without scheduling")
 
     # Start backup loop
     try:
@@ -99,7 +155,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    for task in (dispatch_task, backup_task):
+    for task in (dispatch_task, agent_dispatch_task, backup_task):
         if task:
             task.cancel()
             try:
@@ -108,13 +164,15 @@ async def lifespan(app: FastAPI):
                 pass
     if dispatch_task:
         dispatcher.stop()
+    if agent_dispatch_task:
+        agent_dispatcher.stop()
     logger.info("CC Orchestrator shutting down...")
 
 
 app = FastAPI(
     title="CC Orchestrator",
     description="Multi-instance Claude Code orchestration system",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -145,7 +203,7 @@ async def health():
     # Check DB
     try:
         db = SessionLocal()
-        db.execute(Task.__table__.select().limit(1))
+        db.execute(Agent.__table__.select().limit(1))
         db.close()
     except Exception:
         result.db = "error"
@@ -164,155 +222,664 @@ async def health():
     return result
 
 
+@app.get("/api/system/stats")
+async def system_stats():
+    """System resource usage — CPU, memory, disk, and optional GPU."""
+    import shutil
+    import subprocess
+
+    stats = {}
+
+    # CPU usage (per-core load average / count → percentage)
+    try:
+        with open("/proc/loadavg") as f:
+            load1 = float(f.read().split()[0])
+        cpu_count = os.cpu_count() or 1
+        stats["cpu"] = {
+            "load_1m": round(load1, 2),
+            "cores": cpu_count,
+            "usage_pct": round(min(load1 / cpu_count * 100, 100), 1),
+        }
+    except Exception:
+        stats["cpu"] = None
+
+    # Memory from /proc/meminfo
+    try:
+        meminfo = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                meminfo[parts[0].rstrip(":")] = int(parts[1])  # kB
+        total = meminfo.get("MemTotal", 0)
+        avail = meminfo.get("MemAvailable", 0)
+        used = total - avail
+        stats["memory"] = {
+            "total_gb": round(total / 1048576, 1),
+            "used_gb": round(used / 1048576, 1),
+            "usage_pct": round(used / total * 100, 1) if total else 0,
+        }
+    except Exception:
+        stats["memory"] = None
+
+    # Disk usage
+    try:
+        usage = shutil.disk_usage("/")
+        stats["disk"] = {
+            "total_gb": round(usage.total / (1024 ** 3), 1),
+            "used_gb": round(usage.used / (1024 ** 3), 1),
+            "usage_pct": round(usage.used / usage.total * 100, 1),
+        }
+    except Exception:
+        stats["disk"] = None
+
+    # GPU (nvidia-smi)
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            gpus = []
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 6:
+                    gpus.append({
+                        "index": int(parts[0]),
+                        "name": parts[1],
+                        "gpu_pct": int(parts[2]),
+                        "mem_used_mb": int(parts[3]),
+                        "mem_total_mb": int(parts[4]),
+                        "mem_pct": round(int(parts[3]) / int(parts[4]) * 100, 1) if int(parts[4]) else 0,
+                        "temp_c": int(parts[5]),
+                    })
+            stats["gpus"] = gpus
+        else:
+            stats["gpus"] = None
+    except Exception:
+        stats["gpus"] = None
+
+    return stats
+
+
 # ---- Projects ----
 
-@app.get("/api/projects", response_model=list[ProjectOut])
+@app.get("/api/projects", response_model=list[ProjectWithStats])
 async def list_projects(db: Session = Depends(get_db)):
-    """List all registered projects."""
-    return db.query(Project).order_by(Project.name).all()
+    """List all registered projects with task and agent statistics."""
+    projects = db.query(Project).order_by(Project.name).all()
+    results = []
+    for proj in projects:
+        # Task stats (derived from agent USER messages)
+        task_row = (
+            db.query(
+                func.count(Message.id).label("total"),
+                func.count(case((Message.status == MessageStatus.COMPLETED, 1))).label("completed"),
+                func.count(
+                    case((Message.status.in_([MessageStatus.FAILED, MessageStatus.TIMEOUT]), 1))
+                ).label("failed"),
+                func.count(
+                    case((Message.status.in_([MessageStatus.PENDING, MessageStatus.EXECUTING]), 1))
+                ).label("running"),
+            )
+            .join(Agent, Message.agent_id == Agent.id)
+            .filter(Agent.project == proj.name, Message.role == MessageRole.USER)
+            .one()
+        )
+
+        # Agent stats
+        agent_row = (
+            db.query(
+                func.count(Agent.id).label("total"),
+                func.count(
+                    case((Agent.status.in_([
+                        AgentStatus.IDLE, AgentStatus.EXECUTING,
+                        AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
+                        AgentStatus.STARTING,
+                    ]), 1))
+                ).label("active"),
+            )
+            .filter(Agent.project == proj.name)
+            .one()
+        )
+
+        last_activity = db.query(func.max(Agent.last_message_at)).filter(
+            Agent.project == proj.name
+        ).scalar()
+
+        results.append(
+            ProjectWithStats(
+                name=proj.name,
+                display_name=proj.display_name,
+                path=proj.path,
+                git_remote=proj.git_remote,
+                description=proj.description,
+                max_concurrent=proj.max_concurrent,
+                default_model=proj.default_model,
+                task_total=task_row.total,
+                task_completed=task_row.completed,
+                task_failed=task_row.failed,
+                task_running=task_row.running,
+                agent_total=agent_row.total,
+                agent_active=agent_row.active,
+                last_activity=last_activity,
+            )
+        )
+    return results
 
 
-# ---- Tasks ----
+@app.post("/api/projects", response_model=ProjectOut, status_code=201)
+async def create_project(body: ProjectCreate, request: Request, db: Session = Depends(get_db)):
+    """Create a new project. Auto-clones git repo if URL provided."""
+    if db.get(Project, body.name):
+        raise HTTPException(status_code=409, detail=f"Project '{body.name}' already exists")
 
-@app.post("/api/tasks", response_model=TaskOut, status_code=201)
-async def create_task(body: TaskCreate, db: Session = Depends(get_db)):
-    """Create a new task."""
-    # Validate project exists
+    proj = Project(
+        name=body.name,
+        display_name=body.name,
+        path=f"/projects/{body.name}",
+        git_remote=body.git_url,
+        description=body.description,
+    )
+    db.add(proj)
+    db.commit()
+    db.refresh(proj)
+
+    # Clone or create project directory on the host
+    wm = getattr(request.app.state, "worker_manager", None)
+    if wm:
+        try:
+            if body.git_url:
+                wm.clone_project(body.name, body.git_url)
+            else:
+                wm.ensure_project_dir(body.name)
+        except Exception:
+            logger.warning("Failed to set up project directory for %s", body.name)
+
+    # Append to registry.yaml
+    registry_path = os.path.join(PROJECT_CONFIGS_PATH, "registry.yaml")
+    try:
+        if os.path.exists(registry_path):
+            with open(registry_path) as f:
+                data = yaml.safe_load(f) or {}
+        else:
+            data = {}
+        if "projects" not in data or data["projects"] is None:
+            data["projects"] = []
+        entry = {"name": body.name, "path": f"/projects/{body.name}"}
+        if body.git_url:
+            entry["git_remote"] = body.git_url
+        if body.description:
+            entry["description"] = body.description
+        data["projects"].append(entry)
+        with open(registry_path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False)
+    except Exception:
+        logger.warning("Failed to update registry.yaml for project %s", body.name)
+
+    logger.info("Project '%s' created", body.name)
+    return proj
+
+
+@app.delete("/api/projects/{name}", status_code=200)
+async def delete_project(name: str, db: Session = Depends(get_db)):
+    """Delete a project (must have no active agents)."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    active_agents = (
+        db.query(Agent)
+        .filter(
+            Agent.project == name,
+            Agent.status.in_([
+                AgentStatus.STARTING, AgentStatus.IDLE,
+                AgentStatus.EXECUTING, AgentStatus.PLANNING,
+                AgentStatus.PLAN_REVIEW,
+            ]),
+        )
+        .count()
+    )
+
+    if active_agents > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete project with {active_agents} active agent(s)",
+        )
+
+    db.delete(proj)
+    db.commit()
+    logger.info("Project '%s' deleted", name)
+    return {"detail": f"Project '{name}' deleted"}
+
+
+@app.get("/api/projects/{name}/agents", response_model=list[AgentBrief])
+async def list_project_agents(
+    name: str,
+    status: AgentStatus | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """List agents for a specific project."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+    q = db.query(Agent).filter(Agent.project == name)
+    if status:
+        q = q.filter(Agent.status == status)
+    return q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc()).limit(limit).all()
+
+
+# ---- Tasks (agent-sourced: each USER message = one task) ----
+
+@app.get("/api/tasks", response_model=list[AgentTaskBrief])
+async def list_tasks(
+    project: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """List tasks (each USER message is a task) with optional filters."""
+    q = (
+        db.query(Message, Agent)
+        .join(Agent, Message.agent_id == Agent.id)
+        .filter(Message.role == MessageRole.USER)
+    )
+    if project:
+        q = q.filter(Agent.project == project)
+    rows = q.order_by(Message.created_at.desc()).limit(limit * 2).all()
+
+    tasks = []
+    for msg, agent in rows:
+        eff = _effective_task_status(msg, agent)
+        if status and eff != status:
+            continue
+        tasks.append(AgentTaskBrief(
+            id=msg.id,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            project=agent.project,
+            mode=agent.mode,
+            prompt=msg.content,
+            status=eff,
+            created_at=msg.created_at,
+            completed_at=msg.completed_at,
+        ))
+        if len(tasks) >= limit:
+            break
+    return tasks
+
+
+@app.get("/api/tasks/{task_id}", response_model=AgentTaskDetail)
+async def get_task(task_id: str, db: Session = Depends(get_db)):
+    """Get task detail with the conversation thread for this prompt."""
+    msg = db.get(Message, task_id)
+    if not msg or msg.role != MessageRole.USER:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    agent = db.get(Agent, msg.agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Find the next USER message from this agent (boundary of this task's conversation)
+    next_user_msg = (
+        db.query(Message)
+        .filter(
+            Message.agent_id == msg.agent_id,
+            Message.role == MessageRole.USER,
+            Message.created_at > msg.created_at,
+        )
+        .order_by(Message.created_at.asc())
+        .first()
+    )
+
+    # Get all messages in this task's conversation range
+    conv_q = db.query(Message).filter(
+        Message.agent_id == msg.agent_id,
+        Message.created_at >= msg.created_at,
+    )
+    if next_user_msg:
+        conv_q = conv_q.filter(Message.created_at < next_user_msg.created_at)
+    conversation = conv_q.order_by(Message.created_at.asc()).all()
+
+    eff = _effective_task_status(msg, agent)
+    return AgentTaskDetail(
+        id=msg.id,
+        agent_id=agent.id,
+        agent_name=agent.name,
+        project=agent.project,
+        mode=agent.mode,
+        prompt=msg.content,
+        status=eff,
+        created_at=msg.created_at,
+        completed_at=msg.completed_at,
+        conversation=[MessageOut.model_validate(m, from_attributes=True) for m in conversation],
+    )
+
+
+# ---- Agents ----
+
+@app.post("/api/agents", response_model=AgentOut, status_code=201)
+async def create_agent(body: AgentCreate, db: Session = Depends(get_db)):
+    """Create a new agent with an initial message."""
     project = db.get(Project, body.project)
     if not project:
         raise HTTPException(status_code=400, detail=f"Project '{body.project}' not found")
 
-    task = Task(
+    # Generate agent name from first ~50 chars of prompt
+    name = body.prompt[:50].strip()
+    if len(body.prompt) > 50:
+        name += "..."
+
+    agent = Agent(
         project=body.project,
-        prompt=body.prompt,
-        priority=body.priority,
+        name=name,
+        mode=body.mode,
+        worktree=body.worktree,
         timeout_seconds=body.timeout_seconds,
+        last_message_preview=name,
+        last_message_at=_utcnow(),
     )
-    db.add(task)
+    db.add(agent)
+    db.flush()  # Get agent.id
+
+    # Create the initial user message
+    msg = Message(
+        agent_id=agent.id,
+        role=MessageRole.USER,
+        content=body.prompt,
+        status=MessageStatus.PENDING,
+    )
+    db.add(msg)
+
+    # AUTO mode agents skip plan review
+    if body.mode == AgentMode.AUTO:
+        agent.plan_approved = True
+
     db.commit()
-    db.refresh(task)
-    logger.info("Task %s created for project %s (priority %s)", task.id, task.project, task.priority.value)
-    return task
+    db.refresh(agent)
+    logger.info("Agent %s created for project %s (mode %s)", agent.id, agent.project, agent.mode.value)
+    return agent
 
 
-@app.get("/api/tasks", response_model=list[TaskBrief])
-async def list_tasks(
+@app.get("/api/agents", response_model=list[AgentBrief])
+async def list_agents(
     project: str | None = None,
-    status: TaskStatus | None = None,
+    status: AgentStatus | None = None,
     limit: int = 50,
     db: Session = Depends(get_db),
 ):
-    """List tasks with optional filters."""
-    q = db.query(Task)
+    """List agents with optional filters."""
+    q = db.query(Agent)
     if project:
-        q = q.filter(Task.project == project)
+        q = q.filter(Agent.project == project)
     if status:
-        q = q.filter(Task.status == status)
-    return q.order_by(Task.created_at.desc()).limit(limit).all()
+        q = q.filter(Agent.status == status)
+    return (
+        q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
-@app.get("/api/tasks/{task_id}", response_model=TaskOut)
-async def get_task(task_id: str, db: Session = Depends(get_db)):
-    """Get full task details."""
-    task = db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return task
+@app.get("/api/agents/{agent_id}", response_model=AgentOut)
+async def get_agent(agent_id: str, db: Session = Depends(get_db)):
+    """Get full agent details."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
 
 
-@app.delete("/api/tasks/{task_id}", response_model=TaskOut)
-async def cancel_task(task_id: str, request: Request, db: Session = Depends(get_db)):
-    """Cancel a pending or executing task."""
-    task = db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
-        raise HTTPException(status_code=400, detail=f"Task is already {task.status.value}")
+@app.delete("/api/agents/{agent_id}", response_model=AgentOut)
+async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
+    """Stop an agent — marks STOPPED but leaves the project container running."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status == AgentStatus.STOPPED:
+        raise HTTPException(status_code=400, detail="Agent is already stopped")
 
-    # Stop the worker container if task is currently executing or planning
-    if task.status in (TaskStatus.EXECUTING, TaskStatus.PLANNING) and task.container_id:
-        try:
-            wm = getattr(request.app.state, "worker_manager", None)
-            if wm:
-                wm.stop_worker(task.container_id)
-        except Exception:
-            logger.warning("Failed to stop container for task %s", task.id)
-    task.status = TaskStatus.CANCELLED
+    agent.status = AgentStatus.STOPPED
+
+    # Add system message
+    msg = Message(
+        agent_id=agent.id,
+        role=MessageRole.SYSTEM,
+        content="Agent stopped",
+        status=MessageStatus.COMPLETED,
+    )
+    db.add(msg)
+
     db.commit()
-    db.refresh(task)
-    logger.info("Task %s cancelled", task.id)
-    return task
+    db.refresh(agent)
+    logger.info("Agent %s stopped", agent.id)
+    return agent
 
 
-@app.put("/api/tasks/{task_id}/approve", response_model=TaskOut)
-async def approve_plan(task_id: str, db: Session = Depends(get_db)):
-    """Approve a task's plan — moves task back to PENDING for execution."""
-    task = db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.status != TaskStatus.PLAN_REVIEW:
-        raise HTTPException(status_code=400, detail=f"Task is not in PLAN_REVIEW state (current: {task.status.value})")
-    task.plan_approved = True
-    task.status = TaskStatus.PENDING
-    task.container_id = None
-    task.started_at = None
+@app.post("/api/agents/{agent_id}/resume", response_model=AgentOut)
+async def resume_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
+    """Resume a stopped or errored agent — reuses existing project container."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
+        raise HTTPException(status_code=400, detail="Agent is already running")
+
+    project = db.get(Project, agent.project)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    wm = getattr(request.app.state, "worker_manager", None)
+    if not wm:
+        raise HTTPException(status_code=500, detail="Worker manager not available")
+
+    try:
+        # Reuse or create the shared project container
+        container_id = wm.ensure_project_container(project)
+        project.container_id = container_id
+        agent.container_id = container_id
+        agent.status = AgentStatus.IDLE
+
+        msg = Message(
+            agent_id=agent.id,
+            role=MessageRole.SYSTEM,
+            content="Agent resumed",
+            status=MessageStatus.COMPLETED,
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(agent)
+        logger.info("Agent %s resumed", agent.id)
+        return agent
+    except Exception as e:
+        logger.exception("Failed to resume agent %s", agent.id)
+        raise HTTPException(status_code=500, detail=f"Failed to start container: {e}")
+
+
+@app.get("/api/agents/{agent_id}/messages", response_model=list[MessageOut])
+async def get_agent_messages(
+    agent_id: str,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """Get conversation messages for an agent (oldest first). Resets unread count."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    messages = (
+        db.query(Message)
+        .filter(Message.agent_id == agent_id)
+        .order_by(Message.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+    # Reset unread count
+    if agent.unread_count > 0:
+        agent.unread_count = 0
+        db.commit()
+
+    return messages
+
+
+@app.post("/api/agents/{agent_id}/messages", response_model=MessageOut, status_code=201)
+async def send_agent_message(
+    agent_id: str,
+    body: SendMessage,
+    db: Session = Depends(get_db),
+):
+    """Send a follow-up message to an agent."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status == AgentStatus.STOPPED:
+        raise HTTPException(status_code=400, detail="Agent is stopped")
+    if agent.status == AgentStatus.EXECUTING:
+        raise HTTPException(status_code=400, detail="Agent is currently executing — wait for completion")
+
+    msg = Message(
+        agent_id=agent.id,
+        role=MessageRole.USER,
+        content=body.content,
+        status=MessageStatus.PENDING,
+    )
+    db.add(msg)
+
+    # Update agent preview
+    agent.last_message_preview = body.content[:200]
+    agent.last_message_at = _utcnow()
+
     db.commit()
-    db.refresh(task)
-    logger.info("Task %s plan approved — queued for execution", task.id)
-    return task
+    db.refresh(msg)
+    logger.info("Message %s sent to agent %s", msg.id, agent.id)
+    return msg
 
 
-@app.put("/api/tasks/{task_id}/reject", response_model=TaskOut)
-async def reject_plan(task_id: str, body: PlanReject, db: Session = Depends(get_db)):
-    """Reject a task's plan with revision notes — re-queues for re-planning."""
-    task = db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.status != TaskStatus.PLAN_REVIEW:
-        raise HTTPException(status_code=400, detail=f"Task is not in PLAN_REVIEW state (current: {task.status.value})")
-    # Append revision notes to prompt so re-planning considers the feedback
-    task.prompt = f"{task.prompt}\n\n[Revision feedback]: {body.revision_notes}"
-    task.plan = None
-    task.plan_approved = False
-    task.status = TaskStatus.PENDING
-    task.container_id = None
-    task.started_at = None
+@app.put("/api/agents/{agent_id}/read")
+async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
+    """Mark agent as read (reset unread count)."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent.unread_count = 0
     db.commit()
-    db.refresh(task)
-    logger.info("Task %s plan rejected — re-queued for re-planning", task.id)
-    return task
+    return {"detail": "ok"}
 
 
-@app.post("/api/tasks/{task_id}/retry", response_model=TaskOut)
-async def retry_task(task_id: str, db: Session = Depends(get_db)):
-    """Retry a failed/timed out task."""
-    task = db.get(Task, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.status not in (TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED):
-        raise HTTPException(status_code=400, detail=f"Cannot retry task in {task.status.value} state")
+@app.put("/api/agents/{agent_id}/approve", response_model=AgentOut)
+async def approve_agent_plan(agent_id: str, db: Session = Depends(get_db)):
+    """Approve an agent's plan — starts execution."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status != AgentStatus.PLAN_REVIEW:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent is not in PLAN_REVIEW state (current: {agent.status.value})",
+        )
+    agent.plan_approved = True
+    agent.status = AgentStatus.IDLE  # Dispatcher will pick up the pending message
 
-    task.status = TaskStatus.PENDING
-    task.retries += 1
-    task.container_id = None
-    task.error_message = None
-    task.started_at = None
-    task.completed_at = None
+    # System message
+    msg = Message(
+        agent_id=agent.id,
+        role=MessageRole.SYSTEM,
+        content="Plan approved",
+        status=MessageStatus.COMPLETED,
+    )
+    db.add(msg)
+
     db.commit()
-    db.refresh(task)
-    logger.info("Task %s queued for retry (#%d)", task.id, task.retries)
-    return task
+    db.refresh(agent)
+    logger.info("Agent %s plan approved", agent.id)
+    return agent
 
 
-# ---- Workers ----
+@app.put("/api/agents/{agent_id}/reject", response_model=AgentOut)
+async def reject_agent_plan(
+    agent_id: str, body: PlanReject, db: Session = Depends(get_db),
+):
+    """Reject an agent's plan — adds revision as a new user message."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status != AgentStatus.PLAN_REVIEW:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent is not in PLAN_REVIEW state (current: {agent.status.value})",
+        )
 
-@app.get("/api/workers")
-async def list_workers(request: Request):
-    """List all active worker containers."""
+    # Add rejection as system message
+    sys_msg = Message(
+        agent_id=agent.id,
+        role=MessageRole.SYSTEM,
+        content=f"Plan rejected: {body.revision_notes}",
+        status=MessageStatus.COMPLETED,
+    )
+    db.add(sys_msg)
+
+    # Reset plan for re-planning
+    agent.plan = None
+    agent.plan_approved = False
+    agent.status = AgentStatus.IDLE
+
+    # Update the original pending user message with revision notes
+    pending_msg = (
+        db.query(Message)
+        .filter(
+            Message.agent_id == agent.id,
+            Message.role == MessageRole.USER,
+            Message.status == MessageStatus.PENDING,
+        )
+        .first()
+    )
+    if pending_msg:
+        pending_msg.content = f"{pending_msg.content}\n\n[Revision feedback]: {body.revision_notes}"
+
+    db.commit()
+    db.refresh(agent)
+    logger.info("Agent %s plan rejected — re-queued", agent.id)
+    return agent
+
+
+# ---- Containers ----
+
+@app.get("/api/containers")
+async def list_containers(request: Request):
+    """List all project containers (persistent agent environments)."""
     wm = getattr(request.app.state, "worker_manager", None)
     if not wm:
         return []
-    return wm.list_workers()
+    return wm.list_containers()
+
+@app.get("/api/processes")
+async def list_processes(request: Request):
+    """List running Claude processes (active docker execs)."""
+    ad = getattr(request.app.state, "agent_dispatcher", None)
+    if not ad:
+        return []
+    return ad.get_active_processes()
+
+# Legacy alias
+@app.get("/api/workers")
+async def list_workers(request: Request):
+    return await list_containers(request)
+
+
+# ---- Project worktrees ----
+
+@app.get("/api/projects/{project_name}/worktrees")
+async def list_project_worktrees(project_name: str, db: Session = Depends(get_db)):
+    """Get distinct worktree names used by agents in a project."""
+    rows = (
+        db.query(Agent.worktree)
+        .filter(Agent.project == project_name, Agent.worktree.is_not(None))
+        .distinct()
+        .all()
+    )
+    return [r[0] for r in rows]
 
 
 # ---- Git ----
@@ -327,6 +894,18 @@ async def git_log(project: str, limit: int = 30, request: Request = None, db: Se
     if not gm:
         raise HTTPException(status_code=503, detail="Git manager not available")
     return gm.get_log(project, limit=limit)
+
+
+@app.get("/api/git/{project}/status")
+async def git_status(project: str, request: Request, db: Session = Depends(get_db)):
+    """Get git status (staged, unstaged, untracked) for a project."""
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    gm = getattr(request.app.state, "git_manager", None)
+    if not gm:
+        raise HTTPException(status_code=503, detail="Git manager not available")
+    return gm.get_status(project)
 
 
 @app.get("/api/git/{project}/branches")

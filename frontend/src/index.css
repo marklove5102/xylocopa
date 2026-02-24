@@ -1,1 +1,122 @@
 @import "tailwindcss";
+
+/* ── Theme Color Tokens ── */
+:root {
+  color-scheme: light;
+  --color-page:       #ffffff;
+  --color-surface:    #f6f7f8;
+  --color-input:      #ebedf0;
+  --color-elevated:   #e2e5e9;
+  --color-hover:      #d8dce2;
+  --color-inset:      #fcfcfc;
+
+  --color-heading:    #222222;
+  --color-body:       #374151;
+  --color-label:      #5a5a5a;
+  --color-dim:        #586069;
+  --color-faint:      #8b949e;
+  --color-ghost:      #b0b7c3;
+
+  --color-divider:    #ebedf0;
+  --color-edge:       #d1d5db;
+  --color-ring-hover: #c2c7cf;
+
+  --color-hint:       #9ca3af;
+  --color-shadow:     rgba(0,0,0,0.06);
+  --color-skel:       #e5e7eb;
+}
+
+.dark {
+  color-scheme: dark;
+  --color-page:       #030712;
+  --color-surface:    #111827;
+  --color-input:      #1f2937;
+  --color-elevated:   #374151;
+  --color-hover:      #4b5563;
+  --color-inset:      #030712;
+
+  --color-heading:    #f3f4f6;
+  --color-body:       #d1d5db;
+  --color-label:      #9ca3af;
+  --color-dim:        #6b7280;
+  --color-faint:      #4b5563;
+  --color-ghost:      #374151;
+
+  --color-divider:    #1f2937;
+  --color-edge:       #374151;
+  --color-ring-hover: #4b5563;
+
+  --color-hint:       #6b7280;
+  --color-shadow:     rgba(0,0,0,0.4);
+  --color-skel:       #1f2937;
+}
+
+/* ── Semantic Utility Classes ── */
+@layer utilities {
+  /* Backgrounds */
+  .bg-page      { background-color: var(--color-page); }
+  .bg-surface   { background-color: var(--color-surface); }
+  .bg-input     { background-color: var(--color-input); }
+  .bg-elevated  { background-color: var(--color-elevated); }
+  .bg-inset     { background-color: var(--color-inset); }
+
+  .hover\:bg-hover:hover { background-color: var(--color-hover); }
+  .active\:bg-input:active { background-color: var(--color-input); }
+
+  /* Text */
+  .text-heading { color: var(--color-heading); }
+  .text-body    { color: var(--color-body); }
+  .text-label   { color: var(--color-label); }
+  .text-dim     { color: var(--color-dim); }
+  .text-faint   { color: var(--color-faint); }
+  .text-ghost   { color: var(--color-ghost); }
+
+  /* Borders */
+  .border-divider { border-color: var(--color-divider); }
+  .border-edge    { border-color: var(--color-edge); }
+
+  .hover\:ring-ring-hover:hover { --tw-ring-color: var(--color-ring-hover); }
+
+  /* Placeholder */
+  .placeholder-hint::placeholder { color: var(--color-hint); }
+
+  /* Shadow */
+  .shadow-card {
+    box-shadow: 0 1px 3px var(--color-shadow);
+  }
+
+  /* Skeleton loading */
+  .bg-skel { background-color: var(--color-skel); }
+}
+
+/* ── Global overflow prevention ── */
+body {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* ── Safe area for iOS notch/home indicator ── */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Selection highlight ── */
+::selection {
+  background-color: rgba(0, 210, 255, 0.2);
+}
+
+/* ── Animations ── */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.5s ease-out infinite;
+}

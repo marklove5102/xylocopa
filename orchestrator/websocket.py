@@ -92,3 +92,18 @@ async def emit_system_alert(message: str, level: str = "warning"):
         "message": message,
         "level": level,
     })
+
+
+async def emit_agent_update(agent_id: str, status: str, project: str):
+    await ws_manager.broadcast("agent_update", {
+        "agent_id": agent_id,
+        "status": status,
+        "project": project,
+    })
+
+
+async def emit_new_message(agent_id: str, message_id: str):
+    await ws_manager.broadcast("new_message", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+    })

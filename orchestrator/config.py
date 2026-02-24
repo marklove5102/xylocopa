@@ -9,10 +9,10 @@ WORKER_CPU_LIMIT = int(os.getenv("WORKER_CPU_LIMIT", "2"))
 WORKER_MEM_LIMIT = os.getenv("WORKER_MEM_LIMIT", "4g")
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "600"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+MAX_IDLE_AGENTS = int(os.getenv("MAX_IDLE_AGENTS", "20"))
 CC_MODEL = os.getenv("CC_MODEL", "claude-sonnet-4-5-20250514")
 
 # Plan mode
-SKIP_PLAN_FOR_P2 = os.getenv("SKIP_PLAN_FOR_P2", "true").lower() == "true"
 AUTO_APPROVE_TIMEOUT = int(os.getenv("AUTO_APPROVE_TIMEOUT", "0"))  # 0 = disabled
 
 # Voice
@@ -32,7 +32,11 @@ PROJECT_CONFIGS_PATH = os.getenv("PROJECT_CONFIGS_PATH", "/app/project-configs")
 WORKER_IMAGE = os.getenv("WORKER_IMAGE", "cc-worker:latest")
 WORKER_NETWORK = os.getenv("WORKER_NETWORK", "cc-worker-net")
 
-# Claude OAuth — host paths (must be HOST paths, not container paths)
+# Host paths (must be HOST paths, not container paths — used when creating worker containers)
+# Projects directory on the host (bind-mounted into workers as /projects)
+HOST_PROJECTS_DIR = os.getenv("HOST_PROJECTS_DIR", "")
+
+# Claude OAuth
 # Directory: ~/.claude/ (contains .credentials.json, settings, etc.)
 HOST_CLAUDE_DIR = os.getenv("HOST_CLAUDE_DIR", "")
 # Config file: ~/.claude.json (main config file, separate from the directory)

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import PageHeader from "../components/PageHeader";
 
 /** Format a date string into a human-readable relative time. */
 function relativeTime(dateStr) {
@@ -53,15 +54,17 @@ function Toast({ toast, onDismiss }) {
   );
 }
 
-export default function GitPage() {
+export default function GitPage({ theme, onToggleTheme }) {
   // --- State ---
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [commits, setCommits] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [status, setStatus] = useState(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState(false);
   const [mergingBranch, setMergingBranch] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [error, setError] = useState(null);
@@ -112,31 +115,25 @@ export default function GitPage() {
     async function fetchGitData() {
       setLoadingCommits(true);
       setLoadingBranches(true);
+      setLoadingStatus(true);
       setCommits([]);
       setBranches([]);
+      setStatus(null);
 
-      // Fetch commits
-      try {
-        const res = await fetch(`/api/git/${selectedProject}/log?limit=30`);
-        if (!res.ok) throw new Error(`Failed to load commits (${res.status})`);
-        const data = await res.json();
-        if (!cancelled) setCommits(data);
-      } catch (err) {
-        if (!cancelled) setCommits([]);
-      } finally {
-        if (!cancelled) setLoadingCommits(false);
-      }
+      // Fetch all in parallel
+      const [commitRes, branchRes, statusRes] = await Promise.allSettled([
+        fetch(`/api/git/${selectedProject}/log?limit=30`).then((r) => r.ok ? r.json() : []),
+        fetch(`/api/git/${selectedProject}/branches`).then((r) => r.ok ? r.json() : []),
+        fetch(`/api/git/${selectedProject}/status`).then((r) => r.ok ? r.json() : null),
+      ]);
 
-      // Fetch branches
-      try {
-        const res = await fetch(`/api/git/${selectedProject}/branches`);
-        if (!res.ok) throw new Error(`Failed to load branches (${res.status})`);
-        const data = await res.json();
-        if (!cancelled) setBranches(data);
-      } catch (err) {
-        if (!cancelled) setBranches([]);
-      } finally {
-        if (!cancelled) setLoadingBranches(false);
+      if (!cancelled) {
+        setCommits(commitRes.status === "fulfilled" ? commitRes.value : []);
+        setBranches(branchRes.status === "fulfilled" ? branchRes.value : []);
+        setStatus(statusRes.status === "fulfilled" ? statusRes.value : null);
+        setLoadingCommits(false);
+        setLoadingBranches(false);
+        setLoadingStatus(false);
       }
     }
 
@@ -159,13 +156,15 @@ export default function GitPage() {
             `Merged "${branchName}" successfully.`,
             "success"
           );
-          // Refresh commits and branches
-          const [commitRes, branchRes] = await Promise.all([
+          // Refresh commits, branches, and status
+          const [commitRes, branchRes, statusRes] = await Promise.all([
             fetch(`/api/git/${selectedProject}/log?limit=30`),
             fetch(`/api/git/${selectedProject}/branches`),
+            fetch(`/api/git/${selectedProject}/status`),
           ]);
           if (commitRes.ok) setCommits(await commitRes.json());
           if (branchRes.ok) setBranches(await branchRes.json());
+          if (statusRes.ok) setStatus(await statusRes.json());
         } else {
           const msg =
             data?.detail || data?.message || data?.error || `Merge failed (${res.status})`;
@@ -186,10 +185,10 @@ export default function GitPage() {
       <div className="space-y-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="flex items-start gap-3 animate-pulse">
-            <div className="w-16 h-4 bg-gray-800 rounded" />
+            <div className="w-16 h-4 bg-skel rounded" />
             <div className="flex-1 space-y-1.5">
-              <div className="h-4 bg-gray-800 rounded w-3/4" />
-              <div className="h-3 bg-gray-800 rounded w-1/3" />
+              <div className="h-4 bg-skel rounded w-3/4" />
+              <div className="h-3 bg-skel rounded w-1/3" />
             </div>
           </div>
         ))}
@@ -202,7 +201,7 @@ export default function GitPage() {
     return (
       <div className="flex flex-wrap gap-2">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-8 w-28 bg-gray-800 rounded-full animate-pulse" />
+          <div key={i} className="h-8 w-28 bg-skel rounded-full animate-pulse" />
         ))}
       </div>
     );
@@ -210,9 +209,9 @@ export default function GitPage() {
 
   // --- Render ---
   return (
-    <div className="p-4 space-y-4">
-      {/* Header */}
-      <h1 className="text-2xl font-bold text-gray-100">Git</h1>
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <PageHeader title="Git" theme={theme} onToggleTheme={onToggleTheme} />
+      <div className="pb-20 p-4 space-y-4">
 
       {/* Error state */}
       {error && (
@@ -225,11 +224,11 @@ export default function GitPage() {
       {loadingProjects ? (
         <div className="flex gap-2 animate-pulse">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-9 w-24 bg-gray-800 rounded-full" />
+            <div key={i} className="h-9 w-24 bg-skel rounded-full" />
           ))}
         </div>
       ) : projects.length === 0 ? (
-        <div className="rounded-xl bg-gray-900 p-4 text-gray-400 text-sm">
+        <div className="rounded-xl bg-surface shadow-card p-4 text-label text-sm">
           No projects registered. Add a project to view its git history.
         </div>
       ) : (
@@ -245,8 +244,8 @@ export default function GitPage() {
                 onClick={() => setSelectedProject(proj.name)}
                 className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
                   isActive
-                    ? "bg-violet-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                    ? "bg-cyan-600 text-white"
+                    : "bg-input text-label hover:bg-elevated hover:text-heading"
                 }`}
               >
                 {proj.display_name || proj.name}
@@ -258,14 +257,14 @@ export default function GitPage() {
 
       {/* Branches section */}
       {selectedProject && (
-        <div className="rounded-xl bg-gray-900 p-4 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+        <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-body uppercase tracking-wide">
             Branches
           </h2>
           {loadingBranches ? (
             <BranchSkeleton />
           ) : branches.length === 0 ? (
-            <p className="text-sm text-gray-500">No branches found.</p>
+            <p className="text-sm text-dim">No branches found.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {branches.map((branch) => {
@@ -276,8 +275,8 @@ export default function GitPage() {
                     key={branch.name}
                     className={`flex items-center gap-2 rounded-full text-sm px-3 py-1.5 border transition-colors ${
                       isCurrent
-                        ? "bg-violet-600/20 border-violet-500/50 text-violet-300"
-                        : "bg-gray-800 border-gray-700 text-gray-300"
+                        ? "bg-cyan-600/20 border-cyan-500/50 text-cyan-300"
+                        : "bg-input border-edge text-body"
                     }`}
                   >
                     {/* Branch icon */}
@@ -301,7 +300,7 @@ export default function GitPage() {
 
                     {isCurrent && (
                       <svg
-                        className="w-4 h-4 text-violet-400 shrink-0"
+                        className="w-4 h-4 text-cyan-400 shrink-0"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth={2.5}
@@ -317,8 +316,8 @@ export default function GitPage() {
                         disabled={!!mergingBranch}
                         className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
                           isMerging
-                            ? "bg-violet-700/50 text-violet-300 cursor-wait"
-                            : "bg-violet-600/30 text-violet-300 hover:bg-violet-600/60 hover:text-white"
+                            ? "bg-cyan-700/50 text-cyan-300 cursor-wait"
+                            : "bg-cyan-600/30 text-cyan-300 hover:bg-cyan-600/60 hover:text-white"
                         } disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
                         {isMerging ? (
@@ -357,34 +356,112 @@ export default function GitPage() {
         </div>
       )}
 
+      {/* Working tree status */}
+      {selectedProject && (
+        <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-body uppercase tracking-wide">
+            Status
+          </h2>
+          {loadingStatus ? (
+            <div className="h-6 w-40 bg-skel rounded animate-pulse" />
+          ) : !status ? (
+            <p className="text-sm text-dim">Could not fetch status.</p>
+          ) : status.clean ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-sm text-green-400">
+                Working tree clean
+              </span>
+              <span className="text-xs text-dim ml-1">on {status.branch}</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
+                <span className="text-sm text-amber-400">Uncommitted changes</span>
+                <span className="text-xs text-dim ml-1">on {status.branch}</span>
+              </div>
+
+              {status.staged.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-green-400 mb-1">
+                    Staged ({status.staged.length})
+                  </p>
+                  <div className="space-y-0.5">
+                    {status.staged.map((f, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="shrink-0 w-4 text-center font-mono text-green-400">{f.status}</span>
+                        <span className="font-mono text-heading truncate">{f.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {status.unstaged.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-red-400 mb-1">
+                    Modified ({status.unstaged.length})
+                  </p>
+                  <div className="space-y-0.5">
+                    {status.unstaged.map((f, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="shrink-0 w-4 text-center font-mono text-red-400">{f.status}</span>
+                        <span className="font-mono text-heading truncate">{f.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {status.untracked.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-dim mb-1">
+                    Untracked ({status.untracked.length})
+                  </p>
+                  <div className="space-y-0.5">
+                    {status.untracked.map((f, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="shrink-0 w-4 text-center font-mono text-dim">?</span>
+                        <span className="font-mono text-label truncate">{f}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Commit log section */}
       {selectedProject && (
-        <div className="rounded-xl bg-gray-900 p-4 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+        <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-body uppercase tracking-wide">
             Commit Log
           </h2>
           {loadingCommits ? (
             <CommitSkeleton />
           ) : commits.length === 0 ? (
-            <p className="text-sm text-gray-500">No commits found.</p>
+            <p className="text-sm text-dim">No commits found.</p>
           ) : (
             <div className="space-y-1 max-h-[60vh] overflow-y-auto -mx-1 px-1 scrollbar-thin">
               {commits.map((commit, idx) => (
                 <div
                   key={commit.hash || idx}
-                  className="flex items-start gap-3 py-2 border-b border-gray-800 last:border-b-0"
+                  className="flex items-start gap-3 py-2 border-b border-divider last:border-b-0"
                 >
                   {/* Short hash */}
-                  <span className="font-mono text-xs text-violet-400 shrink-0 pt-0.5 select-all">
+                  <span className="font-mono text-xs text-cyan-400 shrink-0 pt-0.5 select-all">
                     {(commit.hash || "").slice(0, 7)}
                   </span>
 
                   {/* Message + meta */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-100 leading-snug break-words">
+                    <p className="text-sm text-heading leading-snug break-words">
                       {commit.message}
                     </p>
-                    <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
+                    <div className="flex items-center gap-2 mt-0.5 text-xs text-dim">
                       <span className="truncate max-w-[140px]">{commit.author}</span>
                       <span className="shrink-0">{relativeTime(commit.date)}</span>
                     </div>
@@ -413,14 +490,15 @@ export default function GitPage() {
         .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
         .scrollbar-thin::-webkit-scrollbar { width: 4px; }
         .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-        .scrollbar-thin::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
-        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--color-elevated); border-radius: 2px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: var(--color-hover); }
         @keyframes slide-in {
           from { opacity: 0; transform: translateY(-8px); }
           to { opacity: 1; transform: translateY(0); }
         }
         .animate-slide-in { animation: slide-in 0.2s ease-out; }
       `}</style>
+      </div>
     </div>
   );
 }

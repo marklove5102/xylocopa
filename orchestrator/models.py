@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -12,10 +12,10 @@ class Base(DeclarativeBase):
     pass
 
 
-class Priority(str, enum.Enum):
-    P0 = "P0"
-    P1 = "P1"
-    P2 = "P2"
+class AgentMode(str, enum.Enum):
+    INTERVIEW = "INTERVIEW"    # Chat only — no auto-execution
+    PLAN = "PLAN"              # Generate plan → approve → execute
+    AUTO = "AUTO"              # Execute immediately, no plan step
 
 
 class TaskStatus(str, enum.Enum):
@@ -27,6 +27,30 @@ class TaskStatus(str, enum.Enum):
     FAILED = "FAILED"
     TIMEOUT = "TIMEOUT"
     CANCELLED = "CANCELLED"
+
+
+class AgentStatus(str, enum.Enum):
+    STARTING = "STARTING"
+    IDLE = "IDLE"
+    EXECUTING = "EXECUTING"
+    PLANNING = "PLANNING"
+    PLAN_REVIEW = "PLAN_REVIEW"
+    ERROR = "ERROR"
+    STOPPED = "STOPPED"
+
+
+class MessageRole(str, enum.Enum):
+    USER = "USER"
+    AGENT = "AGENT"
+    SYSTEM = "SYSTEM"
+
+
+class MessageStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    TIMEOUT = "TIMEOUT"
 
 
 def _utcnow():
@@ -43,8 +67,8 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
     project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[Priority] = mapped_column(
-        Enum(Priority), nullable=False, default=Priority.P1
+    mode: Mapped[AgentMode] = mapped_column(
+        Enum(AgentMode), nullable=False, default=AgentMode.AUTO
     )
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True
@@ -63,6 +87,51 @@ class Task(Base):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=600)
 
 
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
+    project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    mode: Mapped[AgentMode] = mapped_column(
+        Enum(AgentMode), nullable=False, default=AgentMode.AUTO
+    )
+    status: Mapped[AgentStatus] = mapped_column(
+        Enum(AgentStatus), nullable=False, default=AgentStatus.STARTING, index=True
+    )
+    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    worktree: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    plan: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plan_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_message_preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    unread_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=600)
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id"), nullable=False, index=True
+    )
+    role: Mapped[MessageRole] = mapped_column(
+        Enum(MessageRole), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[MessageStatus] = mapped_column(
+        Enum(MessageStatus), nullable=False, default=MessageStatus.COMPLETED
+    )
+    stream_log: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -70,6 +139,8 @@ class Project(Base):
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     path: Mapped[str] = mapped_column(String(500), nullable=False)
     git_remote: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     max_concurrent: Mapped[int] = mapped_column(Integer, default=2)
     default_model: Mapped[str] = mapped_column(
         String(100), default="claude-sonnet-4-5-20250514"

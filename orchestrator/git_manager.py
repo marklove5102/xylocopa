@@ -28,6 +28,11 @@ class GitManager:
                 volumes={"cc-projects": {"bind": "/projects", "mode": "ro"}},
                 working_dir=f"/projects/{project_name}",
                 user=f"{HOST_USER_UID}:{HOST_USER_UID}",
+                environment={
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "safe.directory",
+                    "GIT_CONFIG_VALUE_0": f"/projects/{project_name}",
+                },
                 auto_remove=True,
                 stdout=True,
                 stderr=True,
@@ -51,6 +56,11 @@ class GitManager:
                 volumes={"cc-projects": {"bind": "/projects", "mode": "rw"}},
                 working_dir=f"/projects/{project_name}",
                 user=f"{HOST_USER_UID}:{HOST_USER_UID}",
+                environment={
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "safe.directory",
+                    "GIT_CONFIG_VALUE_0": f"/projects/{project_name}",
+                },
                 auto_remove=True,
                 stdout=True,
                 stderr=True,
@@ -104,6 +114,43 @@ class GitManager:
             elif len(parts) >= 1:
                 branches.append({"name": parts[0].strip(), "commit": "", "current": False})
         return branches
+
+    def get_status(self, project_name: str) -> dict:
+        """Get git status for a project: branch, staged, unstaged, untracked."""
+        # Current branch
+        branch = self._run_git(project_name, "branch --show-current")
+        if branch.startswith("ERROR:"):
+            branch = "unknown"
+
+        # Porcelain status for reliable parsing
+        raw = self._run_git(project_name, "status --porcelain")
+        if raw.startswith("ERROR:"):
+            return {"branch": branch, "clean": True, "staged": [], "unstaged": [], "untracked": []}
+
+        staged = []
+        unstaged = []
+        untracked = []
+        for line in raw.splitlines():
+            if len(line) < 3:
+                continue
+            x, y = line[0], line[1]
+            path = line[3:]
+            if x == "?":
+                untracked.append(path)
+            else:
+                if x not in (" ", "?"):
+                    staged.append({"status": x, "path": path})
+                if y not in (" ", "?"):
+                    unstaged.append({"status": y, "path": path})
+
+        clean = len(staged) == 0 and len(unstaged) == 0 and len(untracked) == 0
+        return {
+            "branch": branch,
+            "clean": clean,
+            "staged": staged,
+            "unstaged": unstaged,
+            "untracked": untracked,
+        }
 
     def get_diff(self, project_name: str, ref: str = "HEAD") -> str:
         """Get diff for a ref."""
