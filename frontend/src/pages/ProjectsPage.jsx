@@ -37,7 +37,7 @@ function FolderCard({ folder, onClick, onActivate, onArchive, busy }) {
                 Inactive
               </span>
             )}
-            {folder.container_running && (
+            {folder.process_running && (
               <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Processes active" />
             )}
           </div>

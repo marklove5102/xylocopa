@@ -107,7 +107,7 @@ class TaskDispatcher:
         executing = (
             db.query(Task)
             .filter(Task.status == TaskStatus.EXECUTING)
-            .filter(Task.container_id.is_not(None))
+            .filter(Task.container_id.is_not(None))  # pid_str stored in container_id column
             .all()
         )
         for task in executing:

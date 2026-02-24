@@ -124,9 +124,6 @@ export const rejectAgentPlan = (agentId, revision_notes) =>
     body: JSON.stringify({ revision_notes }),
   });
 
-// --- Containers ---
-export const fetchContainers = () => request("/api/containers");
-
 // --- Health ---
 export const fetchHealth = () => request("/api/health");
 

@@ -554,11 +554,11 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
     wm = getattr(request.app.state, "worker_manager", None)
     if wm:
         try:
-            for c in wm.list_containers():
-                if c.get("status") == "running" and c.get("project"):
-                    active_projects.add(c["project"])
+            for p in wm.list_processes():
+                if p.get("status") == "running" and p.get("project"):
+                    active_projects.add(p["project"])
         except Exception:
-            logger.warning("Failed to list containers for active project detection")
+            logger.warning("Failed to list processes for active project detection")
 
     results = []
     for dirname in all_dirs:
@@ -576,7 +576,7 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
             "name": dirname,
             "display_name": proj.display_name if proj else dirname,
             "active": active,
-            "container_running": dirname in active_projects,
+            "process_running": dirname in active_projects,
             "agent_count": agent_count,
             "last_activity": last_activity,
             "git_remote": proj.git_remote if proj else None,
@@ -779,7 +779,7 @@ def _check_no_active_agents(name: str, db: Session):
 
 @app.post("/api/projects/{name}/archive", status_code=200)
 async def archive_project(name: str, request: Request, db: Session = Depends(get_db)):
-    """Archive a project — stops agents, kills container, marks archived. Keeps all data."""
+    """Archive a project — stops agents, marks archived. Keeps all data."""
     proj = db.get(Project, name)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
@@ -812,7 +812,6 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
             wm.stop_project_processes(name)
         except Exception:
             logger.warning("Failed to stop processes for project %s", name)
-        proj.container_id = None
 
     proj.archived = True
     db.commit()
@@ -1194,7 +1193,7 @@ async def get_agent(agent_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/api/agents/{agent_id}", response_model=AgentOut)
 async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
-    """Stop an agent — marks STOPPED but leaves the project container running."""
+    """Stop an agent — marks STOPPED."""
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -1230,7 +1229,7 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
 
 @app.post("/api/agents/{agent_id}/resume", response_model=AgentOut)
 async def resume_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
-    """Resume a stopped or errored agent — reuses existing project container."""
+    """Resume a stopped or errored agent."""
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -1414,28 +1413,23 @@ async def reject_agent_plan(
     return agent
 
 
-# ---- Containers ----
-
-@app.get("/api/containers")
-async def list_containers(request: Request):
-    """List all tracked Claude processes (backward-compatible endpoint)."""
-    wm = getattr(request.app.state, "worker_manager", None)
-    if not wm:
-        return []
-    return wm.list_containers()
+# ---- Processes ----
 
 @app.get("/api/processes")
-async def list_processes(request: Request):
+async def list_processes_endpoint(request: Request):
     """List running Claude processes (active agent execs)."""
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if not ad:
         return []
     return ad.get_active_processes()
 
-# Legacy alias
 @app.get("/api/workers")
-async def list_workers(request: Request):
-    return await list_containers(request)
+async def list_tracked_processes(request: Request):
+    """List all tracked Claude subprocess entries."""
+    wm = getattr(request.app.state, "worker_manager", None)
+    if not wm:
+        return []
+    return wm.list_processes()
 
 
 # ---- Project worktrees ----

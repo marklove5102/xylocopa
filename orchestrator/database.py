@@ -66,13 +66,6 @@ def init_db():
             conn.execute(text("ALTER TABLE agents ADD COLUMN worktree VARCHAR(200)"))
             conn.commit()
 
-        # Add container_id column to projects if missing
-        result = conn.execute(text("PRAGMA table_info(projects)"))
-        columns = {row[1] for row in result}
-        if "container_id" not in columns:
-            conn.execute(text("ALTER TABLE projects ADD COLUMN container_id VARCHAR(80)"))
-            conn.commit()
-
         # Migrate priority → mode column on agents table
         result = conn.execute(text("PRAGMA table_info(agents)"))
         columns = {row[1] for row in result}
@@ -126,11 +119,6 @@ def init_db():
         if "priority" in columns and "mode" in columns:
             conn.execute(text("ALTER TABLE tasks DROP COLUMN priority"))
             conn.commit()
-
-        # Clear stale container_ids on startup (host mode — no persistent containers)
-        conn.execute(text("UPDATE projects SET container_id = NULL WHERE container_id IS NOT NULL"))
-        conn.execute(text("UPDATE agents SET container_id = NULL WHERE container_id IS NOT NULL"))
-        conn.commit()
 
     # Ensure jwt_secret exists in SystemConfig
     from auth import get_jwt_secret

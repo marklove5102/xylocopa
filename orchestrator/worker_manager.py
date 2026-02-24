@@ -314,8 +314,8 @@ class WorkerManager:
         if exited:
             logger.info("Cleaned up %d exited processes", len(exited))
 
-    def list_containers(self) -> list[dict]:
-        """List all tracked processes (backward-compatible name)."""
+    def list_processes(self) -> list[dict]:
+        """List all tracked processes."""
         results = []
         for pid_str, info in self._processes.items():
             process = info["process"]

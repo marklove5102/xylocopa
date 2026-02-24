@@ -955,13 +955,6 @@ class AgentDispatcher:
         """On startup, clear stale state and recover agents."""
         db = SessionLocal()
         try:
-            # Clear all stale container_ids from projects (no containers anymore)
-            projects = db.query(Project).filter(
-                Project.container_id.is_not(None)
-            ).all()
-            for project in projects:
-                project.container_id = None
-
             # Recover agents
             alive_statuses = [
                 AgentStatus.IDLE, AgentStatus.EXECUTING,
@@ -975,9 +968,6 @@ class AgentDispatcher:
             for agent in agents:
                 if agent.status == AgentStatus.STARTING:
                     continue
-
-                # Clear container_id (no containers in host mode)
-                agent.container_id = None
 
                 if agent.status in (AgentStatus.EXECUTING, AgentStatus.PLANNING):
                     # Repair session JSONL if agent was mid-execution

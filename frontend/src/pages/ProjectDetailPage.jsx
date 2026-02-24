@@ -508,7 +508,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 )}
               </div>
               <div className="flex items-center gap-3 text-xs">
-                {project.container_running && (
+                {project.process_running && (
                   <span className="inline-flex items-center gap-1 text-emerald-400">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     Processes active

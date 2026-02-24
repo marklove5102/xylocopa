@@ -226,7 +226,7 @@ export function extractFileAttachments(text, project) {
 
   const addPath = (rawPath) => {
     if (!rawPath || !ALL_EXTS.test(rawPath)) return;
-    // Strip container-absolute prefix
+    // Strip absolute /projects/{name}/ prefix
     let path = rawPath.replace(/^\/projects\/[^/]+\//, "");
     path = path.replace(/^\/+/, "");
     if (seen.has(path) || inlineRendered.has(rawPath)) return;
