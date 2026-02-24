@@ -13,9 +13,11 @@ REGISTRY="projects/registry.yaml"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 ok() { echo -e "${GREEN}✓${NC} $1"; }
+warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 fail() { echo -e "${RED}✗${NC} $1"; exit 1; }
 
 # Check if project already registered
@@ -23,44 +25,49 @@ if grep -q "name: $PROJECT_NAME" "$REGISTRY" 2>/dev/null; then
     fail "Project '$PROJECT_NAME' is already registered in registry.yaml"
 fi
 
+# Load HOST_PROJECTS_DIR from .env
+if [ -f .env ]; then
+    source .env 2>/dev/null || true
+fi
+PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/cc-projects}"
+
 echo "Registering project: $PROJECT_NAME"
 echo "Git remote: $GIT_REMOTE"
+echo "Projects dir: $PROJECTS_DIR"
 echo ""
 
-# Clone into Docker volume
-echo "Cloning project into Docker volume..."
-docker run --rm \
-    -v cc-projects:/projects \
-    alpine/git \
-    clone "$GIT_REMOTE" "/projects/$PROJECT_NAME" 2>&1 || {
-    # If clone fails (e.g. private repo), create empty directory
-    echo "Git clone failed — creating empty project directory..."
-    docker run --rm \
-        -v cc-projects:/projects \
-        alpine \
-        mkdir -p "/projects/$PROJECT_NAME"
-}
-ok "Project code is ready"
+# Ensure projects directory exists
+mkdir -p "$PROJECTS_DIR"
+
+# Clone into host projects directory
+echo "Cloning project..."
+if [ -d "$PROJECTS_DIR/$PROJECT_NAME" ]; then
+    warn "Directory $PROJECTS_DIR/$PROJECT_NAME already exists — skipping clone"
+else
+    git clone "$GIT_REMOTE" "$PROJECTS_DIR/$PROJECT_NAME" 2>&1 || {
+        # If clone fails (e.g. private repo), create empty directory
+        echo "Git clone failed — creating empty project directory..."
+        mkdir -p "$PROJECTS_DIR/$PROJECT_NAME"
+    }
+fi
+ok "Project code is ready at $PROJECTS_DIR/$PROJECT_NAME"
 
 # Check for CLAUDE.md, create from template if missing
-docker run --rm \
-    -v cc-projects:/projects \
-    alpine \
-    test -f "/projects/$PROJECT_NAME/CLAUDE.md" 2>/dev/null || {
-    echo "No CLAUDE.md found in project — creating from template..."
-    docker run --rm \
-        -v cc-projects:/projects \
-        -v "$(pwd)/projects/templates:/templates:ro" \
-        alpine \
-        sh -c "sed 's/{PROJECT_NAME}/$PROJECT_NAME/g' /templates/project-claude.md > /projects/$PROJECT_NAME/CLAUDE.md"
+if [ ! -f "$PROJECTS_DIR/$PROJECT_NAME/CLAUDE.md" ]; then
+    echo "No CLAUDE.md found — creating from template..."
+    if [ -f "projects/templates/project-claude.md" ]; then
+        sed "s/{PROJECT_NAME}/$PROJECT_NAME/g" projects/templates/project-claude.md \
+            > "$PROJECTS_DIR/$PROJECT_NAME/CLAUDE.md"
+    else
+        echo "# CLAUDE.md — $PROJECT_NAME" > "$PROJECTS_DIR/$PROJECT_NAME/CLAUDE.md"
+    fi
     echo "⚠️  Please edit the project's CLAUDE.md with project-specific info"
-}
+fi
 
 # Ensure PROGRESS.md exists
-docker run --rm \
-    -v cc-projects:/projects \
-    alpine \
-    sh -c "test -f /projects/$PROJECT_NAME/PROGRESS.md || echo '# PROGRESS.md\n\n(CC worker lessons learned)' > /projects/$PROJECT_NAME/PROGRESS.md"
+if [ ! -f "$PROJECTS_DIR/$PROJECT_NAME/PROGRESS.md" ]; then
+    printf '# PROGRESS.md\n\n(CC worker lessons learned)\n' > "$PROJECTS_DIR/$PROJECT_NAME/PROGRESS.md"
+fi
 
 # Append to registry.yaml
 # If registry has "projects: []", replace with content format
@@ -87,6 +94,6 @@ echo "========================================="
 echo ""
 echo "Next steps:"
 echo "  1. Edit projects/registry.yaml to adjust config (display_name, max_concurrent, etc.)"
-echo "  2. Edit project CLAUDE.md: docker run --rm -it -v cc-projects:/projects alpine vi /projects/$PROJECT_NAME/CLAUDE.md"
+echo "  2. Edit project CLAUDE.md: $PROJECTS_DIR/$PROJECT_NAME/CLAUDE.md"
 echo "  3. Restart orchestrator: docker compose restart orchestrator"
 echo ""

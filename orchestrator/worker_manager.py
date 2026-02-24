@@ -1,9 +1,7 @@
-"""Worker Manager — Docker container lifecycle for CC workers."""
+"""Worker Manager — Docker container lifecycle for CC workers and agents."""
 
 import logging
-import os
 import shlex
-from typing import AsyncGenerator
 
 import docker
 import docker.errors
@@ -11,19 +9,29 @@ import docker.errors
 from config import (
     HOST_CLAUDE_DIR,
     HOST_CLAUDE_JSON,
+    HOST_PROJECTS_DIR,
     HOST_USER_UID,
     WORKER_CPU_LIMIT,
     WORKER_IMAGE,
     WORKER_MEM_LIMIT,
     WORKER_NETWORK,
 )
-from models import Project, Task
+from models import Agent, Project, Task
 
 logger = logging.getLogger("orchestrator.worker")
 
+# Setup commands shared between workers and agents
+_SETUP_CMDS = (
+    "cp -a /claude-config-ro/.claude $HOME/.claude 2>/dev/null; "
+    "cp /claude-config-ro/.claude.json $HOME/.claude.json 2>/dev/null; "
+    "git config --global user.name 'CC Worker' && "
+    "git config --global user.email 'cc-worker@localhost' && "
+    "git config --global init.defaultBranch main"
+)
+
 
 class WorkerManager:
-    """Manages CC worker Docker containers."""
+    """Manages CC worker Docker containers (ephemeral tasks and persistent agents)."""
 
     def __init__(self):
         self.docker_client = docker.from_env()
@@ -40,6 +48,38 @@ class WorkerManager:
                 "docker build -t %s ./worker/",
                 WORKER_IMAGE, WORKER_IMAGE,
             )
+
+    def _projects_volume(self, mode="rw"):
+        """Return the projects volume spec — host bind mount or named volume."""
+        if HOST_PROJECTS_DIR:
+            return {HOST_PROJECTS_DIR: {"bind": "/projects", "mode": mode}}
+        return {"cc-projects": {"bind": "/projects", "mode": mode}}
+
+    def _base_volumes(self, rw=True):
+        """Build the common volumes dict."""
+        mode = "rw" if rw else "ro"
+        volumes = {
+            **self._projects_volume(mode),
+            "cc-git-bare": {"bind": "/git-bare", "mode": mode},
+        }
+        if HOST_CLAUDE_DIR:
+            volumes[HOST_CLAUDE_DIR] = {
+                "bind": "/claude-config-ro/.claude",
+                "mode": "ro",
+            }
+        else:
+            logger.warning("HOST_CLAUDE_DIR not set — worker will have no OAuth credentials")
+
+        if HOST_CLAUDE_JSON:
+            volumes[HOST_CLAUDE_JSON] = {
+                "bind": "/claude-config-ro/.claude.json",
+                "mode": "ro",
+            }
+        return volumes
+
+    # =====================================================================
+    # Ephemeral task workers (original one-shot behavior)
+    # =====================================================================
 
     def _build_prompt(self, task: Task, project: Project) -> str:
         """Wrap the user prompt with worker instructions."""
@@ -60,11 +100,9 @@ class WorkerManager:
         )
 
     def start_worker(self, task: Task, project: Project) -> str:
-        """Start a worker container for a task. Returns container ID."""
+        """Start an ephemeral worker container for a task. Returns container ID."""
         prompt = self._build_prompt(task, project)
-        # Use shell-safe quoting for the prompt
         escaped_prompt = shlex.quote(prompt)
-
         container_name = f"cc-worker-{task.id}"
 
         # Clean up any leftover container with the same name
@@ -75,44 +113,13 @@ class WorkerManager:
         except docker.errors.NotFound:
             pass
 
-        volumes = {
-            "cc-projects": {"bind": "/projects", "mode": "rw"},
-            "cc-git-bare": {"bind": "/git-bare", "mode": "rw"},
-        }
-
-        # Mount host's ~/.claude/ and ~/.claude.json as read-only source for OAuth credentials.
-        # We mount them at /claude-config-ro/ and copy to writable HOME at container start,
-        # because claude CLI needs write access to .claude/ (debug logs, stats) and .claude.json.
-        if HOST_CLAUDE_DIR:
-            volumes[HOST_CLAUDE_DIR] = {
-                "bind": "/claude-config-ro/.claude",
-                "mode": "ro",
-            }
-        else:
-            logger.warning("HOST_CLAUDE_DIR not set — worker will have no OAuth credentials")
-
-        if HOST_CLAUDE_JSON:
-            volumes[HOST_CLAUDE_JSON] = {
-                "bind": "/claude-config-ro/.claude.json",
-                "mode": "ro",
-            }
-
-        # Build the startup command: copy OAuth config, set up git, then run claude
-        setup_cmds = (
-            # Copy claude config into writable HOME
-            "cp -a /claude-config-ro/.claude $HOME/.claude 2>/dev/null; "
-            "cp /claude-config-ro/.claude.json $HOME/.claude.json 2>/dev/null; "
-            # Git config (HOME is tmpfs, image's gitconfig is not available)
-            "git config --global user.name 'CC Worker' && "
-            "git config --global user.email 'cc-worker@localhost' && "
-            "git config --global init.defaultBranch main"
-        )
+        volumes = self._base_volumes(rw=True)
 
         container = self.docker_client.containers.run(
             image=WORKER_IMAGE,
             entrypoint=["bash", "-c"],
             command=[
-                f"{setup_cmds} && "
+                f"{_SETUP_CMDS} && "
                 f"cd /projects/{project.name} && "
                 f"claude -p {escaped_prompt} "
                 f"--dangerously-skip-permissions "
@@ -120,17 +127,13 @@ class WorkerManager:
             ],
             volumes=volumes,
             working_dir=f"/projects/{project.name}",
-            # HOME=/worker-home so claude CLI finds .claude/ there;
-            # no ANTHROPIC_API_KEY — force OAuth from mounted config
             environment={"HOME": "/worker-home"},
-            # Tmpfs for writable home (git config, claude writes to .claude/, etc.)
             tmpfs={"/worker-home": f"uid={HOST_USER_UID},gid={HOST_USER_UID}"},
-            # Run as host user's UID so we can read the mounted .claude/ OAuth tokens
             user=f"{HOST_USER_UID}:{HOST_USER_UID}",
             cpu_quota=int(WORKER_CPU_LIMIT * 100000),
             mem_limit=WORKER_MEM_LIMIT,
             network=WORKER_NETWORK,
-            auto_remove=False,  # Keep container to read logs after exit
+            auto_remove=False,
             detach=True,
             name=container_name,
         )
@@ -139,6 +142,174 @@ class WorkerManager:
             container_name, task.id, project.name,
         )
         return container.id
+
+    # =====================================================================
+    # Persistent agent containers
+    # =====================================================================
+
+    def ensure_project_container(self, project: Project) -> str:
+        """Get or create a persistent container for a project. PID 1 = sleep infinity.
+        Returns container ID.  All agents in the same project share this container.
+        """
+        container_name = f"cc-project-{project.name}"
+
+        # Check if a running container already exists
+        try:
+            existing = self.docker_client.containers.get(container_name)
+            if existing.status == "running":
+                logger.debug("Reusing project container %s", container_name)
+                return existing.id
+            # Exists but not running — remove and recreate
+            existing.remove(force=True)
+            logger.warning("Removed non-running project container %s", container_name)
+        except docker.errors.NotFound:
+            pass
+
+        volumes = self._base_volumes(rw=True)
+
+        container = self.docker_client.containers.run(
+            image=WORKER_IMAGE,
+            entrypoint=["bash", "-c"],
+            command=[f"{_SETUP_CMDS} && exec sleep infinity"],
+            volumes=volumes,
+            working_dir=f"/projects/{project.name}",
+            environment={"HOME": "/worker-home"},
+            tmpfs={"/worker-home": f"uid={HOST_USER_UID},gid={HOST_USER_UID}"},
+            user=f"{HOST_USER_UID}:{HOST_USER_UID}",
+            cpu_quota=int(WORKER_CPU_LIMIT * 100000),
+            mem_limit=WORKER_MEM_LIMIT,
+            network=WORKER_NETWORK,
+            auto_remove=False,
+            detach=True,
+            name=container_name,
+        )
+        logger.info(
+            "Started project container %s (project: %s)",
+            container_name, project.name,
+        )
+        return container.id
+
+    def exec_claude_in_agent(
+        self,
+        container_id: str,
+        prompt: str,
+        project: Project,
+        agent: Agent,
+        resume_session_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Run claude via docker exec inside a persistent agent container.
+        Returns (exec_id, output_file) for monitoring.
+        """
+        escaped_prompt = shlex.quote(prompt)
+        # Use a unique output file per invocation
+        import uuid
+        output_file = f"/tmp/claude-output-{uuid.uuid4().hex[:8]}.log"
+
+        resume_flag = f"--resume {shlex.quote(resume_session_id)}" if resume_session_id else ""
+        worktree_flag = f"--worktree {shlex.quote(agent.worktree)}" if agent.worktree else ""
+        cmd = (
+            f"cd /projects/{project.name} && "
+            f"claude -p {escaped_prompt} "
+            f"--dangerously-skip-permissions "
+            f"--output-format stream-json --verbose "
+            f"{worktree_flag} "
+            f"{resume_flag} "
+            f"2>&1 | tee {output_file}"
+        )
+
+        container = self.docker_client.containers.get(container_id)
+        exec_result = self.docker_client.api.exec_create(
+            container.id,
+            ["bash", "-c", cmd],
+            workdir=f"/projects/{project.name}",
+            user=f"{HOST_USER_UID}:{HOST_USER_UID}",
+            environment={"HOME": "/worker-home"},
+        )
+        exec_id = exec_result["Id"]
+
+        # Start the exec (non-blocking — we use detach=True via socket=False, stream=False)
+        self.docker_client.api.exec_start(exec_id, detach=True)
+
+        logger.info(
+            "Exec started in agent %s (exec_id=%s, resume=%s)",
+            agent.id, exec_id[:12], bool(resume_session_id),
+        )
+        return exec_id, output_file
+
+    def is_exec_running(self, exec_id: str) -> bool:
+        """Check if a docker exec is still running."""
+        try:
+            info = self.docker_client.api.exec_inspect(exec_id)
+            return info.get("Running", False)
+        except docker.errors.APIError:
+            return False
+
+    def read_exec_output(self, container_id: str, output_file: str) -> str:
+        """Read the output file from inside a container."""
+        try:
+            container = self.docker_client.containers.get(container_id)
+            exit_code, output = container.exec_run(
+                ["cat", output_file],
+                user=f"{HOST_USER_UID}:{HOST_USER_UID}",
+            )
+            if exit_code == 0:
+                return output.decode("utf-8", errors="replace")
+            return ""
+        except (docker.errors.NotFound, docker.errors.APIError):
+            return ""
+
+    def stop_project_container(self, container_id: str):
+        """Stop and remove a project container."""
+        try:
+            container = self.docker_client.containers.get(container_id)
+            if container.status == "running":
+                container.stop(timeout=10)
+            container.remove(force=True)
+            logger.info("Stopped and removed project container %s", container_id[:12])
+        except docker.errors.NotFound:
+            logger.debug("Project container %s already removed", container_id[:12])
+
+    # =====================================================================
+    # Project setup
+    # =====================================================================
+
+    def clone_project(self, project_name: str, git_url: str):
+        """Clone a git repo into the projects directory via a temporary container."""
+        volumes = self._projects_volume("rw")
+        try:
+            self.docker_client.containers.run(
+                image="alpine/git",
+                command=["clone", git_url, f"/projects/{project_name}"],
+                volumes=volumes,
+                auto_remove=True,
+                detach=False,
+            )
+            logger.info("Cloned project %s from %s", project_name, git_url)
+        except docker.errors.ContainerError:
+            # Clone failed (private repo, bad URL, etc.) — create empty dir
+            logger.warning("Git clone failed for %s — creating empty directory", project_name)
+            self.docker_client.containers.run(
+                image="alpine",
+                command=["mkdir", "-p", f"/projects/{project_name}"],
+                volumes=volumes,
+                auto_remove=True,
+                detach=False,
+            )
+
+    def ensure_project_dir(self, project_name: str):
+        """Ensure the project directory exists in the projects volume."""
+        volumes = self._projects_volume("rw")
+        self.docker_client.containers.run(
+            image="alpine",
+            command=["mkdir", "-p", f"/projects/{project_name}"],
+            volumes=volumes,
+            auto_remove=True,
+            detach=False,
+        )
+
+    # =====================================================================
+    # Common operations
+    # =====================================================================
 
     def get_status(self, container_id: str) -> str:
         """Get container status: running / exited / error / removed."""
@@ -159,7 +330,7 @@ class WorkerManager:
         except docker.errors.NotFound:
             return ""
 
-    def stream_logs(self, container_id: str) -> AsyncGenerator[str, None]:
+    def stream_logs(self, container_id: str):
         """Stream container logs line by line."""
         try:
             container = self.docker_client.containers.get(container_id)
@@ -194,21 +365,25 @@ class WorkerManager:
         if containers:
             logger.info("Cleaned up %d exited worker containers", len(containers))
 
-    def list_workers(self) -> list[dict]:
-        """List all cc-worker containers with their status."""
-        containers = self.docker_client.containers.list(
-            all=True,
-            filters={"name": "cc-worker-"},
-        )
-        return [
-            {
-                "id": c.id,
-                "name": c.name,
-                "status": c.status,
-                "created": c.attrs.get("Created", ""),
-            }
-            for c in containers
-        ]
+    def list_containers(self) -> list[dict]:
+        """List all cc-project and cc-worker containers with their status."""
+        results = []
+        for prefix in ("cc-project-", "cc-worker-"):
+            containers = self.docker_client.containers.list(
+                all=True,
+                filters={"name": prefix},
+            )
+            results.extend(
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "status": c.status,
+                    "created": c.attrs.get("Created", ""),
+                    "project": c.name.replace("cc-project-", "").replace("cc-worker-", "") if c.name else "",
+                }
+                for c in containers
+            )
+        return results
 
     def ping(self) -> bool:
         """Check if Docker daemon is reachable."""

@@ -50,13 +50,27 @@ echo ""
 echo "Setting up environment variables..."
 if [ ! -f .env ]; then
     cp .env.example .env
-    ok "Created .env (copied from .env.example)"
+    # Auto-fill HOST_PROJECTS_DIR and HOST_USER_UID
+    sed -i "s|/home/YOUR_USERNAME/cc-projects|$HOME/cc-projects|g" .env
+    sed -i "s|/home/YOUR_USERNAME/.claude|$HOME/.claude|g" .env
+    sed -i "s|HOST_USER_UID=1000|HOST_USER_UID=$(id -u)|g" .env
+    ok "Created .env (copied from .env.example, auto-filled paths)"
     echo ""
-    echo -e "  ${YELLOW}Please edit .env and fill in your API keys:${NC}"
+    echo -e "  ${YELLOW}Please review .env and fill in any missing values:${NC}"
     echo "  nano .env"
     echo ""
 else
     ok ".env already exists, skipping"
+fi
+
+# 3b. Create host projects directory
+source .env 2>/dev/null || true
+PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/cc-projects}"
+if [ ! -d "$PROJECTS_DIR" ]; then
+    mkdir -p "$PROJECTS_DIR"
+    ok "Created projects directory: $PROJECTS_DIR"
+else
+    ok "Projects directory exists: $PROJECTS_DIR"
 fi
 
 # 4. Create Docker volumes

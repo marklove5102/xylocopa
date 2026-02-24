@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES, SKIP_PLAN_FOR_P2
+from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES
 from database import SessionLocal
 from log_config import save_worker_log
-from models import Priority, Project, Task, TaskStatus
+from models import AgentMode, Project, Task, TaskStatus
 from plan_manager import PlanManager
 from worker_manager import WorkerManager
 
@@ -219,7 +219,7 @@ class TaskDispatcher:
             db.query(Task)
             .filter(Task.status == TaskStatus.PENDING)
             .filter(Task.plan_approved == True)  # noqa: E712
-            .order_by(Task.priority.asc(), Task.created_at.asc())
+            .order_by(Task.created_at.asc())
             .all()
         )
 
@@ -272,7 +272,7 @@ class TaskDispatcher:
             db.query(Task)
             .filter(Task.status == TaskStatus.PENDING)
             .filter(Task.plan_approved == False)  # noqa: E712
-            .order_by(Task.priority.asc(), Task.created_at.asc())
+            .order_by(Task.created_at.asc())
             .all()
         )
 
@@ -280,10 +280,10 @@ class TaskDispatcher:
             if total_active >= MAX_CONCURRENT_WORKERS:
                 break
 
-            # P2 tasks skip planning if configured
-            if SKIP_PLAN_FOR_P2 and task.priority == Priority.P2:
+            # AUTO mode tasks skip planning
+            if task.mode == AgentMode.AUTO:
                 task.plan_approved = True
-                logger.info("Task %s (P2) skipping plan — auto-approved", task.id)
+                logger.info("Task %s (AUTO mode) skipping plan — auto-approved", task.id)
                 continue
 
             project = db.get(Project, task.project)

@@ -1,0 +1,84 @@
+/** Centralized API wrapper for CC Orchestrator. */
+
+const BASE = "";
+
+async function request(url, opts = {}) {
+  const res = await fetch(`${BASE}${url}`, {
+    headers: { "Content-Type": "application/json", ...opts.headers },
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// --- Projects ---
+export const fetchProjects = () => request("/api/projects");
+export const createProject = (data) =>
+  request("/api/projects", { method: "POST", body: JSON.stringify(data) });
+export const deleteProject = (name) =>
+  request(`/api/projects/${name}`, { method: "DELETE" });
+export const fetchProjectAgents = (name, params = "") =>
+  request(`/api/projects/${name}/agents${params ? `?${params}` : ""}`);
+export const fetchProjectWorktrees = (name) =>
+  request(`/api/projects/${name}/worktrees`);
+
+// --- Tasks (agent-sourced: each USER message = one task) ---
+export const fetchTasks = (params = "") =>
+  request(`/api/tasks${params ? `?${params}` : ""}`);
+export const fetchTask = (id) => request(`/api/tasks/${id}`);
+
+// --- Agents ---
+export const fetchAgents = (params = "") =>
+  request(`/api/agents${params ? `?${params}` : ""}`);
+export const fetchAgent = (id) => request(`/api/agents/${id}`);
+export const createAgent = (data) =>
+  request("/api/agents", { method: "POST", body: JSON.stringify(data) });
+export const stopAgent = (id) =>
+  request(`/api/agents/${id}`, { method: "DELETE" });
+export const resumeAgent = (id) =>
+  request(`/api/agents/${id}/resume`, { method: "POST" });
+export const fetchMessages = (agentId, limit = 100) =>
+  request(`/api/agents/${agentId}/messages?limit=${limit}`);
+export const sendMessage = (agentId, content) =>
+  request(`/api/agents/${agentId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+export const markAgentRead = (agentId) =>
+  request(`/api/agents/${agentId}/read`, { method: "PUT" });
+export const approveAgentPlan = (agentId) =>
+  request(`/api/agents/${agentId}/approve`, { method: "PUT" });
+export const rejectAgentPlan = (agentId, revision_notes) =>
+  request(`/api/agents/${agentId}/reject`, {
+    method: "PUT",
+    body: JSON.stringify({ revision_notes }),
+  });
+
+// --- Containers ---
+export const fetchContainers = () => request("/api/containers");
+
+// --- Health ---
+export const fetchHealth = () => request("/api/health");
+
+// --- Git ---
+export const fetchGitLog = (project, limit = 30) =>
+  request(`/api/git/${project}/log?limit=${limit}`);
+export const fetchGitBranches = (project) =>
+  request(`/api/git/${project}/branches`);
+export const mergeGitBranch = (project, branch) =>
+  request(`/api/git/${project}/merge/${branch}`, { method: "POST" });
+
+// --- Voice ---
+export async function transcribeVoice(audioBlob) {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+  const res = await fetch(`${BASE}/api/voice`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) throw new Error(`Voice API error (${res.status})`);
+  return res.json();
+}

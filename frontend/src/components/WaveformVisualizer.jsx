@@ -1,0 +1,59 @@
+import { useRef, useEffect } from "react";
+
+/**
+ * Canvas-based AnalyserNode waveform visualiser with cyan accent.
+ */
+export default function WaveformVisualizer({ analyserNode, className = "" }) {
+  const canvasRef = useRef(null);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    if (!analyserNode) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const bufferLength = analyserNode.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    function draw() {
+      rafRef.current = requestAnimationFrame(draw);
+      analyserNode.getByteTimeDomainData(dataArray);
+
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#00d2ff";
+      ctx.beginPath();
+
+      const sliceWidth = w / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * h) / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      ctx.lineTo(w, h / 2);
+      ctx.stroke();
+    }
+    draw();
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [analyserNode]);
+
+  if (!analyserNode) return null;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={200}
+      height={40}
+      className={`rounded bg-surface ${className}`}
+    />
+  );
+}

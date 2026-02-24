@@ -8,9 +8,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # Control worker containers
       - cc-orch-db:/app/db
       - cc-orch-backups:/app/backups
-      - cc-projects:/projects:ro                     # Read-only project access
+      - ${HOST_PROJECTS_DIR:?Set HOST_PROJECTS_DIR in .env}:/projects:ro  # Host project code
       - cc-logs:/app/logs
       - ./projects:/app/project-configs:ro           # Project registry configs
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro   # GPU monitoring
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+    devices:
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia0:/dev/nvidia0
     env_file: .env
     restart: unless-stopped
     deploy:
@@ -49,6 +54,5 @@ networks:
 volumes:
   cc-orch-db:
   cc-orch-backups:
-  cc-projects:
   cc-git-bare:
   cc-logs:
