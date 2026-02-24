@@ -29,7 +29,7 @@ fi
 if [ -f .env ]; then
     source .env 2>/dev/null || true
 fi
-PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/cc-projects}"
+PROJECTS_DIR="${HOST_PROJECTS_DIR:-$HOME/agenthive-projects}"
 
 echo "Registering project: $PROJECT_NAME"
 echo "Git remote: $GIT_REMOTE"

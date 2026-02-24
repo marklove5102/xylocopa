@@ -78,7 +78,7 @@
 - Created docker-compose.yml with orchestrator + frontend services
 - Defined cc-internal (service comms) and cc-worker-net (worker containers) networks
 - cc-worker-net uses `name:` key so dynamically created containers can reference it by name
-- 5 named volumes: cc-orch-db, cc-orch-backups, cc-projects, cc-git-bare, cc-logs
+- 5 named volumes: cc-orch-db, cc-orch-backups, agenthive-projects, cc-git-bare, cc-logs
 - Frontend placeholder: nginx with reverse proxy for /api/* and /ws/* to orchestrator
 - Static landing page with dark theme and backend connectivity check
 - Added projects/registry.yaml and project CLAUDE.md template
@@ -140,7 +140,7 @@
 
 | Host Path | Container Path | Mode | Purpose |
 |-----------|---------------|------|---------|
-| `HOST_PROJECTS_DIR` (/home/jyao073/cc-projects) | `/projects` | rw | Project source code |
+| `HOST_PROJECTS_DIR` (/home/jyao073/agenthive-projects) | `/projects` | rw | Project source code |
 | `cc-git-bare` (named volume) | `/git-bare` | rw | Git bare repos for sync |
 | `HOST_CLAUDE_DIR` (/home/jyao073/.claude) | `/claude-config-ro/.claude` | **ro** | OAuth credentials source |
 | `HOST_CLAUDE_JSON` (/home/jyao073/.claude.json) | `/claude-config-ro/.claude.json` | **ro** | Claude config source |

@@ -190,7 +190,7 @@ fi
 # ─────────────────────────────────────────────
 header "Step 7/8: Environment configuration"
 
-PROJECTS_DIR="$HOME/cc-projects"
+PROJECTS_DIR="$HOME/agenthive-projects"
 mkdir -p "$PROJECTS_DIR"
 ok "Projects directory: $PROJECTS_DIR"
 
@@ -201,7 +201,7 @@ else
     cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
 
     # Auto-fill host-specific values
-    sed -i "s|/home/YOUR_USERNAME/cc-projects|$PROJECTS_DIR|g" "$SCRIPT_DIR/.env"
+    sed -i "s|/home/YOUR_USERNAME/agenthive-projects|$PROJECTS_DIR|g" "$SCRIPT_DIR/.env"
     sed -i "s|HOST_USER_UID=1000|HOST_USER_UID=$(id -u)|g" "$SCRIPT_DIR/.env"
 
     # Add HOST_CLAUDE_DIR if not present

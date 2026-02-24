@@ -22,7 +22,7 @@ Create scripts/init.sh with the following functionality:
 3. Create required Docker volumes:
    - cc-orch-db
    - cc-orch-backups
-   - cc-projects
+   - agenthive-projects
    - cc-git-bare
    - cc-logs
 4. Print "Initialization complete, run docker compose up -d to start"
@@ -161,7 +161,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # Control worker containers
       - cc-orch-db:/app/db
       - cc-orch-backups:/app/backups
-      - cc-projects:/projects:ro                     # Read-only project access
+      - agenthive-projects:/projects:ro                     # Read-only project access
       - cc-logs:/app/logs
       - ./projects:/app/project-configs:ro           # Project configs
     env_file: .env
@@ -200,7 +200,7 @@ networks:
 volumes:
   cc-orch-db:
   cc-orch-backups:
-  cc-projects:
+  agenthive-projects:
   cc-git-bare:
   cc-logs:
 
@@ -223,7 +223,7 @@ Create scripts/add-project.sh:
 Usage: ./scripts/add-project.sh <project-name> <git-remote-url>
 
 Functionality:
-1. Clone project into cc-projects volume
+1. Clone project into agenthive-projects volume
 2. Append project config to projects/registry.yaml
 3. If project has no CLAUDE.md, copy one from projects/templates/project-claude.md
 4. Print "Project {name} registered successfully"
@@ -396,7 +396,7 @@ class WorkerManager:
                  f'--dangerously-skip-permissions '
                  f'--output-format stream-json --verbose'],
         volumes={
-            'cc-projects': {'bind': '/projects', 'mode': 'rw'},
+            'agenthive-projects': {'bind': '/projects', 'mode': 'rw'},
             'cc-git-bare': {'bind': '/git-bare', 'mode': 'rw'},
         },
         working_dir=f'/projects/{project.name}',
@@ -665,7 +665,7 @@ The task result detail view should support rendering rich media:
 - Tables (metrics comparison)
 - Video (simulation recordings, e.g. mp4)
 Use an expandable card per task that renders markdown with embedded media.
-Media files should be served from the cc-projects volume via a
+Media files should be served from the agenthive-projects volume via a
 /api/files/{project}/{path} endpoint.
 
 Done when: Can see all task statuses, can approve/reject plans, can view rich media results
