@@ -13,6 +13,9 @@ CC_MODEL = os.getenv("CC_MODEL", "claude-sonnet-4-5-20250514")
 # Claude CLI binary
 CLAUDE_BIN = os.getenv("CLAUDE_BIN", "claude")
 
+# Claude history file (all past conversations)
+CLAUDE_HISTORY_PATH = os.getenv("CLAUDE_HISTORY_PATH", os.path.expanduser("~/.claude/history.jsonl"))
+
 # Projects directory (host path)
 PROJECTS_DIR = os.getenv("PROJECTS_DIR", os.getenv("HOST_PROJECTS_DIR", ""))
 

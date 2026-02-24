@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   fetchAllFolders,
   fetchProjectAgents,
+  fetchProjectSessions,
   createAgent,
   createProject,
   deleteProject as deleteProjectApi,
@@ -19,6 +20,7 @@ import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants"
 const AGENT_TABS = [
   { key: "active", label: "Active" },
   { key: "stopped", label: "Stopped" },
+  { key: "sessions", label: "Sessions" },
 ];
 
 function projectBotState(proj) {
@@ -94,6 +96,74 @@ function AgentRow({ agent, onClick }) {
   );
 }
 
+function formatSessionTime(unixMs) {
+  if (!unixMs) return "";
+  const d = new Date(unixMs);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return d.toLocaleDateString();
+}
+
+function SessionRow({ session }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyId = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(session.session_id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3">
+      <div
+        className="relative shrink-0 cursor-pointer hover:opacity-70 transition-opacity"
+        onClick={handleCopyId}
+        title={`Copy session ID: ${session.session_id}`}
+      >
+        {/* Clock icon */}
+        <svg className="w-9 h-9 text-label" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path strokeLinecap="round" d="M12 7v5l3 3" />
+        </svg>
+        {copied && (
+          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
+            Copied!
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-heading truncate flex-1">
+            {session.first_message || "Untitled session"}
+          </h3>
+          <span className="text-xs text-dim shrink-0">
+            {formatSessionTime(session.last_activity_at)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
+          <span className="text-xs text-label">
+            {session.message_count} message{session.message_count !== 1 ? "s" : ""}
+          </span>
+          {session.linked_agent_id && (
+            <span className="inline-flex items-center gap-1 text-xs text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded font-medium">
+              Linked to agent
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const { name } = useParams();
   const navigate = useNavigate();
@@ -102,6 +172,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [agentTab, setAgentTab] = useState("active");
+
+  // Sessions (lazy-loaded)
+  const [sessions, setSessions] = useState(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   // Agent creation
   const [prompt, setPrompt] = useState("");
@@ -163,6 +237,18 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Lazy-fetch sessions when tab is selected
+  useEffect(() => {
+    if (agentTab !== "sessions" || sessions !== null) return;
+    let cancelled = false;
+    setSessionsLoading(true);
+    fetchProjectSessions(name)
+      .then((data) => { if (!cancelled) setSessions(data); })
+      .catch(() => { if (!cancelled) setSessions([]); })
+      .finally(() => { if (!cancelled) setSessionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [agentTab, name, sessions]);
 
   useEffect(() => {
     return () => { if (toastTimer.current) clearTimeout(toastTimer.current); };
@@ -368,7 +454,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             const count =
               tab.key === "active"
                 ? agents.filter((a) => a.status !== "STOPPED").length
-                : agents.filter((a) => a.status === "STOPPED").length;
+                : tab.key === "stopped"
+                  ? agents.filter((a) => a.status === "STOPPED").length
+                  : sessions ? sessions.length : "…";
             return (
               <button
                 key={tab.key}
@@ -389,7 +477,19 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           })}
         </div>
 
-        {filtered.length === 0 ? (
+        {agentTab === "sessions" ? (
+          sessionsLoading ? (
+            <div className="text-center py-8 text-faint text-sm animate-pulse">Loading sessions...</div>
+          ) : !sessions || sessions.length === 0 ? (
+            <div className="text-center py-8 text-faint text-sm">No sessions found</div>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map((s) => (
+                <SessionRow key={s.session_id} session={s} />
+              ))}
+            </div>
+          )
+        ) : filtered.length === 0 ? (
           <div className="text-center py-8 text-faint text-sm">
             No {agentTab} agents
           </div>
@@ -410,8 +510,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
         <h2 className="text-sm font-semibold text-label uppercase tracking-wider">Settings</h2>
         {project.active ? (
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm text-body">Archive Project</p>
               <p className="text-xs text-dim">Deactivate — code and history stay, re-activate anytime</p>
             </div>
@@ -419,14 +519,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               type="button"
               disabled={archiving}
               onClick={handleArchive}
-              className="px-4 py-2 rounded-lg bg-amber-600/20 text-amber-400 text-sm font-medium hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600/20 text-amber-400 text-xs font-medium hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
             >
               {archiving ? "Archiving..." : "Archive"}
             </button>
           </div>
         ) : (
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm text-body">Activate Project</p>
               <p className="text-xs text-dim">Register this folder to create agents and run tasks</p>
             </div>
@@ -434,21 +534,21 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               type="button"
               disabled={activating}
               onClick={handleActivate}
-              className="px-4 py-2 rounded-lg bg-cyan-600/20 text-cyan-400 text-sm font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
             >
               {activating ? "Activating..." : "Activate"}
             </button>
           </div>
         )}
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <p className="text-sm text-body">Delete Project</p>
             <p className="text-xs text-dim">Move files to .trash</p>
           </div>
           <button
             type="button"
             onClick={() => setShowDelete(true)}
-            className="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 text-sm font-medium hover:bg-red-600/30 transition-colors"
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 text-xs font-medium hover:bg-red-600/30 transition-colors"
           >
             Delete
           </button>

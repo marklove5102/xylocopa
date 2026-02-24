@@ -68,8 +68,11 @@ def _extract_result(logs: str) -> str:
 
 
 def _is_result_error(logs: str) -> bool:
-    """Check if the stream-json result event indicates an error."""
+    """Check if the stream-json result event indicates an error.
+    Also returns True when the CLI crashed before producing any result event
+    (e.g. nested-session error, missing binary, permission denied)."""
     import json
+    found_result = False
     for line in logs.strip().splitlines():
         line = line.strip()
         if not line:
@@ -77,10 +80,12 @@ def _is_result_error(logs: str) -> bool:
         try:
             event = json.loads(line)
             if event.get("type") == "result":
+                found_result = True
                 return event.get("is_error", False)
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
-    return False
+    # No result event at all — CLI likely crashed before producing output
+    return not found_result and len(logs.strip()) > 0
 
 
 def _extract_session_id(logs: str) -> str | None:
@@ -209,6 +214,10 @@ class AgentDispatcher:
             )
             result_text = _extract_result(logs)
 
+            # Check process exit code
+            proc_info = self.worker_mgr._processes.get(info["pid_str"])
+            exit_code = proc_info["process"].returncode if proc_info else None
+
             # Extract and store session_id for --resume on follow-ups
             sid = _extract_session_id(logs)
             if sid:
@@ -220,8 +229,8 @@ class AgentDispatcher:
                 message.status = MessageStatus.COMPLETED
                 message.completed_at = _utcnow()
 
-            # Determine success/failure from stream-json result event
-            is_error = _is_result_error(logs)
+            # Determine success/failure from exit code + stream-json result event
+            is_error = (exit_code is not None and exit_code != 0) or _is_result_error(logs)
             if is_error:
                 resp = Message(
                     agent_id=agent.id,

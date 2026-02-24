@@ -22,6 +22,9 @@ backups/
 # Logs
 logs/
 
+# TLS certificates (self-signed, regenerate with: openssl req -x509 ...)
+certs/
+
 # Docker
 .docker/
 

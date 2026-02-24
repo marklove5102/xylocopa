@@ -26,6 +26,7 @@ class WorkerManager:
             result = subprocess.run(
                 [CLAUDE_BIN, "--version"],
                 capture_output=True, text=True, timeout=10,
+                env=self._clean_env(),
             )
             if result.returncode == 0:
                 version = result.stdout.strip()
@@ -39,6 +40,15 @@ class WorkerManager:
             )
         except Exception as e:
             logger.warning("Failed to verify claude CLI: %s", e)
+
+    @staticmethod
+    def _clean_env() -> dict[str, str]:
+        """Return os.environ without CLAUDECODE vars so spawned claude
+        processes don't think they're nested inside another session."""
+        env = os.environ.copy()
+        env.pop("CLAUDECODE", None)
+        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        return env
 
     def _get_project_path(self, project_name: str) -> str:
         """Return the absolute path for a project directory."""
@@ -125,6 +135,7 @@ class WorkerManager:
                 stdout=out_f,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                env=self._clean_env(),
             )
 
         pid_str = str(process.pid)
@@ -173,6 +184,7 @@ class WorkerManager:
                 stdout=out_f,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                env=self._clean_env(),
             )
 
         pid_str = str(process.pid)
@@ -318,6 +330,7 @@ class WorkerManager:
             result = subprocess.run(
                 [CLAUDE_BIN, "--version"],
                 capture_output=True, text=True, timeout=10,
+                env=self._clean_env(),
             )
             return result.returncode == 0
         except Exception:
