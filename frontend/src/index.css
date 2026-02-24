@@ -74,6 +74,7 @@
   /* Borders */
   .border-divider { border-color: var(--color-divider); }
   .border-edge    { border-color: var(--color-edge); }
+  .border-input   { border-color: var(--color-input); }
 
   .hover\:ring-ring-hover:hover { --tw-ring-color: var(--color-ring-hover); }
 
@@ -105,6 +106,9 @@ body {
 /* ── Safe area for iOS notch/home indicator ── */
 .safe-area-pb {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-area-pb-tight {
+  padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - 8px));
 }
 
 /* ── Selection highlight ── */

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from models import (
     Task,
 )
 from plan_manager import PlanManager
+from session_cache import cache_session, evict_session, repair_session_jsonl, restore_session
 from worker_manager import WorkerManager
 
 logger = logging.getLogger("orchestrator.agent_dispatcher")
@@ -130,6 +132,31 @@ class AgentDispatcher:
         # agent_id -> pid_str
         self._active_planners: dict[str, str] = {}
 
+    def get_active_sessions(self) -> list[tuple[str, str]]:
+        """Return (session_id, project_path) for all agents with sessions.
+
+        Used by the session cache loop to know which sessions to back up.
+        """
+        db = SessionLocal()
+        try:
+            agents = db.query(Agent).filter(
+                Agent.session_id.is_not(None),
+                Agent.status.in_([
+                    AgentStatus.IDLE, AgentStatus.EXECUTING,
+                    AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
+                ]),
+            ).all()
+            results = []
+            for agent in agents:
+                project = db.get(Project, agent.project)
+                if not project:
+                    continue
+                project_path = self.worker_mgr._get_project_path(project.name)
+                results.append((agent.session_id, project_path))
+            return results
+        finally:
+            db.close()
+
     def get_active_processes(self) -> list[dict]:
         """Return info about currently running Claude processes."""
         results = []
@@ -228,10 +255,29 @@ class AgentDispatcher:
             proc_info = self.worker_mgr._processes.get(info["pid_str"])
             exit_code = proc_info["process"].returncode if proc_info else None
 
+            # Save the session_id that was used for --resume (before it gets
+            # overwritten by the new one from the result event)
+            previous_session_id = agent.session_id
+
+            # Determine success/failure from exit code + stream-json result event
+            is_error = (exit_code is not None and exit_code != 0) or _is_result_error(logs)
+
             # Extract and store session_id for --resume on follow-ups
             sid = _extract_session_id(logs)
-            if sid:
+            if sid and not is_error:
                 agent.session_id = sid
+                # Cache the new session and evict the old one.
+                # When Claude assigns a new session_id on --resume, the new
+                # file contains the full conversation — the old is redundant.
+                project = db.get(Project, agent.project)
+                if project:
+                    project_path = self.worker_mgr._get_project_path(project.name)
+                    try:
+                        cache_session(sid, project_path)
+                        if previous_session_id and previous_session_id != sid:
+                            evict_session(previous_session_id, project_path)
+                    except Exception:
+                        logger.debug("Failed to cache session %s", sid)
 
             # Update the message that triggered this exec
             message = db.get(Message, info["message_id"])
@@ -239,8 +285,47 @@ class AgentDispatcher:
                 message.status = MessageStatus.COMPLETED
                 message.completed_at = _utcnow()
 
-            # Determine success/failure from exit code + stream-json result event
-            is_error = (exit_code is not None and exit_code != 0) or _is_result_error(logs)
+            # Auto-recover from stale session: try cache restore + repair first.
+            # Use previous_session_id (the one used for --resume) for cache lookup,
+            # since the result event may contain a different (new) session_id.
+            is_stale_session = (
+                is_error
+                and result_text
+                and "session's conversation data is no longer available" in result_text
+            )
+            restore_sid = previous_session_id or agent.session_id
+            if is_stale_session and restore_sid:
+                project = db.get(Project, agent.project)
+                project_path = self.worker_mgr._get_project_path(
+                    project.name
+                ) if project else None
+
+                restored = False
+                if project_path:
+                    restored = restore_session(restore_sid, project_path)
+                    if restored:
+                        repair_session_jsonl(restore_sid, project_path)
+                        # Point agent back to the restored session
+                        agent.session_id = restore_sid
+                        logger.info(
+                            "Agent %s: restored session %s from cache — re-queuing",
+                            agent.id, restore_sid,
+                        )
+
+                if not restored:
+                    logger.warning(
+                        "Agent %s: stale session %s, no cache — clearing session_id",
+                        agent.id, restore_sid,
+                    )
+                    agent.session_id = None
+
+                if message:
+                    message.status = MessageStatus.PENDING
+                    message.completed_at = None
+                agent.status = AgentStatus.IDLE
+                done_agents.append(agent_id)
+                continue
+
             if is_error:
                 resp = Message(
                     agent_id=agent.id,
@@ -563,11 +648,37 @@ class AgentDispatcher:
                 logger.exception("Project dir not ready for %s", project.name)
                 continue
 
-            # Build the prompt
-            prompt = self._build_agent_prompt(agent, project, pending_msg.content)
-
-            # Use --resume with session_id if available
+            # Use --resume with session_id if available.
+            # Pre-check: if the session file is missing, restore from cache
+            # now instead of waiting for Claude to error out (~5s wasted).
             resume_session_id = agent.session_id if agent.session_id else None
+            if resume_session_id:
+                from session_cache import _session_source_dir
+                src_dir = _session_source_dir(project_path)
+                jsonl_path = os.path.join(
+                    src_dir, f"{resume_session_id}.jsonl"
+                )
+                if not os.path.exists(jsonl_path):
+                    restored = restore_session(resume_session_id, project_path)
+                    if restored:
+                        repair_session_jsonl(resume_session_id, project_path)
+                        logger.info(
+                            "Pre-restored session %s for agent %s",
+                            resume_session_id, agent.id,
+                        )
+                    else:
+                        logger.info(
+                            "Session %s missing, no cache — starting fresh for agent %s",
+                            resume_session_id, agent.id,
+                        )
+                        agent.session_id = None
+                        resume_session_id = None
+
+            # Build the prompt — session cache handles continuity, no fake history
+            prompt = self._build_agent_prompt(
+                agent, project, pending_msg.content,
+                include_history=False, db=db,
+            )
 
             try:
                 pid_str, output_file = self.worker_mgr.exec_claude_in_agent(
@@ -599,15 +710,26 @@ class AgentDispatcher:
                 pending_msg.status = MessageStatus.FAILED
                 pending_msg.error_message = "Failed to start claude process"
 
-    def _build_agent_prompt(self, agent: Agent, project: Project, user_message: str) -> str:
-        """Build the prompt sent to claude for an agent message."""
+    def _build_agent_prompt(
+        self, agent: Agent, project: Project, user_message: str,
+        include_history: bool = False, db: Session | None = None,
+    ) -> str:
+        """Build the prompt sent to claude for an agent message.
+        When include_history=True, injects recent conversation history so context
+        is preserved even when the Claude Code session can't be resumed.
+        """
         project_path = self.worker_mgr._get_project_path(project.name)
+
+        history_block = ""
+        if include_history and db:
+            history_block = self._format_conversation_history(agent, db)
+
         base = (
             f"You are working in project: {project.display_name}\n"
             f"Project path: {project_path}\n"
             f"\n"
             f"First read the project's CLAUDE.md to understand project conventions.\n"
-            f"\n"
+            f"{history_block}\n"
             f"{user_message}"
         )
         if agent.mode == AgentMode.INTERVIEW:
@@ -621,6 +743,34 @@ class AgentDispatcher:
             f"If you make code changes, commit with message format: "
             f"[agent-{agent.id}] short description"
         )
+
+    def _format_conversation_history(self, agent: Agent, db: Session) -> str:
+        """Format recent conversation messages as context for a fresh session."""
+        recent = (
+            db.query(Message)
+            .filter(
+                Message.agent_id == agent.id,
+                Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
+                Message.status.in_([MessageStatus.COMPLETED, MessageStatus.FAILED, MessageStatus.TIMEOUT]),
+            )
+            .order_by(Message.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        if not recent:
+            return ""
+
+        recent.reverse()  # chronological order
+        lines = ["\n--- Previous conversation history (for context) ---"]
+        for msg in recent:
+            role = "User" if msg.role == MessageRole.USER else "Agent"
+            # Truncate long agent responses to keep prompt manageable
+            content = msg.content
+            if role == "Agent" and len(content) > 500:
+                content = content[:500] + "… [truncated]"
+            lines.append(f"[{role}]: {content}")
+        lines.append("--- End of history ---\n")
+        return "\n".join(lines)
 
     # ---- Recovery ----
 
@@ -653,6 +803,22 @@ class AgentDispatcher:
                 agent.container_id = None
 
                 if agent.status in (AgentStatus.EXECUTING, AgentStatus.PLANNING):
+                    # Repair session JSONL if agent was mid-execution
+                    if agent.session_id:
+                        project = db.get(Project, agent.project)
+                        if project:
+                            project_path = self.worker_mgr._get_project_path(
+                                project.name
+                            )
+                            repaired = repair_session_jsonl(
+                                agent.session_id, project_path
+                            )
+                            if repaired:
+                                logger.info(
+                                    "Repaired session %s for agent %s",
+                                    agent.session_id, agent.id,
+                                )
+
                     agent.status = AgentStatus.IDLE
                     msg = Message(
                         agent_id=agent.id,

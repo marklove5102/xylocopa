@@ -169,7 +169,7 @@ export default function App() {
 
       {/* Bottom tab bar — completely unmounted on chat page (has its own header + back button) */}
       {!hideNav && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-surface border-t border-divider safe-area-pb z-40">
+        <nav className="fixed bottom-0 left-0 right-0 bg-surface border-t border-divider safe-area-pb-tight z-40">
           <div className="grid grid-cols-5 items-center max-w-lg mx-auto">
             {tabs.map((tab) =>
               tab.isCenter ? (
