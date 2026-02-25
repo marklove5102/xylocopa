@@ -448,6 +448,10 @@ class AgentDispatcher:
             pass
 
     def _tick(self, db: Session):
+        # 0. Early session_id assignment — grab session_id from output init
+        #    event as soon as Claude starts, so auto-detect can see it.
+        self._assign_early_session_ids(db)
+
         # 1. Harvest completed execs
         self._harvest_completed_execs(db)
 
@@ -474,6 +478,25 @@ class AgentDispatcher:
             self._reap_stale_syncing_agents(db)
 
         db.commit()
+
+    def _assign_early_session_ids(self, db: Session):
+        """Assign session_id to executing agents as soon as the init event appears.
+
+        This runs every tick so that the auto-detect scanner can see session_ids
+        from agents that are still mid-execution, using the same logic for all
+        agents regardless of how they were started.
+        """
+        for agent_id, info in self._active_execs.items():
+            agent = db.get(Agent, agent_id)
+            if not agent or agent.session_id:
+                continue  # Already has a session_id
+            output_file = info.get("output_file", "")
+            if not output_file or not os.path.isfile(output_file):
+                continue
+            sid = _extract_session_id_from_output(output_file)
+            if sid:
+                agent.session_id = sid
+                logger.debug("Early session_id %s assigned to agent %s", sid[:12], agent_id)
 
     # ---- Step 1: Harvest completed execs ----
 
@@ -1113,9 +1136,9 @@ class AgentDispatcher:
         if not projects:
             return
 
-        # Collect ALL session IDs already known to any agent (active or stopped)
-        # to avoid creating duplicates for web-app-started agents or re-syncing
-        # sessions that have already been tracked.
+        # Collect ALL session IDs already known to any agent (active or stopped).
+        # Because _assign_early_session_ids() runs every tick, executing agents
+        # already have their session_id set — no special-casing needed.
         known_session_ids = set()
         all_agents_with_session = db.query(Agent).filter(
             Agent.session_id.is_not(None),
@@ -1123,34 +1146,10 @@ class AgentDispatcher:
         for a in all_agents_with_session:
             known_session_ids.add(a.session_id)
 
-        # Also extract session_ids from currently-executing agents' output files,
-        # since web-app agents don't get session_id until execution completes.
-        # Track projects with web-app agents that are mid-execution but don't have
-        # a session_id yet — skip ALL new detections for those projects to avoid
-        # the race window between subprocess start and init event.
-        projects_with_pending_webapp = set()
-        for agent_id, info in self._active_execs.items():
-            agent = db.get(Agent, agent_id)
-            if not agent or agent.cli_sync:
-                continue
-            output_file = info.get("output_file", "")
-            if output_file and os.path.isfile(output_file):
-                sid = _extract_session_id_from_output(output_file)
-                if sid:
-                    known_session_ids.add(sid)
-                    continue
-            # Output file missing or no session_id yet — block this project
-            projects_with_pending_webapp.add(agent.project)
-
         now = time.time()
         agents_to_sync: list[tuple[str, str, str]] = []  # (agent_id, session_id, project_path)
 
         for proj in projects:
-            # Skip projects where a web-app agent is executing but hasn't
-            # received its session_id yet — avoids race-condition duplicates.
-            if proj.name in projects_with_pending_webapp:
-                continue
-
             session_dir = _session_source_dir(proj.path)
             if not os.path.isdir(session_dir):
                 continue
@@ -1252,7 +1251,6 @@ class AgentDispatcher:
         stale_threshold = 1800  # 30 minutes without writes → session is done
         syncing = db.query(Agent).filter(
             Agent.status == AgentStatus.SYNCING,
-            Agent.cli_sync == True,
         ).all()
 
         for agent in syncing:
