@@ -2,452 +2,433 @@
 
 ## Project Overview
 
-A multi-instance Claude Code orchestration system running on a **shared Lab Computer**.
-All CC workers run inside Docker containers to protect the host machine.
+A self-hosted web UI for orchestrating multiple Claude Code agents across projects.
+Agents run as **host subprocesses** (not Docker containers), managed by a FastAPI backend.
+The frontend is a mobile-first PWA built with React + TailwindCSS.
 
 Core capabilities:
-1. Web UI for task submission (with voice input), mobile-friendly
-2. Unified scheduling across multiple local projects
-3. Task dispatcher automatically assigns work to isolated CC worker containers
-4. Plan mode with approval workflow
-5. Automatic backups, zero risk to host machine
-
----
-
-## ⚠️ Safety Principles (Lab Computer — READ THIS)
-
-This is a shared lab machine. Safety is the #1 priority:
-
-1. **CC workers ONLY run inside Docker containers** — never bare-metal on host
-2. **`--dangerously-skip-permissions` only takes effect inside containers**
-3. **Worker containers do NOT mount the host home directory** — only dedicated workspace volumes
-4. **Worker containers have no SSH keys** — cannot access other lab resources
-5. **Each worker has CPU/RAM limits** — won't starve shared resources
-6. **Hourly automatic backups** — recoverable even if CC deletes files
-7. **Orchestrator container only has network access** — no dangerous mounts
+1. Web UI for agent management (with voice input), mobile-friendly PWA
+2. Persistent agent conversations with session continuity (`--resume`)
+3. Unified scheduling across multiple local projects
+4. Three execution modes: INTERVIEW (read-only chat), PLAN (approve-then-execute), AUTO (immediate execution)
+5. Real-time streaming output via WebSocket
+6. Automatic session caching and recovery
+7. Hourly automatic database backups
 
 ---
 
 ## Architecture Overview
 
 ```
-Lab Computer (Host — DO NOT TOUCH)
+Host Machine
 │
-├── agenthive/                 ← This project directory
-│   ├── docker-compose.yml           ← One command to start everything
-│   ├── orchestrator/                ← Scheduler container
-│   ├── worker/                      ← CC worker container template
-│   └── ...
+├── cc-orchestrator/              ← This project directory
+│   ├── orchestrator/             ← FastAPI backend (Python)
+│   ├── frontend/                 ← React + Vite frontend
+│   ├── data/                     ← SQLite database
+│   ├── logs/                     ← Orchestrator and worker logs
+│   ├── backups/                  ← Automatic DB backups + session cache
+│   ├── project-configs/          ← Project registry (registry.yaml)
+│   ├── certs/                    ← Self-signed SSL certs (for LAN mic access)
+│   └── run.sh                    ← Host-mode launch script
 │
-├── Docker volumes (auto-managed):
-│   ├── cc-orch-db          ← SQLite database
-│   ├── cc-orch-backups     ← Automatic backups
-│   ├── agenthive-projects         ← All project code
-│   │   ├── crowd-nav/
-│   │   ├── vla-delivery/
-│   │   └── ...
-│   └── cc-git-bare         ← Git bare repos (cross-instance sync)
+├── ~/.claude/                    ← Claude Code session data
+│   ├── projects/                 ← Session JSONL files per project
+│   └── settings.json             ← cleanupPeriodDays=36500 (auto-set)
 │
-└── Other lab resources (workers have ZERO access)
+└── Projects (configured via PROJECTS_DIR)
+    ├── project-a/
+    ├── project-b/
+    └── ...
 ```
 
 ---
 
 ## Tech Stack
 
-- **Containerization**: Docker + Docker Compose
-- **Backend**: Python 3.11+ (FastAPI)
-- **Frontend**: React + TailwindCSS (Vite)
-- **Database**: SQLite (single user, sufficient)
-- **Voice Recognition**: OpenAI Whisper API
-- **CC Scheduling**: subprocess calling `claude` CLI (inside worker containers)
-- **Version Control**: Git
-- **Deployment**: `docker compose up -d` on lab computer
+- **Backend**: Python 3.12, FastAPI, Uvicorn
+- **Frontend**: React 19, TailwindCSS 4, Vite 7
+- **Database**: SQLite (WAL mode, SQLAlchemy 2.0)
+- **Agent Execution**: `claude` CLI spawned as host subprocesses (`subprocess.Popen`)
+- **Real-time**: WebSocket (FastAPI native) + Web Push (pywebpush/VAPID)
+- **Voice**: OpenAI Whisper API
+- **Auth**: Password-based with custom JWT (HMAC-SHA256, stdlib only)
+- **Testing**: Vitest (frontend)
+- **Deployment**: `./run.sh` on host machine
 
 ---
 
 ## Directory Structure
 
 ```
-agenthive/
-├── CLAUDE.md                  # This file (global instructions)
-├── TASKS.md                   # Task breakdown
+cc-orchestrator/
+├── CLAUDE.md                  # This file
 ├── PROGRESS.md                # Lessons learned
 ├── QUICKSTART.md              # Quick start guide
-│
-├── docker-compose.yml         # Full service orchestration
+├── run.sh                     # Host-mode launch script
 ├── .env                       # Environment variables (API keys etc.)
 ├── .env.example               # Environment variable template
 │
-├── orchestrator/              # Scheduler service
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── main.py                # FastAPI entry point
-│   ├── dispatcher.py          # Core: CC worker scheduling
-│   ├── task_queue.py          # Task queue
-│   ├── worker_manager.py      # Docker worker lifecycle management
-│   ├── plan_manager.py        # Plan mode approval
-│   ├── project_manager.py     # Multi-project management
+├── orchestrator/              # FastAPI backend
+│   ├── main.py                # FastAPI entry point (~50+ API routes)
+│   ├── agent_dispatcher.py    # Core: persistent agent scheduling loop
+│   ├── dispatcher.py          # Legacy: ephemeral task dispatcher
+│   ├── worker_manager.py      # Subprocess lifecycle (Popen, kill, logs)
+│   ├── plan_manager.py        # Plan mode: generate plan → approve → execute
+│   ├── session_cache.py       # Incremental session JSONL backup/restore/repair
+│   ├── models.py              # SQLAlchemy ORM models
+│   ├── schemas.py             # Pydantic request/response schemas
+│   ├── database.py            # SQLite session management + migrations
+│   ├── config.py              # Environment variable configuration
+│   ├── auth.py                # Password hashing, JWT tokens, rate limiting
+│   ├── git_manager.py         # Git operations (log, branches, status, merge)
 │   ├── voice.py               # Whisper speech-to-text
-│   ├── git_manager.py         # Git operations
-│   ├── models.py              # Database models
-│   ├── config.py              # Configuration
-│   ├── backup.py              # Automatic backups
-│   └── websocket.py           # WebSocket real-time push
+│   ├── backup.py              # Automatic hourly database backups
+│   ├── websocket.py           # WebSocket connection manager + event emitters
+│   ├── push.py                # Web Push notifications (VAPID)
+│   ├── log_config.py          # Structured logging setup
+│   └── requirements.txt       # Python dependencies
 │
-├── worker/                    # CC Worker container
-│   ├── Dockerfile             # Includes claude CLI + git + node
-│   ├── entrypoint.sh          # Container startup script
-│   └── worker_claude.md       # CLAUDE.md injected into each worker
-│
-├── frontend/                  # Web UI
-│   ├── Dockerfile
+├── frontend/                  # React PWA
 │   ├── src/
-│   │   ├── App.jsx
+│   │   ├── App.jsx            # Router + auth guard + WebSocket provider
+│   │   ├── main.jsx           # Entry point
+│   │   ├── index.css          # TailwindCSS v4 theme
+│   │   ├── pages/
+│   │   │   ├── LoginPage.jsx         # Password setup & login
+│   │   │   ├── ProjectsPage.jsx      # Project list
+│   │   │   ├── ProjectDetailPage.jsx # Project dashboard (agents, sessions)
+│   │   │   ├── AgentsPage.jsx        # All agents (multi-select mode)
+│   │   │   ├── AgentChatPage.jsx     # Chat interface with an agent
+│   │   │   ├── NewPage.jsx           # Create agent or project
+│   │   │   ├── TasksPage.jsx         # Legacy task list
+│   │   │   ├── MonitorPage.jsx       # System stats (GPU, disk, memory)
+│   │   │   ├── GitPage.jsx           # Git history across projects
+│   │   │   └── TrashPage.jsx         # Archived projects
 │   │   ├── components/
-│   │   │   ├── TaskInput.jsx
-│   │   │   ├── TaskList.jsx
-│   │   │   ├── PlanReview.jsx
-│   │   │   ├── ProjectSelector.jsx   # Multi-project selection
-│   │   │   ├── InstanceMonitor.jsx
-│   │   │   ├── GitLog.jsx
-│   │   │   └── VoiceButton.jsx
-│   │   └── hooks/
-│   │       └── useWebSocket.js
+│   │   │   ├── BotIcon.jsx           # Animated bot avatar
+│   │   │   ├── FilePreview.jsx       # Image/video/CSV preview
+│   │   │   ├── ModeBadge.jsx         # INTERVIEW/PLAN/AUTO badge
+│   │   │   ├── ModePicker.jsx        # Mode selection UI
+│   │   │   ├── PageHeader.jsx        # Header with theme toggle
+│   │   │   ├── ProjectSelector.jsx   # Project dropdown
+│   │   │   ├── StatusBadge.jsx       # Agent/task status indicator
+│   │   │   ├── TaskCard.jsx          # Task summary card
+│   │   │   ├── TaskDetail.jsx        # Full task view
+│   │   │   ├── VoiceRecorder.jsx     # Mic button + waveform
+│   │   │   ├── WaveformVisualizer.jsx
+│   │   │   └── WorktreePicker.jsx    # Git worktree selection
+│   │   ├── hooks/
+│   │   │   ├── useWebSocket.js       # Real-time event stream
+│   │   │   ├── useTheme.js           # Dark/light toggle
+│   │   │   ├── useIdleLock.js        # Inactivity-based lock
+│   │   │   ├── useHealthStatus.js    # Health polling
+│   │   │   ├── useProjects.js        # Project list fetching
+│   │   │   └── useVoiceRecorder.js   # Mic recording + transcription
+│   │   └── lib/
+│   │       ├── api.js                # Centralized fetch wrapper (~40+ functions)
+│   │       ├── constants.js          # Status/mode colors, model options
+│   │       ├── formatters.jsx        # relativeTime(), renderMarkdown(), etc.
+│   │       └── pushNotifications.js  # Web Push API integration
 │   ├── index.html
 │   ├── vite.config.js
 │   └── package.json
 │
-├── projects/                  # Project registration config
-│   ├── registry.yaml          # Project manifest
-│   └── templates/
-│       └── project-claude.md  # CLAUDE.md template for new projects
-│
-├── scripts/
-│   ├── init.sh                # First-time initialization
-│   ├── add-project.sh         # Register a new project
-│   └── restore-backup.sh      # Restore from backup
-│
-└── logs/                      # Logs (volume mount)
+├── data/                      # SQLite database
+│   └── orchestrator.db
+├── logs/                      # Orchestrator + worker logs
+├── backups/                   # Hourly DB backups + session cache
+├── project-configs/           # Project registry
+│   └── registry.yaml
+└── certs/                     # Self-signed SSL certs
 ```
 
 ---
 
-## Docker Architecture — Detailed Design
+## Agent Execution Model
 
-### docker-compose.yml Core Structure
+Agents run as **host subprocesses** via `subprocess.Popen`. No Docker containers are used.
 
-```yaml
-services:
-  orchestrator:
-    build: ./orchestrator
-    ports:
-      - "8080:8080"          # Web UI + API
-    volumes:
-      - cc-orch-db:/app/db
-      - cc-orch-backups:/app/backups
-      - /var/run/docker.sock:/var/run/docker.sock  # Control worker containers
-      - agenthive-projects:/projects:ro    # Read-only access to project code
-      - ./logs:/app/logs
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-
-  # Worker containers are dynamically created/destroyed by orchestrator
-  # via Docker API — not statically defined in compose
-
-volumes:
-  cc-orch-db:
-  cc-orch-backups:
-  agenthive-projects:
-  cc-git-bare:
-  cc-logs:
-```
-
-### Worker Containers (Dynamically Created)
-
-Orchestrator creates worker containers via Docker SDK (`docker-py`):
+### Worker Manager (`worker_manager.py`)
 
 ```python
-# worker_manager.py core logic
-container = docker_client.containers.run(
-    image="cc-worker:latest",
-    command=f'claude -p "{prompt}" --dangerously-skip-permissions '
-            f'--output-format stream-json --verbose',
-    volumes={
-        'agenthive-projects': {'bind': '/projects', 'mode': 'rw'},
-        'cc-git-bare': {'bind': '/git-bare', 'mode': 'rw'},
-    },
-    working_dir=f'/projects/{project_name}',
-    environment={
-        'ANTHROPIC_API_KEY': api_key,
-    },
-    # Resource limits — protect shared lab resources
-    cpu_quota=200000,      # 2 CPU cores max
-    mem_limit='4g',        # 4GB RAM max
-    # Network isolation
-    network_mode='cc-network',  # Whitelist-only domain access
-    # Security
-    read_only=False,       # Workers need to write files
-    # Auto cleanup
-    auto_remove=True,      # Container removed after completion
-    detach=True,
-    name=f'cc-worker-{task_id[:8]}',
+# Spawns claude CLI as a subprocess
+process = subprocess.Popen(
+    [CLAUDE_BIN, "-p", prompt,
+     "--dangerously-skip-permissions",
+     "--output-format", "stream-json",
+     "--verbose"],
+    cwd=project_path,
+    stdout=output_file,
+    stderr=subprocess.STDOUT,
+    start_new_session=True,        # Own process group for clean kill
+    env=clean_env,                 # Strips CLAUDECODE vars to avoid nesting
 )
 ```
 
-### Worker Dockerfile
+Key details:
+- Output goes to `/tmp/claude-output-{id}.log` (read by dispatcher)
+- `--resume {session_id}` used for conversation continuity
+- `--worktree {name}` for isolated git worktrees
+- `--model {model}` for per-agent model selection
+- Process tracked by PID string in `_processes` dict
+- Graceful SIGTERM → wait 10s → SIGKILL on stop/timeout
+- Environment cleaned to prevent nested Claude Code detection
 
-```dockerfile
-FROM ubuntu:24.04
+### Two Worker Types
 
-ENV DEBIAN_FRONTEND=noninteractive
+1. **Ephemeral workers** (`start_worker`): One-shot task execution, legacy
+2. **Agent workers** (`exec_claude_in_agent`): Persistent conversations with `--resume`
 
-# Base tools
-RUN apt-get update && apt-get install -y \
-    git curl nodejs npm python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+### Agent Dispatcher Loop (`agent_dispatcher.py`)
 
-# Install Claude CLI
-RUN npm install -g @anthropic-ai/claude-code
+Runs every 2 seconds:
 
-# No SSH client installed
-# No keys placed anywhere
-# No sudo installed
-
-# Run as non-root user
-RUN useradd -m -s /bin/bash ccworker
-USER ccworker
-
-WORKDIR /projects
-ENTRYPOINT ["/entrypoint.sh"]
+```
+1. Harvest completed execs     → parse stream-json, create response Message
+2. Harvest completed planners  → extract plan, set PLAN_REVIEW status
+3. Check exec timeouts         → SIGTERM/SIGKILL, mark TIMEOUT
+4. Start new agents            → validate project dir, set IDLE
+5. Start planning              → spawn plan subprocess for PLAN-mode agents
+6. Dispatch pending messages   → match IDLE agents to PENDING messages, spawn exec
 ```
 
-### Network Isolation
+Respects `MAX_CONCURRENT_WORKERS` (global) and `project.max_concurrent` (per-project).
 
-```yaml
-# Defined in docker-compose.yml
-networks:
-  cc-network:
-    driver: bridge
-    # Workers can ONLY access:
-    # - api.anthropic.com (Claude API)
-    # - api.openai.com (Whisper, if needed by worker)
-    # - github.com (git push/pull)
-    # - Internal orchestrator (status reporting)
-    # - DNS (53/udp)
-    # Everything else is DROPPED
-```
+### Session Continuity (`session_cache.py`)
 
-Optional: enforce with iptables rules in `scripts/init.sh`.
+- Incrementally caches session JSONL files (append-only, like git packfiles)
+- Restores from cache when `--resume` fails (stale session)
+- Repairs truncated JSONL from process kills
+- Disables Claude Code auto-cleanup (`cleanupPeriodDays: 36500`)
+- Evicts old cache when Claude assigns a new session_id (new file is a superset)
+
+### Streaming Output
+
+During execution, an asyncio task tails the output file every 0.5s, parses stream-json events, and broadcasts incremental content via WebSocket (`agent_stream` event) for live display in the chat UI.
 
 ---
 
-## Multi-Project Management
+## Database Models
 
-### projects/registry.yaml
-
-```yaml
-projects:
-  - name: crowd-nav
-    display_name: "Safe Crowd Navigation"
-    path: /projects/crowd-nav
-    git_remote: git@github.com:username/crowd-nav.git
-    default_model: claude-opus-4-6
-    max_concurrent: 2          # Max 2 workers for this project
-
-  - name: vla-delivery
-    display_name: "VLA Delivery Robot"
-    path: /projects/vla-delivery
-    git_remote: git@github.com:username/vla-delivery.git
-    default_model: claude-opus-4-6
-    max_concurrent: 2
-
-  - name: thermal-3dgs
-    display_name: "Thermal 3D Gaussian Splatting"
-    path: /projects/thermal-3dgs
-    git_remote: git@github.com:username/thermal-3dgs.git
-    default_model: claude-opus-4-6
-    max_concurrent: 1
-```
-
-### Task Submission with Project Selection
-
-Frontend `ProjectSelector.jsx` provides a project dropdown.
-Task model includes a `project` field.
-Dispatcher sets `working_dir` and injects the corresponding CLAUDE.md when starting a worker.
-
-### Per-Project Resource Control
-
-Each project can configure `max_concurrent` to prevent one project from consuming all worker slots.
-Global concurrency cap is controlled by `MAX_CONCURRENT_WORKERS`.
-
----
-
-## Core Module Design
-
-### Task Model
+### Agent (persistent Claude sessions)
 
 ```python
-class Task:
-    id: UUID
-    project: str              # Project name (from registry.yaml)
-    prompt: str
-    priority: P0 | P1 | P2   # P0 = highest
-    status: PENDING | PLANNING | PLAN_REVIEW | EXECUTING | COMPLETED | FAILED | TIMEOUT | CANCELLED
+class Agent:
+    id: str               # 12-char hex
+    project: str          # Project name (FK to projects)
+    name: str             # Display name
+    mode: AgentMode       # INTERVIEW | PLAN | AUTO
+    status: AgentStatus   # STARTING | IDLE | EXECUTING | PLANNING | PLAN_REVIEW | ERROR | STOPPED
+    branch: str | None
+    worktree: str | None
     plan: str | None
     plan_approved: bool
-    container_id: str | None  # Docker container ID
-    branch: str | None
-    retries: int
-    result_summary: str | None
-    stream_log: str | None
+    session_id: str | None   # Claude session ID for --resume
+    model: str | None        # Claude model override
+    last_message_preview: str | None
+    last_message_at: datetime | None
+    unread_count: int
+    created_at: datetime
+    timeout_seconds: int     # Default 600
+```
+
+### Message (agent conversation entries)
+
+```python
+class Message:
+    id: str
+    agent_id: str            # FK to agents
+    role: MessageRole        # USER | AGENT | SYSTEM
+    content: str
+    status: MessageStatus    # PENDING | EXECUTING | COMPLETED | FAILED | TIMEOUT
+    stream_log: str | None   # Raw stream-json output
     error_message: str | None
     created_at: datetime
-    started_at: datetime | None
     completed_at: datetime | None
-    timeout_seconds: int = 600
 ```
 
-### Dispatcher Ralph Loop
+### Project
 
-```
-while True:
-    # 1. Harvest completed worker containers
-    for container in running_containers:
-        if container.status == 'exited':
-            logs = container.logs()
-            parse_result(logs)
-            update_task_status()
-            # container auto_remove=True, auto cleanup
-
-    # 2. Timeout detection
-    for task in executing_tasks:
-        if elapsed > task.timeout_seconds:
-            kill_container(task.container_id)
-            mark_timeout(task)
-
-    # 3. Assign new tasks (respect per-project concurrency limits)
-    for task in pending_tasks_by_priority():
-        project = get_project(task.project)
-        if project_concurrent_count(project) < project.max_concurrent:
-            if total_concurrent < MAX_CONCURRENT_WORKERS:
-                start_worker_container(task, project)
-
-    await asyncio.sleep(2)
+```python
+class Project:
+    name: str               # Primary key
+    display_name: str
+    path: str               # Absolute path on host
+    git_remote: str | None
+    description: str | None
+    max_concurrent: int     # Default 2
+    default_model: str      # Default "claude-opus-4-6"
+    archived: bool
 ```
 
-### Worker Lifecycle
+### Supporting Models
 
-```
-Orchestrator                          Docker
-    │                                    │
-    ├─ create container ────────────────►│ worker-{task_id}
-    │   (image: cc-worker,               │
-    │    volume: agenthive-projects,            │
-    │    working_dir: /projects/{name})  │
-    │                                    │
-    ├─ stream logs ◄─────────────────────│ claude -p "..." --stream-json
-    │   (parse JSON events)              │   ├─ read project CLAUDE.md
-    │                                    │   ├─ execute task
-    │                                    │   ├─ git commit
-    │                                    │   └─ write PROGRESS.md
-    │                                    │
-    ├─ detect exit ◄─────────────────────│ EXIT_SUCCESS / EXIT_FAILURE
-    │                                    │
-    ├─ collect result                    │ (auto_remove, container destroyed)
-    └─ update task status                │
-```
+- **Task**: Legacy ephemeral tasks (container_id stores PID string)
+- **StarredSession**: Bookmarked Claude sessions
+- **PushSubscription**: Web Push endpoints (endpoint, p256dh_key, auth_key)
+- **SystemConfig**: Key-value store (jwt_secret, password_hash)
 
 ---
 
-## API Design
+## API Endpoints
 
+### Authentication
 ```
-POST   /api/tasks                    Create task (project + prompt + priority)
-GET    /api/tasks                    List tasks (?project=&status=)
-GET    /api/tasks/{id}               Task details
-PUT    /api/tasks/{id}/approve       Approve plan
-PUT    /api/tasks/{id}/reject        Reject plan
-DELETE /api/tasks/{id}               Cancel task
-POST   /api/tasks/{id}/retry         Retry task
-
-GET    /api/projects                 List projects
-POST   /api/projects                 Register new project
-GET    /api/projects/{name}/status   Project status (active worker count etc.)
-
-GET    /api/workers                  All worker container statuses
-GET    /api/workers/{id}/log         Worker real-time log
-
-POST   /api/voice                   Speech to text
-
-GET    /api/git/{project}/log        Project Git history
-POST   /api/git/{project}/merge      Manual merge
-
-GET    /api/system/health            System health (Docker, disk, memory)
-GET    /api/system/config            Configuration
-PUT    /api/system/config            Update configuration
-
-ws://host/ws/status                  WebSocket real-time push
+POST   /api/auth/check              Check if auth is set up
+POST   /api/auth/set-password       First-time password setup
+POST   /api/auth/login              Login (returns JWT)
+POST   /api/auth/change-password    Change password
 ```
+
+### Projects
+```
+GET    /api/projects                List projects with stats
+POST   /api/projects                Create/register project
+GET    /api/projects/folders        List non-archived projects
+GET    /api/projects/trash          List archived projects
+POST   /api/projects/{name}/archive Archive project
+DELETE /api/projects/{name}         Delete project
+DELETE /api/projects/trash/{name}   Permanently delete archived
+POST   /api/projects/trash/{name}/restore  Restore archived
+GET    /api/projects/{name}/agents  List agents in project
+GET    /api/projects/{name}/sessions       List Claude sessions
+GET    /api/projects/{name}/worktrees      List git worktrees
+PUT    /api/projects/{name}/sessions/{sid}/star    Star session
+DELETE /api/projects/{name}/sessions/{sid}/star    Unstar session
+```
+
+### Agents
+```
+POST   /api/agents                  Create agent (starts persistent session)
+GET    /api/agents                  List all agents
+GET    /api/agents/unread           Count unread across agents
+GET    /api/agents/{id}             Get agent details
+DELETE /api/agents/{id}             Stop agent (soft delete)
+POST   /api/agents/{id}/resume     Resume stopped agent
+GET    /api/agents/{id}/messages   Get conversation (paginated)
+POST   /api/agents/{id}/messages   Send message to agent
+PUT    /api/agents/{id}/read       Mark messages as read
+PUT    /api/agents/{id}/approve    Approve plan
+PUT    /api/agents/{id}/reject     Reject plan with notes
+```
+
+### Tasks (legacy)
+```
+GET    /api/tasks                   List tasks (derived from agent messages)
+GET    /api/tasks/{id}              Task detail with conversation thread
+```
+
+### Git
+```
+GET    /api/git/{project}/log       Commit history
+GET    /api/git/{project}/branches  List branches
+GET    /api/git/{project}/status    Working tree status
+POST   /api/git/{project}/merge/{branch}  Merge branch
+```
+
+### System
+```
+GET    /api/health                  Health check (DB, Claude CLI)
+GET    /api/system/stats            System stats (disk, memory, GPU)
+GET    /api/processes               Active Claude processes
+GET    /api/workers                 Worker statuses (legacy)
+GET    /api/logs                    Recent log entries
+```
+
+### Files, Voice, Push
+```
+GET    /api/files/{project}/{path}  Serve project files (images, videos, CSVs)
+POST   /api/voice                   Whisper speech-to-text
+GET    /api/push/vapid-public-key   VAPID public key
+POST   /api/push/subscribe          Subscribe to push
+POST   /api/push/unsubscribe        Unsubscribe from push
+```
+
+### WebSocket
+```
+ws://host:8080/ws                   Real-time events (auth via ?token=jwt)
+```
+
+Events: `agent_update`, `agent_stream`, `new_message`, `task_update`, `worker_update`, `plan_ready`, `system_alert`, `pong`
 
 ---
 
 ## Configuration
 
+Environment variables (see `config.py`):
+
 ```python
-# Worker config
-MAX_CONCURRENT_WORKERS = 5         # Global max parallel workers
-WORKER_CPU_LIMIT = 2               # Max 2 CPUs per worker
-WORKER_MEM_LIMIT = "4g"            # Max 4GB RAM per worker
-TASK_TIMEOUT_SECONDS = 600         # Default 10 min timeout
-MAX_RETRIES = 3
-CC_MODEL = "claude-opus-4-6"
+# Worker
+MAX_CONCURRENT_WORKERS = 5         # Global max parallel agent processes
+TASK_TIMEOUT_SECONDS = 600         # Default 10 min timeout per message
+MAX_RETRIES = 3                    # Auto-retry failed tasks (legacy)
+MAX_IDLE_AGENTS = 20               # Max idle agents kept alive
+CC_MODEL = "claude-opus-4-6"       # Default Claude model
+CLAUDE_BIN = "claude"              # Path to Claude CLI binary
+
+# Projects
+PROJECTS_DIR = ""                  # Host path to projects directory
 
 # Plan mode
-SKIP_PLAN_FOR_P2 = True
-AUTO_APPROVE_TIMEOUT = 300         # Auto-approve after 5 min (can disable)
+AUTO_APPROVE_TIMEOUT = 0           # Auto-approve after N seconds (0 = disabled)
+
+# Auth
+AUTH_TIMEOUT_MINUTES = 30          # Frontend inactivity lock timeout
 
 # Voice
-OPENAI_API_KEY = "sk-..."
+OPENAI_API_KEY = ""                # For Whisper transcription (optional)
 
 # Backup
-BACKUP_INTERVAL_HOURS = 1
-MAX_BACKUPS = 48
+BACKUP_INTERVAL_HOURS = 1          # Database backup frequency
+MAX_BACKUPS = 48                   # Max retained backups
 
-# Server
-HOST = "0.0.0.0"
-PORT = 8080
+# Session cache
+SESSION_CACHE_INTERVAL = 30        # Seconds between session cache checks
+CLAUDE_HOME = "~/.claude"          # Claude Code home directory
+
+# Paths
+DB_PATH = "./data/orchestrator.db"
+LOG_DIR = "./logs"
+BACKUP_DIR = "./backups"
+PROJECT_CONFIGS_PATH = "./project-configs"
+
+# Web Push (optional)
+VAPID_PRIVATE_KEY = ""
+VAPID_PUBLIC_KEY = ""
 ```
+
+---
+
+## Authentication
+
+1. First visit: `/login` prompts for password setup
+2. Password stored as SHA-256 hash (salt:hash) in `SystemConfig` table
+3. Login returns a custom JWT (HMAC-SHA256, 24h server-side expiry)
+4. Token stored in `localStorage`, sent in `Authorization: Bearer` header
+5. Frontend auto-locks after `AUTH_TIMEOUT_MINUTES` of inactivity (`useIdleLock` hook)
+6. Rate limiting: exponential backoff after 5 failed attempts (in-memory, clears on restart)
+7. WebSocket auth via `?token=<jwt>` query parameter
 
 ---
 
 ## Development Standards
 
-### Worker Behavior Rules (injected into every worker's CLAUDE.md)
-
-1. **Only modify files related to the current task**
-2. **Commit after each meaningful step** — format: `[task-{id}] short description`
-3. **When uncertain, choose the most conservative approach**
-4. **Write lessons learned to PROGRESS.md after completion**
-5. **Do not modify CLAUDE.md** (unless the task explicitly requires it)
-6. **All existing tests must pass**
-7. **Add spaces between CJK and Latin characters** (if applicable)
-8. **Output `EXIT_SUCCESS` on completion, `EXIT_FAILURE: {reason}` on failure**
-
-### Orchestrator Development Standards
-
-1. PEP 8 (backend)
-2. ESLint + Prettier (frontend)
-3. Docstrings on all API endpoints
-4. Robust error handling (container crash, Docker daemon disconnect, disk full)
+### Code Style
+1. PEP 8 (backend Python)
+2. ESLint (frontend JavaScript)
+3. SQLAlchemy 2.0 mapped_column style for models
+4. Pydantic v2 for API schemas
 5. Use `logging` module with clear level differentiation
-6. SQLAlchemy for SQLite
-7. Sensitive config in .env, never hardcoded
-8. **All host machine operations must go through Docker API — no direct shell commands**
+
+### Worker Behavior
+1. Agent commits use format: `[agent-{id}] short description`
+2. INTERVIEW mode agents must not modify files
+3. Session continuity via `--resume` when possible
+4. Graceful degradation: restore from cache, re-queue on failure
+
+### Error Handling
+1. Stale session recovery with retry limit (max 3 attempts)
+2. Truncated JSONL repair on crash recovery
+3. Partial output salvage from interrupted processes
+4. WebSocket auto-reconnect on disconnect
