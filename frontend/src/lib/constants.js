@@ -45,14 +45,12 @@ export const AGENT_STATUS_TEXT_COLORS = {
 };
 
 export const MODE_COLORS = {
-  INTERVIEW: "bg-violet-500/20 text-violet-400 border border-violet-500/40",
-  PLAN: "bg-amber-500/20 text-amber-400 border border-amber-500/40",
+  INTERVIEW: "bg-violet-500/20 text-violet-400 border border-violet-500/40",  // legacy
+  PLAN: "bg-amber-500/20 text-amber-400 border border-amber-500/40",          // legacy
   AUTO: "bg-green-500/20 text-green-400 border border-green-500/40",
 };
 
 export const AGENT_MODES = [
-  { value: "INTERVIEW", label: "Interview" },
-  { value: "PLAN", label: "Plan" },
   { value: "AUTO", label: "Auto" },
 ];
 
@@ -80,8 +78,6 @@ export const STATUS_TABS = [
   { key: "ALL", label: "All" },
   { key: "PENDING", label: "Pending" },
   { key: "SYNCING", label: "Syncing" },
-  { key: "PLANNING", label: "Planning" },
-  { key: "PLAN_REVIEW", label: "Review" },
   { key: "EXECUTING", label: "Executing" },
   { key: "COMPLETED", label: "Completed" },
   { key: "FAILED", label: "Failed" },

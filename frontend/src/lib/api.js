@@ -106,6 +106,8 @@ export const createAgent = (data) =>
   request("/api/agents", { method: "POST", body: JSON.stringify(data) });
 export const renameAgent = (id, name) =>
   request(`/api/agents/${id}`, { method: "PUT", body: JSON.stringify({ name }) });
+export const launchTmuxAgent = (data) =>
+  request("/api/agents/launch-tmux", { method: "POST", body: JSON.stringify(data) });
 export const stopAgent = (id) =>
   request(`/api/agents/${id}`, { method: "DELETE" });
 export const resumeAgent = (id) =>
@@ -119,14 +121,6 @@ export const sendMessage = (agentId, content, { queue = false, scheduled_at = nu
   });
 export const markAgentRead = (agentId) =>
   request(`/api/agents/${agentId}/read`, { method: "PUT" });
-export const approveAgentPlan = (agentId) =>
-  request(`/api/agents/${agentId}/approve`, { method: "PUT" });
-export const rejectAgentPlan = (agentId, revision_notes) =>
-  request(`/api/agents/${agentId}/reject`, {
-    method: "PUT",
-    body: JSON.stringify({ revision_notes }),
-  });
-
 // --- Health ---
 export const fetchHealth = () => request("/api/health");
 

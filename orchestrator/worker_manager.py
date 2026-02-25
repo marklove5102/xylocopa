@@ -44,10 +44,13 @@ class WorkerManager:
     @staticmethod
     def _clean_env() -> dict[str, str]:
         """Return os.environ without CLAUDECODE vars so spawned claude
-        processes don't think they're nested inside another session."""
+        processes don't think they're nested inside another session.
+        Sets AGENTHIVE_MANAGED=1 so the orchestrator can distinguish its
+        own subprocesses from tmux-launched CLI sessions."""
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        env["AGENTHIVE_MANAGED"] = "1"
         return env
 
     def _get_project_path(self, project_name: str) -> str:
@@ -173,8 +176,10 @@ class WorkerManager:
         file_tag = message_id or uuid.uuid4().hex[:8]
         output_file = f"/tmp/claude-output-{file_tag}.log"
 
-        cmd = [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions",
+        cmd = [CLAUDE_BIN, "-p", prompt,
                "--output-format", "stream-json", "--verbose"]
+        if getattr(agent, "skip_permissions", True):
+            cmd.insert(3, "--dangerously-skip-permissions")
 
         if agent.model:
             cmd.extend(["--model", agent.model])

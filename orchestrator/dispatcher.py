@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session
 from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES
 from database import SessionLocal
 from log_config import save_worker_log
-from models import AgentMode, Project, Task, TaskStatus
-from plan_manager import PlanManager
+from models import Project, Task, TaskStatus
 from worker_manager import WorkerManager
 
 logger = logging.getLogger("orchestrator.dispatcher")
@@ -31,7 +30,6 @@ class TaskDispatcher:
 
     def __init__(self, worker_manager: WorkerManager):
         self.worker_mgr = worker_manager
-        self.plan_mgr = PlanManager(worker_manager)
         self.running = False
         self._tick_count = 0
         self._paused_disk = False
@@ -78,9 +76,8 @@ class TaskDispatcher:
         """Single iteration of the dispatch loop."""
         self._tick_count += 1
 
-        # 1. Harvest completed workers (both execution and planning)
+        # 1. Harvest completed workers
         self._harvest_completed(db)
-        self._harvest_planners(db)
 
         # 2. Timeout detection
         self._check_timeouts(db)
@@ -93,9 +90,8 @@ class TaskDispatcher:
             self._check_disk_usage()
             self._cleanup_orphan_processes(db)
 
-        # 5. Start planning for new tasks, then assign approved tasks
+        # 5. Assign pending tasks
         if not self._paused_disk:
-            self._start_planning(db)
             self._assign_tasks(db)
 
         db.commit()
@@ -146,7 +142,7 @@ class TaskDispatcher:
         """Kill workers that have exceeded their timeout."""
         executing = (
             db.query(Task)
-            .filter(Task.status.in_([TaskStatus.EXECUTING, TaskStatus.PLANNING]))
+            .filter(Task.status == TaskStatus.EXECUTING)
             .filter(Task.started_at.is_not(None))
             .all()
         )
@@ -196,8 +192,8 @@ class TaskDispatcher:
     # ---- Step 4: Assign ----
 
     def _assign_tasks(self, db: Session):
-        """Assign plan-approved pending tasks to worker processes."""
-        active_statuses = [TaskStatus.EXECUTING, TaskStatus.PLANNING]
+        """Assign pending tasks to worker processes."""
+        active_statuses = [TaskStatus.EXECUTING]
         active_tasks = db.query(Task).filter(Task.status.in_(active_statuses)).all()
         total_active = len(active_tasks)
         project_counts: dict[str, int] = {}
@@ -210,7 +206,6 @@ class TaskDispatcher:
         pending = (
             db.query(Task)
             .filter(Task.status == TaskStatus.PENDING)
-            .filter(Task.plan_approved == True)  # noqa: E712
             .order_by(Task.created_at.asc())
             .all()
         )
@@ -247,84 +242,6 @@ class TaskDispatcher:
                 task.status = TaskStatus.FAILED
                 task.error_message = "Failed to start worker process"
                 task.completed_at = _utcnow()
-
-    # ---- Planning ----
-
-    def _start_planning(self, db: Session):
-        """Start planning workers for new PENDING tasks that need plans."""
-        active_statuses = [TaskStatus.EXECUTING, TaskStatus.PLANNING]
-        total_active = db.query(Task).filter(Task.status.in_(active_statuses)).count()
-        if total_active >= MAX_CONCURRENT_WORKERS:
-            return
-
-        pending = (
-            db.query(Task)
-            .filter(Task.status == TaskStatus.PENDING)
-            .filter(Task.plan_approved == False)  # noqa: E712
-            .order_by(Task.created_at.asc())
-            .all()
-        )
-
-        for task in pending:
-            if total_active >= MAX_CONCURRENT_WORKERS:
-                break
-
-            if task.mode == AgentMode.AUTO:
-                task.plan_approved = True
-                logger.info("Task %s (AUTO mode) skipping plan — auto-approved", task.id)
-                continue
-
-            project = db.get(Project, task.project)
-            if not project:
-                task.status = TaskStatus.FAILED
-                task.error_message = f"Project '{task.project}' not found"
-                continue
-
-            try:
-                pid_str = self.plan_mgr.start_planning(task, project)
-                task.container_id = pid_str
-                task.status = TaskStatus.PLANNING
-                task.started_at = _utcnow()
-                total_active += 1
-                logger.info("Started planning for task %s", task.id)
-            except Exception:
-                logger.exception("Failed to start planner for task %s", task.id)
-                task.status = TaskStatus.FAILED
-                task.error_message = "Failed to start planning process"
-                task.completed_at = _utcnow()
-
-    def _harvest_planners(self, db: Session):
-        """Check planning tasks whose processes have exited."""
-        planning = (
-            db.query(Task)
-            .filter(Task.status == TaskStatus.PLANNING)
-            .filter(Task.container_id.is_not(None))
-            .all()
-        )
-        for task in planning:
-            status = self.worker_mgr.get_status(task.container_id)
-            if status not in ("exited", "removed"):
-                continue
-
-            logs = self.worker_mgr.get_logs(task.container_id)
-
-            if "EXIT_SUCCESS" in logs:
-                task.plan = PlanManager.extract_plan(logs)
-                task.status = TaskStatus.PLAN_REVIEW
-                old_pid = task.container_id
-                task.container_id = None
-                logger.info("Task %s plan ready for review", task.id)
-                from websocket import emit_plan_ready
-                self._emit(emit_plan_ready(task.id, task.project))
-            else:
-                task.plan = "(Planning failed — worker did not produce a plan)"
-                task.status = TaskStatus.PLAN_REVIEW
-                old_pid = task.container_id
-                task.container_id = None
-                logger.warning("Task %s planning did not get EXIT_SUCCESS", task.id)
-
-            # Clean up process tracking
-            self.worker_mgr._processes.pop(old_pid, None)
 
     # ---- Housekeeping ----
 
@@ -374,7 +291,7 @@ class TaskDispatcher:
         try:
             known_pids = set()
             active = db.query(Task).filter(
-                Task.status.in_([TaskStatus.EXECUTING, TaskStatus.PLANNING]),
+                Task.status == TaskStatus.EXECUTING,
                 Task.container_id.is_not(None),
             ).all()
             for t in active:
@@ -398,7 +315,7 @@ class TaskDispatcher:
         try:
             stale = (
                 db.query(Task)
-                .filter(Task.status.in_([TaskStatus.EXECUTING, TaskStatus.PLANNING]))
+                .filter(Task.status == TaskStatus.EXECUTING)
                 .all()
             )
             for task in stale:

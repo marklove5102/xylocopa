@@ -32,12 +32,13 @@ class AgentTaskDetail(AgentTaskBrief):
 class AgentCreate(BaseModel):
     project: str
     prompt: str
-    mode: AgentMode = AgentMode.AUTO
+    mode: AgentMode = AgentMode.AUTO  # Always AUTO (INTERVIEW/PLAN removed)
     model: str | None = None  # None = use project default
     worktree: str | None = None  # None = shared main, string = worktree name
     timeout_seconds: int = 1800
     resume_session_id: str | None = None  # Resume an existing Claude session
     sync_session: bool = False  # Import history from CLI session and live-sync
+    skip_permissions: bool = True  # --dangerously-skip-permissions
 
 
 class AgentOut(BaseModel):
@@ -48,8 +49,6 @@ class AgentOut(BaseModel):
     status: AgentStatus
     branch: str | None = None
     worktree: str | None = None
-    plan: str | None = None
-    plan_approved: bool = False
     cli_sync: bool = False
     tmux_pane: str | None = None
     model: str | None = None
@@ -58,6 +57,7 @@ class AgentOut(BaseModel):
     unread_count: int = 0
     created_at: datetime
     timeout_seconds: int = 1800
+    skip_permissions: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -77,6 +77,7 @@ class AgentBrief(BaseModel):
     last_message_at: datetime | None = None
     unread_count: int = 0
     created_at: datetime
+    skip_permissions: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -131,13 +132,6 @@ class ProjectWithStats(ProjectOut):
     agent_total: int = 0
     agent_active: int = 0
     last_activity: datetime | None = None
-
-
-# --- Plan approval schemas ---
-
-class PlanReject(BaseModel):
-    """Body for rejecting a plan with revision notes."""
-    revision_notes: str = Field(..., min_length=1, description="Feedback for re-planning")
 
 
 # --- Session schemas (from ~/.claude/history.jsonl) ---
