@@ -134,12 +134,30 @@ def init_db():
             ))
             conn.commit()
 
+        # Add tmux_pane column to agents if missing
+        result = conn.execute(text("PRAGMA table_info(agents)"))
+        columns = {row[1] for row in result}
+        if "tmux_pane" not in columns:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN tmux_pane VARCHAR(100)"
+            ))
+            conn.commit()
+
         # Add scheduled_at column to messages if missing
         result = conn.execute(text("PRAGMA table_info(messages)"))
         columns = {row[1] for row in result}
         if "scheduled_at" not in columns:
             conn.execute(text(
                 "ALTER TABLE messages ADD COLUMN scheduled_at DATETIME"
+            ))
+            conn.commit()
+
+        # Add source column to messages if missing
+        result = conn.execute(text("PRAGMA table_info(messages)"))
+        columns = {row[1] for row in result}
+        if "source" not in columns:
+            conn.execute(text(
+                "ALTER TABLE messages ADD COLUMN source VARCHAR(20)"
             ))
             conn.commit()
 

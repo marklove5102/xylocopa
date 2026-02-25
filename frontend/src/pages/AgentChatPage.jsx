@@ -63,13 +63,22 @@ function ChatBubble({ message, project }) {
               {renderMarkdown(message.content, project)}
             </div>
           )}
-          <div className={`text-xs mt-1 ${isUser ? "text-cyan-200" : "text-dim"}`}>
+          <div className={`text-xs mt-1 flex items-center gap-1.5 ${isUser ? "text-cyan-200" : "text-dim"}`}>
             {relativeTime(message.created_at)}
+            {message.source && (
+              <span className={`px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
+                message.source === "web"
+                  ? "bg-cyan-500/20 text-cyan-300"
+                  : "bg-emerald-500/20 text-emerald-300"
+              }`}>
+                {message.source}
+              </span>
+            )}
             {message.status === "FAILED" && (
-              <span className="ml-2 text-red-400">Failed</span>
+              <span className="text-red-400">Failed</span>
             )}
             {message.status === "TIMEOUT" && (
-              <span className="ml-2 text-orange-400">Timed out</span>
+              <span className="text-orange-400">Timed out</span>
             )}
           </div>
         </div>
@@ -292,7 +301,7 @@ function SendLaterPicker({ onSelect, onClose }) {
 
 // --- Chat Input ---
 
-function ChatInput({ onSend, onSendLater, disabled, disabledReason, isBusy }) {
+function ChatInput({ onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode }) {
   const [text, setText] = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const textareaRef = useRef(null);
@@ -345,7 +354,7 @@ function ChatInput({ onSend, onSendLater, disabled, disabledReason, isBusy }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={isBusy ? "Queue a message..." : disabled ? disabledReason : "Type a message..."}
+          placeholder={tmuxMode ? "Send via tmux..." : isBusy ? "Queue a message..." : disabled ? disabledReason : "Type a message..."}
           disabled={!canType}
           rows={1}
           className="flex-1 min-h-[40px] max-h-[160px] rounded-xl bg-input border border-edge px-3 py-2.5 text-sm text-heading placeholder-hint resize-none focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors disabled:opacity-50"
@@ -687,6 +696,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
   const isExecuting = agent.status === "EXECUTING" || agent.status === "PLANNING";
   const isSyncing = agent.status === "SYNCING";
+  const hasTmux = isSyncing && !!agent.tmux_pane;
   const isStopped = agent.status === "STOPPED";
   const isError = agent.status === "ERROR";
   const isPlanReview = agent.status === "PLAN_REVIEW";
@@ -694,7 +704,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   let disabledReason = "";
   if (isStopped) disabledReason = "Agent is stopped — click Resume to restart";
   else if (isError) disabledReason = "Agent errored — click Resume to restart";
-  else if (isSyncing) disabledReason = "Syncing from CLI session...";
+  else if (isSyncing && !hasTmux) disabledReason = "Syncing from CLI session...";
   else if (isExecuting) disabledReason = "Agent is working...";
 
   return (
@@ -786,6 +796,11 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
               <span className={`text-xs shrink-0 ${statusText}`}>{agent.status.toLowerCase().replace("_", " ")}</span>
+              {hasTmux && (
+                <span className="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 shrink-0">
+                  tmux
+                </span>
+              )}
               {agent.model && (
                 <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated shrink-0">
                   {modelDisplayName(agent.model)}
@@ -867,9 +882,10 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       <ChatInput
         onSend={handleSend}
         onSendLater={handleSendLater}
-        disabled={isStopped || isError || isExecuting || isSyncing}
+        disabled={isStopped || isError || isExecuting || (isSyncing && !hasTmux)}
         disabledReason={disabledReason}
-        isBusy={isExecuting || isSyncing}
+        isBusy={isExecuting || (isSyncing && !hasTmux)}
+        tmuxMode={hasTmux}
       />
 
       {/* Stop confirmation modal */}

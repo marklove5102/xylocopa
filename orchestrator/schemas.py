@@ -51,6 +51,7 @@ class AgentOut(BaseModel):
     plan: str | None = None
     plan_approved: bool = False
     cli_sync: bool = False
+    tmux_pane: str | None = None
     model: str | None = None
     last_message_preview: str | None = None
     last_message_at: datetime | None = None
@@ -70,6 +71,7 @@ class AgentBrief(BaseModel):
     status: AgentStatus
     branch: str | None = None
     worktree: str | None = None
+    tmux_pane: str | None = None
     model: str | None = None
     last_message_preview: str | None = None
     last_message_at: datetime | None = None
@@ -87,6 +89,7 @@ class MessageOut(BaseModel):
     status: MessageStatus
     stream_log: str | None = None
     error_message: str | None = None
+    source: str | None = None  # "web" | "cli" | None
     created_at: datetime
     completed_at: datetime | None = None
 
