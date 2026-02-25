@@ -388,6 +388,18 @@ async def health(request: Request):
     return result
 
 
+@app.post("/api/test/notify")
+async def test_notify():
+    """Send a test notification via WebSocket (for debugging)."""
+    from websocket import ws_manager
+    count = await ws_manager.broadcast("agent_update", {
+        "agent_id": "test",
+        "status": "IDLE",
+        "project": "test",
+    })
+    return {"sent_to": count}
+
+
 @app.get("/api/system/stats")
 async def system_stats():
     """System resource usage — CPU, memory, disk, and optional GPU."""
