@@ -152,6 +152,25 @@ export default function App() {
     return () => clearInterval(id);
   }, [location.pathname]);
 
+  // Safari iOS: when returning to the webapp, the browser toolbar
+  // appears and shifts the visual viewport, but fixed-position hit-test
+  // areas are stale until a scroll event forces a reflow.
+  useEffect(() => {
+    const forceReflow = () => {
+      if (document.visibilityState === "visible") {
+        requestAnimationFrame(() => {
+          window.scrollTo(0, window.scrollY);
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", forceReflow);
+    window.addEventListener("resize", forceReflow);
+    return () => {
+      document.removeEventListener("visibilitychange", forceReflow);
+      window.removeEventListener("resize", forceReflow);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-dvh bg-page text-heading min-w-[320px] overflow-x-hidden">
       {/* Main content area */}
