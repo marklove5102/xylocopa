@@ -5,6 +5,7 @@ import {
   fetchProjectAgents,
   fetchProjectSessions,
   createAgent,
+  launchTmuxAgent,
   createProject,
   deleteProject as deleteProjectApi,
   archiveProject as archiveProjectApi,
@@ -13,7 +14,6 @@ import {
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
 import VoiceRecorder from "../components/VoiceRecorder";
-import ModePicker from "../components/ModePicker";
 import WorktreePicker from "../components/WorktreePicker";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import { relativeTime } from "../lib/formatters";
@@ -21,6 +21,7 @@ import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisp
 
 const AGENT_TABS = [
   { key: "starred", label: "Starred" },
+  { key: "syncing", label: "Syncing" },
   { key: "active", label: "Active" },
   { key: "stopped", label: "Stopped" },
   { key: "sessions", label: "Sessions" },
@@ -349,9 +350,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Agent creation
   const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState("AUTO");
   const [model, setModel] = useState(MODEL_OPTIONS[0].value);
   const [worktree, setWorktree] = useState(null);
+  const [syncMode, setSyncMode] = useState(true);
+  const [skipPermissions, setSkipPermissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -436,23 +438,30 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Filter agents by tab
   const filtered =
-    agentTab === "active"
-      ? agents.filter((a) => a.status !== "STOPPED")
-      : agents.filter((a) => a.status === "STOPPED");
+    agentTab === "syncing"
+      ? agents.filter((a) => a.status === "SYNCING")
+      : agentTab === "active"
+        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
+        : agents.filter((a) => a.status === "STOPPED");
 
-  // Submit new agent
+  // Submit new agent (or launch in tmux if syncMode)
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!prompt.trim()) { showToast("Enter a description.", "error"); return; }
     setSubmitting(true);
     try {
-      const agent = await createAgent({ project: name, prompt: prompt.trim(), mode, model, worktree });
-      showToast("Agent created!");
-      setPrompt("");
-      setMode("AUTO");
-      setModel(MODEL_OPTIONS[0].value);
-      setWorktree(null);
-      navigate(`/agents/${agent.id}`);
+      if (syncMode) {
+        await launchTmuxAgent({ project: name, prompt: prompt.trim(), model, skip_permissions: skipPermissions });
+        showToast("Launched in tmux — will appear as syncing agent shortly");
+        setPrompt("");
+      } else {
+        const agent = await createAgent({ project: name, prompt: prompt.trim(), mode: "AUTO", model, worktree, skip_permissions: skipPermissions });
+        showToast("Agent created!");
+        setPrompt("");
+        setModel(MODEL_OPTIONS[0].value);
+        setWorktree(null);
+        navigate(`/agents/${agent.id}`);
+      }
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
@@ -613,7 +622,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             onToggle={voice.toggleRecording}
           />
         </div>
-        <ModePicker value={mode} onChange={setMode} />
         <div className="grid grid-cols-3 gap-3">
           {MODEL_OPTIONS.map((opt) => (
             <button
@@ -630,48 +638,65 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </button>
           ))}
         </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2.5 cursor-pointer py-1">
+            <div
+              role="switch"
+              aria-checked={syncMode}
+              onClick={() => setSyncMode(!syncMode)}
+              className={`relative w-10 h-[22px] rounded-full transition-colors ${syncMode ? "bg-emerald-500" : "bg-elevated"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${syncMode ? "translate-x-[18px]" : ""}`} />
+            </div>
+            <span className="text-sm text-label">Sync agent</span>
+            <span className="text-xs text-dim">(tmux on host)</span>
+          </label>
+          <label className="flex items-center gap-2.5 cursor-pointer py-1">
+            <div
+              role="switch"
+              aria-checked={skipPermissions}
+              onClick={() => setSkipPermissions(!skipPermissions)}
+              className={`relative w-10 h-[22px] rounded-full transition-colors ${skipPermissions ? "bg-amber-500" : "bg-elevated"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${skipPermissions ? "translate-x-[18px]" : ""}`} />
+            </div>
+            <span className="text-sm text-label">Skip permissions</span>
+            <span className="text-xs text-dim">(auto-approve tool use)</span>
+          </label>
+        </div>
         <button
           type="submit"
           disabled={submitting || !prompt.trim()}
-          className={`w-full min-h-[44px] rounded-lg text-sm font-semibold transition-colors ${
+          className={`w-full min-h-[48px] rounded-xl text-sm font-bold tracking-wide uppercase transition-all ${
             submitting || !prompt.trim()
               ? "bg-elevated text-dim cursor-not-allowed"
-              : "bg-cyan-500 hover:bg-cyan-400 text-white shadow-md shadow-cyan-500/20"
+              : syncMode
+                ? "bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white shadow-lg shadow-emerald-500/25"
+                : "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-lg shadow-cyan-500/25"
           }`}
         >
-          {submitting ? "Creating..." : "Create Agent"}
+          {submitting ? "Creating..." : syncMode ? "Launch Sync Agent" : "Create Agent"}
         </button>
       </form>
       )}
 
       {/* Agent tabs */}
       <div>
-        <div className="flex gap-1 mb-3">
+        <div className="flex gap-1.5 mb-3 overflow-x-auto no-scrollbar">
           {AGENT_TABS.map((tab) => {
             const isActive = agentTab === tab.key;
-            const count =
-              tab.key === "starred"
-                ? sessions ? sessions.filter((s) => s.starred).length : "…"
-                : tab.key === "active"
-                  ? agents.filter((a) => a.status !== "STOPPED").length
-                  : tab.key === "stopped"
-                    ? agents.filter((a) => a.status === "STOPPED").length
-                    : sessions ? sessions.length : "…";
             return (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => setAgentTab(tab.key)}
-                className={`min-h-[36px] min-w-[5.5rem] px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                className={`shrink-0 min-h-[34px] px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-cyan-600 text-white"
                     : "bg-surface text-label hover:bg-input"
                 }`}
               >
                 {tab.label}
-                <span className={`ml-1.5 text-xs ${isActive ? "text-cyan-200" : "text-faint"}`}>
-                  {count}
-                </span>
               </button>
             );
           })}

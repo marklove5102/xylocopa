@@ -161,6 +161,15 @@ def init_db():
             ))
             conn.commit()
 
+        # Add skip_permissions column to agents if missing
+        result = conn.execute(text("PRAGMA table_info(agents)"))
+        columns = {row[1] for row in result}
+        if "skip_permissions" not in columns:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN skip_permissions BOOLEAN NOT NULL DEFAULT 1"
+            ))
+            conn.commit()
+
         # Drop old priority column now that mode has been migrated
         result = conn.execute(text("PRAGMA table_info(agents)"))
         columns = {row[1] for row in result}

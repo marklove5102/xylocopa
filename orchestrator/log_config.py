@@ -4,7 +4,10 @@ import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
 
-LOG_DIR = os.getenv("LOG_DIR", "./logs")
+# Resolve LOG_DIR relative to project root (one level up from this file)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_raw_log_dir = os.getenv("LOG_DIR", "logs")
+LOG_DIR = _raw_log_dir if os.path.isabs(_raw_log_dir) else os.path.join(_PROJECT_ROOT, _raw_log_dir)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 

@@ -8,8 +8,6 @@ import {
   resumeAgent,
   renameAgent,
   markAgentRead,
-  approveAgentPlan,
-  rejectAgentPlan,
   fetchProjectSessions,
   starSession,
   unstarSession,
@@ -29,15 +27,42 @@ import {
 
 // --- Chat Bubble ---
 
+function SystemBubble({ message }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = message.content.length > 80;
+  const label = isLong
+    ? message.content.slice(0, 60).replace(/\n/g, " ") + "..."
+    : message.content;
+
+  return (
+    <div className="flex justify-center my-2">
+      <button
+        type="button"
+        onClick={() => isLong && setExpanded((v) => !v)}
+        className={`inline-block max-w-[90%] px-3 py-1 rounded-lg bg-elevated text-xs text-dim text-left ${isLong ? "cursor-pointer hover:bg-hover transition-colors" : "cursor-default"}`}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 opacity-60">sys</span>
+          <span className="truncate">{label}</span>
+          {isLong && (
+            <svg className={`w-3 h-3 shrink-0 opacity-50 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" d="m19 9-7 7-7-7" />
+            </svg>
+          )}
+        </div>
+        {expanded && (
+          <div className="mt-2 pt-2 border-t border-divider text-xs text-dim whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+            {message.content}
+          </div>
+        )}
+      </button>
+    </div>
+  );
+}
+
 function ChatBubble({ message, project }) {
   if (message.role === "SYSTEM") {
-    return (
-      <div className="flex justify-center my-2">
-        <span className="inline-block px-3 py-1 rounded-full bg-elevated text-xs text-dim">
-          {message.content}
-        </span>
-      </div>
-    );
+    return <SystemBubble message={message} />;
   }
 
   const isUser = message.role === "USER";
@@ -119,63 +144,6 @@ function StreamingBubble({ content, project }) {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// --- Plan Review Bar ---
-
-function PlanReviewBar({ onApprove, onReject }) {
-  const [rejecting, setRejecting] = useState(false);
-  const [notes, setNotes] = useState("");
-
-  if (rejecting) {
-    return (
-      <div className="bg-surface border border-divider rounded-xl p-3 my-2 space-y-2">
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Revision feedback..."
-          rows={2}
-          className="w-full rounded-lg bg-input border border-edge px-3 py-2 text-sm text-heading placeholder-hint resize-none focus:border-cyan-500 focus:outline-none"
-        />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => { onReject(notes); setRejecting(false); setNotes(""); }}
-            disabled={!notes.trim()}
-            className="flex-1 min-h-[36px] rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            Submit Rejection
-          </button>
-          <button
-            type="button"
-            onClick={() => setRejecting(false)}
-            className="px-3 min-h-[36px] rounded-lg bg-input hover:bg-elevated text-body text-sm transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex gap-2 my-2 justify-center">
-      <button
-        type="button"
-        onClick={onApprove}
-        className="px-5 min-h-[36px] rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
-      >
-        Approve Plan
-      </button>
-      <button
-        type="button"
-        onClick={() => setRejecting(true)}
-        className="px-5 min-h-[36px] rounded-lg bg-red-600/20 text-red-400 text-sm font-medium hover:bg-red-600/30 transition-colors"
-      >
-        Reject
-      </button>
     </div>
   );
 }
@@ -470,7 +438,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
 
   // Polling — faster when executing
   useEffect(() => {
-    const isActive = agent?.status === "EXECUTING" || agent?.status === "PLANNING" || agent?.status === "SYNCING";
+    const isActive = agent?.status === "EXECUTING" || agent?.status === "SYNCING";
     const interval = isActive ? 3000 : 10000;
     const timer = setInterval(loadData, interval);
     return () => clearInterval(timer);
@@ -639,28 +607,6 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
     }
   };
 
-  // Approve plan
-  const handleApprove = async () => {
-    try {
-      await approveAgentPlan(id);
-      showToast("Plan approved!");
-      loadData();
-    } catch (err) {
-      showToast("Failed: " + err.message, "error");
-    }
-  };
-
-  // Reject plan
-  const handleReject = async (notes) => {
-    try {
-      await rejectAgentPlan(id, notes);
-      showToast("Plan rejected — re-queued");
-      loadData();
-    } catch (err) {
-      showToast("Failed: " + err.message, "error");
-    }
-  };
-
   // Stop agent
   const handleStop = async () => {
     setStopping(true);
@@ -720,12 +666,11 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
 
   const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
   const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
-  const isExecuting = agent.status === "EXECUTING" || agent.status === "PLANNING";
+  const isExecuting = agent.status === "EXECUTING";
   const isSyncing = agent.status === "SYNCING";
   const hasTmux = isSyncing && !!agent.tmux_pane;
   const isStopped = agent.status === "STOPPED";
   const isError = agent.status === "ERROR";
-  const isPlanReview = agent.status === "PLAN_REVIEW";
 
   let disabledReason = "";
   if (isStopped) disabledReason = "Agent is stopped — click Resume to restart";
@@ -909,11 +854,6 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         {messages.map((msg) => (
           <ChatBubble key={msg.id} message={msg} project={agent.project} />
         ))}
-
-        {/* Plan review inline */}
-        {isPlanReview && (
-          <PlanReviewBar onApprove={handleApprove} onReject={handleReject} />
-        )}
 
         {/* Streaming output or typing indicator while executing/syncing */}
         {(isExecuting || isSyncing) && (

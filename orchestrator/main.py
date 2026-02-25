@@ -23,7 +23,6 @@ from models import (
     Message,
     MessageRole,
     MessageStatus,
-    AgentMode,
     Project,
     StarredSession,
 )
@@ -35,7 +34,6 @@ from schemas import (
     AgentTaskDetail,
     HealthResponse,
     MessageOut,
-    PlanReject,
     ProjectCreate,
     ProjectOut,
     ProjectWithStats,
@@ -73,10 +71,6 @@ def _effective_task_status(msg: Message, agent: Agent) -> str:
     # PENDING — derive from agent state
     if agent.status == AgentStatus.SYNCING:
         return "SYNCING"
-    if agent.status == AgentStatus.PLANNING:
-        return "PLANNING"
-    if agent.status == AgentStatus.PLAN_REVIEW:
-        return "PLAN_REVIEW"
     if agent.status == AgentStatus.ERROR:
         return "FAILED"
     if agent.status == AgentStatus.STOPPED:
@@ -530,7 +524,6 @@ async def list_projects(db: Session = Depends(get_db)):
                 func.count(
                     case((Agent.status.in_([
                         AgentStatus.IDLE, AgentStatus.EXECUTING,
-                        AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
                         AgentStatus.STARTING,
                     ]), 1))
                 ).label("active"),
@@ -1166,6 +1159,7 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         timeout_seconds=body.timeout_seconds,
         session_id=body.resume_session_id,
         cli_sync=bool(is_sync),
+        skip_permissions=body.skip_permissions,
         last_message_preview=name,
         last_message_at=_utcnow(),
     )
@@ -1174,7 +1168,6 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
 
     if is_sync:
         # Sync mode: import existing history, don't create initial user message
-        agent.plan_approved = True  # Allow dispatching after sync completes
         db.commit()
         db.refresh(agent)
 
@@ -1202,16 +1195,88 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
             status=MessageStatus.PENDING,
         )
         db.add(msg)
-
-        # AUTO mode agents skip plan review
-        if body.mode == AgentMode.AUTO:
-            agent.plan_approved = True
-
         db.commit()
         db.refresh(agent)
 
     logger.info("Agent %s created for project %s (mode %s, sync=%s)", agent.id, agent.project, agent.mode.value, is_sync)
     return agent
+
+
+@app.post("/api/agents/launch-tmux", status_code=201)
+async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
+    """Launch a claude CLI session in a new tmux pane for a project.
+
+    The auto-detect loop will pick it up as a SYNCING agent within ~30s.
+    """
+    import shlex
+    import subprocess
+    from config import CLAUDE_BIN
+
+    body = await request.json()
+    project_name = body.get("project")
+    prompt = body.get("prompt", "").strip()
+    model = body.get("model")
+    skip_permissions = body.get("skip_permissions", True)
+
+    if not project_name:
+        raise HTTPException(status_code=400, detail="Project is required")
+
+    proj = db.get(Project, project_name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if not os.path.isdir(proj.path):
+        raise HTTPException(status_code=400, detail="Project directory not found on disk")
+
+    # Build the claude command
+    cmd_parts = [CLAUDE_BIN, "--output-format", "stream-json", "--verbose"]
+    if skip_permissions:
+        cmd_parts.append("--dangerously-skip-permissions")
+    if model:
+        cmd_parts += ["--model", model]
+    if prompt:
+        cmd_parts += ["-p", prompt]
+    claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+
+    tmux_session = "agenthive"
+    window_name = (prompt or "claude")[:30].replace(" ", "-").replace("'", "").replace('"', "")
+
+    # Ensure tmux session exists
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", tmux_session],
+        capture_output=True,
+    )
+    if check.returncode != 0:
+        # Create session with a detached initial window
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", tmux_session,
+             "-c", proj.path, "-n", window_name],
+            check=True,
+        )
+        pane_id = subprocess.run(
+            ["tmux", "display-message", "-t", f"{tmux_session}:{window_name}", "-p", "#{pane_id}"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+    else:
+        # Create new window in existing session
+        result = subprocess.run(
+            ["tmux", "new-window", "-t", tmux_session,
+             "-c", proj.path, "-n", window_name,
+             "-P", "-F", "#{pane_id}"],
+            capture_output=True, text=True, check=True,
+        )
+        pane_id = result.stdout.strip()
+
+    # Send the claude command to the pane
+    subprocess.run(
+        ["tmux", "send-keys", "-t", pane_id, claude_cmd, "Enter"],
+        check=True,
+    )
+
+    logger.info(
+        "Launched tmux claude session in pane %s for project %s",
+        pane_id, project_name,
+    )
+    return {"status": "launched", "tmux_pane": pane_id, "project": project_name}
 
 
 @app.get("/api/agents", response_model=list[AgentBrief])
@@ -1473,82 +1538,6 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
     agent.unread_count = 0
     db.commit()
     return {"detail": "ok"}
-
-
-@app.put("/api/agents/{agent_id}/approve", response_model=AgentOut)
-async def approve_agent_plan(agent_id: str, db: Session = Depends(get_db)):
-    """Approve an agent's plan — starts execution."""
-    agent = db.get(Agent, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    if agent.status != AgentStatus.PLAN_REVIEW:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Agent is not in PLAN_REVIEW state (current: {agent.status.value})",
-        )
-    agent.plan_approved = True
-    agent.status = AgentStatus.IDLE  # Dispatcher will pick up the pending message
-
-    # System message
-    msg = Message(
-        agent_id=agent.id,
-        role=MessageRole.SYSTEM,
-        content="Plan approved",
-        status=MessageStatus.COMPLETED,
-    )
-    db.add(msg)
-
-    db.commit()
-    db.refresh(agent)
-    logger.info("Agent %s plan approved", agent.id)
-    return agent
-
-
-@app.put("/api/agents/{agent_id}/reject", response_model=AgentOut)
-async def reject_agent_plan(
-    agent_id: str, body: PlanReject, db: Session = Depends(get_db),
-):
-    """Reject an agent's plan — adds revision as a new user message."""
-    agent = db.get(Agent, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    if agent.status != AgentStatus.PLAN_REVIEW:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Agent is not in PLAN_REVIEW state (current: {agent.status.value})",
-        )
-
-    # Add rejection as system message
-    sys_msg = Message(
-        agent_id=agent.id,
-        role=MessageRole.SYSTEM,
-        content=f"Plan rejected: {body.revision_notes}",
-        status=MessageStatus.COMPLETED,
-    )
-    db.add(sys_msg)
-
-    # Reset plan for re-planning
-    agent.plan = None
-    agent.plan_approved = False
-    agent.status = AgentStatus.IDLE
-
-    # Update the original pending user message with revision notes
-    pending_msg = (
-        db.query(Message)
-        .filter(
-            Message.agent_id == agent.id,
-            Message.role == MessageRole.USER,
-            Message.status == MessageStatus.PENDING,
-        )
-        .first()
-    )
-    if pending_msg:
-        pending_msg.content = f"{pending_msg.content}\n\n[Revision feedback]: {body.revision_notes}"
-
-    db.commit()
-    db.refresh(agent)
-    logger.info("Agent %s plan rejected — re-queued", agent.id)
-    return agent
 
 
 # ---- Processes ----

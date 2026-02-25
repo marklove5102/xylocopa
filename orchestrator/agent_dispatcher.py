@@ -20,9 +20,7 @@ from models import (
     MessageRole,
     MessageStatus,
     Project,
-    Task,
 )
-from plan_manager import PlanManager
 from session_cache import (
     _session_source_dir,
     cache_session,
@@ -303,6 +301,22 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str]]:
             content = msg.get("content", "")
             # Real user message = string content (not tool_result list)
             if isinstance(content, str) and content.strip():
+                stripped = content.strip()
+                # Skip system-injected messages that aren't real user input
+                if (
+                    stripped.startswith("<local-command-caveat>")
+                    or stripped.startswith("<command-name>")
+                    or stripped.startswith("<local-command-stdout>")
+                    or stripped.startswith("<system-reminder>")
+                ):
+                    continue
+                # Compact summary → system message instead of user
+                if stripped.startswith(
+                    "This session is being continued from a previous conversation"
+                ):
+                    flush_assistant()
+                    turns.append(("system", content))
+                    continue
                 flush_assistant()
                 turns.append(("user", content))
             # list content = tool_result, skip (belongs to assistant turn)
@@ -371,14 +385,15 @@ def _get_session_pid(session_id: str) -> int | None:
 def _is_orchestrator_process(pid: int) -> bool:
     """Check if a PID is an orchestrator-spawned claude process.
 
-    The orchestrator always passes ``--output-format stream-json`` when
-    spawning workers.  Interactive CLI sessions never use that flag, so
-    its presence reliably identifies orchestrator-owned processes.
+    Orchestrator-managed subprocesses (via WorkerManager) have the
+    AGENTHIVE_MANAGED=1 environment variable set.  Tmux-launched CLI
+    sessions (including those started from the web UI) do NOT have this
+    var, so they are correctly detected as sync candidates.
     """
     try:
-        with open(f"/proc/{pid}/cmdline", "r") as f:
-            cmdline = f.read()
-        return "output-format" in cmdline
+        with open(f"/proc/{pid}/environ", "r") as f:
+            environ = f.read()
+        return "AGENTHIVE_MANAGED=1" in environ
     except OSError:
         return False
 
@@ -519,23 +534,21 @@ def _detect_tmux_pane_for_session(session_id: str, project_path: str) -> str | N
 
 
 def _is_cli_session_alive(project_path: str, tmux_pane: str | None = None) -> bool:
-    """Check if a user CLI claude process is still alive for this project.
+    """Check if a specific agent's CLI process is still alive.
 
-    Checks both tmux panes and non-tmux terminals for a non-orchestrator
-    claude process whose CWD matches the project path.
+    If tmux_pane is set, checks only that specific pane (high confidence).
+    If no pane, checks if ANY user claude process matches the project path
+    (used only during initial detection / startup recovery).
     """
     real_project = os.path.realpath(project_path)
-
-    # Check tmux panes
     pane_map = _build_tmux_claude_map()
 
-    # If we have a specific pane, check that one
-    if tmux_pane and tmux_pane in pane_map:
-        info = pane_map[tmux_pane]
-        if not info["is_orchestrator"] and info["cwd"] == real_project:
-            return True
+    # If we have a specific pane, ONLY check that one — don't match others
+    if tmux_pane:
+        info = pane_map.get(tmux_pane)
+        return bool(info and not info["is_orchestrator"] and info["cwd"] == real_project)
 
-    # Check all panes for a matching user claude process
+    # No specific pane — broad scan (used for initial detection only)
     for pane_id, info in pane_map.items():
         if not info["is_orchestrator"] and info["cwd"] == real_project:
             return True
@@ -642,16 +655,11 @@ class AgentDispatcher:
 
     def __init__(self, worker_manager: WorkerManager):
         self.worker_mgr = worker_manager
-        self.plan_mgr = PlanManager(worker_manager)
         self.running = False
 
         # In-memory tracking of active execs
         # agent_id -> {pid_str, output_file, message_id, started_at, last_activity}
         self._active_execs: dict[str, dict] = {}
-
-        # Planner processes (ephemeral, for PLAN-mode agents)
-        # agent_id -> pid_str
-        self._active_planners: dict[str, str] = {}
 
         # Track stale session recovery retries per agent to avoid infinite loops.
         # agent_id -> consecutive retry count
@@ -679,7 +687,6 @@ class AgentDispatcher:
                 Agent.session_id.is_not(None),
                 Agent.status.in_([
                     AgentStatus.IDLE, AgentStatus.EXECUTING,
-                    AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
                     AgentStatus.SYNCING,
                 ]),
             ).all()
@@ -704,13 +711,6 @@ class AgentDispatcher:
                 "message_id": info["message_id"],
                 "started_at": info["started_at"].isoformat(),
                 "elapsed_seconds": int(elapsed),
-            })
-        for agent_id, pid_str in self._active_planners.items():
-            results.append({
-                "agent_id": agent_id,
-                "type": "planner",
-                "started_at": None,
-                "elapsed_seconds": None,
             })
         return results
 
@@ -755,22 +755,16 @@ class AgentDispatcher:
         # 1. Harvest completed execs
         self._harvest_completed_execs(db)
 
-        # 2. Harvest completed planners
-        self._harvest_planners(db)
-
-        # 3. Check exec timeouts
+        # 2. Check exec timeouts
         self._check_exec_timeouts(db)
 
-        # 4. Start new agents
+        # 3. Start new agents
         self._start_new_agents(db)
 
-        # 5. Start planning for agents that need it
-        self._start_planning(db)
-
-        # 6. Dispatch pending messages to idle agents
+        # 4. Dispatch pending messages to idle agents
         self._dispatch_pending_messages(db)
 
-        # 7. Auto-detect running CLI sessions (every ~30s)
+        # 5. Auto-detect running CLI sessions (every ~30s)
         self._cli_detect_counter += 1
         if self._cli_detect_counter >= self._cli_detect_interval:
             self._cli_detect_counter = 0
@@ -964,84 +958,7 @@ class AgentDispatcher:
             self._active_execs.pop(agent_id, None)
             self._cancel_stream_task(agent_id)
 
-    # ---- Step 2: Harvest planners ----
-
-    def _harvest_planners(self, db: Session):
-        """Check planning processes that have finished."""
-        done = []
-        for agent_id, pid_str in list(self._active_planners.items()):
-            status = self.worker_mgr.get_status(pid_str)
-            if status not in ("exited", "removed"):
-                continue
-
-            agent = db.get(Agent, agent_id)
-            if not agent:
-                done.append(agent_id)
-                continue
-
-            logs = self.worker_mgr.get_logs(pid_str)
-
-            if "EXIT_SUCCESS" in logs:
-                plan_text = PlanManager.extract_plan(logs)
-                agent.plan = plan_text
-                agent.status = AgentStatus.PLAN_REVIEW
-
-                # Add plan as system message
-                msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content=f"## Plan\n\n{plan_text}",
-                    status=MessageStatus.COMPLETED,
-                )
-                db.add(msg)
-                agent.last_message_preview = "Plan ready for review"
-                agent.last_message_at = _utcnow()
-                agent.unread_count += 1
-
-                from websocket import emit_agent_update, emit_new_message
-                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
-                self._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
-
-                from push import send_push_notification
-                send_push_notification(
-                    title=f"\U0001f4cb {agent.name}",
-                    body="Plan ready for review",
-                    url=f"/agents/{agent.id}",
-                )
-            else:
-                agent.plan = "(Planning failed)"
-                agent.status = AgentStatus.PLAN_REVIEW
-                msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content="Planning failed — worker did not produce a plan.",
-                    status=MessageStatus.FAILED,
-                )
-                db.add(msg)
-                agent.last_message_preview = "Planning failed"
-                agent.last_message_at = _utcnow()
-                agent.unread_count += 1
-
-                from websocket import emit_agent_update, emit_new_message
-                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
-                self._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
-
-                from push import send_push_notification
-                send_push_notification(
-                    title=f"\u274c {agent.name}",
-                    body="Planning failed",
-                    url=f"/agents/{agent.id}",
-                )
-
-            # Clean up planner process tracking
-            self.worker_mgr._processes.pop(pid_str, None)
-
-            done.append(agent_id)
-
-        for agent_id in done:
-            self._active_planners.pop(agent_id, None)
-
-    # ---- Step 3: Timeouts ----
+    # ---- Step 2: Timeouts ----
 
     def _check_exec_timeouts(self, db: Session):
         """Kill execs that have been idle (no new output) for too long."""
@@ -1176,77 +1093,12 @@ class AgentDispatcher:
                     url=f"/agents/{agent.id}",
                 )
 
-    # ---- Step 5: Planning ----
-
-    def _start_planning(self, db: Session):
-        """Start planning for PLAN-mode agents that need it."""
-        idle_agents = db.query(Agent).filter(
-            Agent.status == AgentStatus.IDLE,
-            Agent.plan_approved == False,  # noqa: E712
-            Agent.mode == AgentMode.PLAN,
-        ).all()
-
-        # Auto-approve INTERVIEW and AUTO agents
-        auto_agents = db.query(Agent).filter(
-            Agent.status == AgentStatus.IDLE,
-            Agent.plan_approved == False,  # noqa: E712
-            Agent.mode.in_([AgentMode.AUTO, AgentMode.INTERVIEW]),
-        ).all()
-        for agent in auto_agents:
-            agent.plan_approved = True
-
-        planning_count = len(self._active_planners)
-        executing_count = len(self._active_execs)
-        total_active = planning_count + executing_count
-
-        for agent in idle_agents:
-            if agent.id in self._active_planners:
-                continue
-            if total_active >= MAX_CONCURRENT_WORKERS:
-                break
-
-            has_pending = db.query(Message).filter(
-                Message.agent_id == agent.id,
-                Message.role == MessageRole.USER,
-                Message.status == MessageStatus.PENDING,
-            ).first()
-            if not has_pending:
-                continue
-
-            project = db.get(Project, agent.project)
-            if not project:
-                continue
-
-            try:
-                fake_task = Task(
-                    id=agent.id,
-                    project=agent.project,
-                    prompt=has_pending.content,
-                )
-                pid_str = self.plan_mgr.start_planning(fake_task, project)
-                self._active_planners[agent.id] = pid_str
-                agent.status = AgentStatus.PLANNING
-                total_active += 1
-
-                sys_msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content="Generating plan...",
-                    status=MessageStatus.COMPLETED,
-                )
-                db.add(sys_msg)
-
-                logger.info("Started planning for agent %s", agent.id)
-            except Exception:
-                logger.exception("Failed to start planner for agent %s", agent.id)
-
-    # ---- Step 6: Dispatch pending messages ----
+    # ---- Step 4: Dispatch pending messages ----
 
     def _dispatch_pending_messages(self, db: Session):
         """For IDLE agents with PENDING user messages, exec claude."""
         idle_agents = db.query(Agent).filter(
             Agent.status == AgentStatus.IDLE,
-            Agent.plan_approved == True,  # noqa: E712
         ).all()
 
         executing_count = db.query(Agent).filter(
@@ -1372,22 +1224,13 @@ class AgentDispatcher:
         if include_history and db:
             history_block = self._format_conversation_history(agent, db)
 
-        base = (
+        return (
             f"You are working in project: {project.display_name}\n"
             f"Project path: {project_path}\n"
             f"\n"
             f"First read the project's CLAUDE.md to understand project conventions.\n"
             f"{history_block}\n"
-            f"{user_message}"
-        )
-        if agent.mode == AgentMode.INTERVIEW:
-            return (
-                f"{base}\n\n"
-                f"You are in INTERVIEW mode. Answer questions, explore and explain code, "
-                f"discuss approaches — but do NOT modify any files or make commits."
-            )
-        return (
-            f"{base}\n\n"
+            f"{user_message}\n\n"
             f"If you make code changes, commit with message format: "
             f"[agent-{agent.id}] short description"
         )
@@ -1610,7 +1453,6 @@ class AgentDispatcher:
                     session_id=best_sid,
                     cli_sync=True,
                     tmux_pane=pane_id,
-                    plan_approved=True,
                     last_message_preview=agent_name,
                     last_message_at=_utcnow(),
                 )
@@ -1678,17 +1520,38 @@ class AgentDispatcher:
                         pane, agent.id,
                     )
 
-            # Check if the CLI process is still alive
-            if _is_cli_session_alive(proj.path, agent.tmux_pane):
-                # Process alive — refresh tmux pane if needed
-                if agent.tmux_pane and not verify_tmux_pane(agent.tmux_pane):
+            # Determine if this agent's own process is alive.
+            # If it has a tmux pane, check that specific pane.
+            # If no pane, fall back to session file freshness — do NOT
+            # count other claude processes in the same project as "alive"
+            # (that caused orphaned SYNCING agents to never stop).
+            alive = False
+            if agent.tmux_pane:
+                pane_map = _build_tmux_claude_map()
+                info = pane_map.get(agent.tmux_pane)
+                if info and not info["is_orchestrator"]:
+                    alive = True
+                elif not verify_tmux_pane(agent.tmux_pane):
+                    # Pane is gone
                     agent.tmux_pane = None
+            else:
+                # No pane — check if session file was recently written
+                src_dir = _session_source_dir(proj.path)
+                jsonl_path = os.path.join(src_dir, f"{agent.session_id}.jsonl")
+                try:
+                    mtime = os.path.getmtime(jsonl_path)
+                    age = time.time() - mtime
+                    alive = age < stale_threshold
+                except OSError:
+                    alive = False
+
+            if alive:
                 continue
 
-            # Process is dead — stop the agent
+            # Process is dead or session is stale — stop the agent
             logger.info(
-                "CLI process dead for syncing agent %s — stopping",
-                agent.id,
+                "Syncing agent %s is stale (pane=%s) — stopping",
+                agent.id, agent.tmux_pane,
             )
             agent.status = AgentStatus.STOPPED
             agent.tmux_pane = None
@@ -1958,7 +1821,6 @@ class AgentDispatcher:
                 session_id=new_sid,
                 cli_sync=True,
                 tmux_pane=tmux_pane,
-                plan_approved=True,
                 last_message_preview=agent_name,
                 last_message_at=_utcnow(),
             )
@@ -2392,7 +2254,6 @@ class AgentDispatcher:
             # Recover agents
             alive_statuses = [
                 AgentStatus.IDLE, AgentStatus.EXECUTING,
-                AgentStatus.PLANNING, AgentStatus.PLAN_REVIEW,
                 AgentStatus.STARTING, AgentStatus.SYNCING,
             ]
             agents = db.query(Agent).filter(
@@ -2410,10 +2271,11 @@ class AgentDispatcher:
                 # Check if this CLI-synced agent has an active session
                 if agent.cli_sync and agent.session_id and agent.status in (
                     AgentStatus.SYNCING, AgentStatus.IDLE,
-                    AgentStatus.EXECUTING, AgentStatus.PLANNING,
+                    AgentStatus.EXECUTING,
                 ):
                     project = db.get(Project, agent.project)
                     if project:
+                        import time as _time
                         project_path = self.worker_mgr._get_project_path(
                             project.name
                         )
@@ -2421,16 +2283,25 @@ class AgentDispatcher:
                             _session_source_dir(project_path),
                             f"{agent.session_id}.jsonl",
                         )
-                        if (
-                            os.path.exists(jsonl_path)
-                            and not self._session_has_ended(jsonl_path)
-                        ):
-                            # CLI session is still active — sync it
-                            agent.status = AgentStatus.SYNCING
-                            # Re-detect tmux pane (may have changed)
+                        # Session is active only if: file exists, no result
+                        # event, AND either has a tmux pane or was recently written
+                        session_active = False
+                        if os.path.exists(jsonl_path) and not self._session_has_ended(jsonl_path):
                             pane = _detect_tmux_pane_for_session(
                                 agent.session_id, project_path
                             )
+                            if pane:
+                                session_active = True
+                            else:
+                                # No pane — only consider active if recently written
+                                try:
+                                    age = _time.time() - os.path.getmtime(jsonl_path)
+                                    session_active = age < 1800  # 30 min
+                                except OSError:
+                                    pass
+
+                        if session_active:
+                            agent.status = AgentStatus.SYNCING
                             agent.tmux_pane = pane
                             msg = Message(
                                 agent_id=agent.id,
@@ -2449,27 +2320,44 @@ class AgentDispatcher:
                             continue
 
                 if agent.status == AgentStatus.SYNCING:
-                    # Check if the CLI process is still alive
+                    # Check if this agent's own CLI process is still alive
                     project = db.get(Project, agent.project)
                     project_path = self.worker_mgr._get_project_path(project.name) if project else ""
-                    if project_path and _is_cli_session_alive(project_path, agent.tmux_pane):
-                        # Process alive — keep SYNCING and restart sync
-                        pane = _detect_tmux_pane_for_session(
-                            agent.session_id, project_path
-                        ) if agent.session_id else None
-                        agent.tmux_pane = pane
+
+                    # Try to find this agent's tmux pane
+                    if project_path and agent.session_id and not agent.tmux_pane:
+                        pane = _detect_tmux_pane_for_session(agent.session_id, project_path)
+                        if pane:
+                            agent.tmux_pane = pane
+
+                    alive = False
+                    if agent.tmux_pane:
+                        # Has a pane — check that specific pane
+                        alive = _is_cli_session_alive(project_path, agent.tmux_pane)
+                    elif project_path and agent.session_id:
+                        # No pane — check session file freshness (30min)
+                        import time as _time
+                        src_dir = _session_source_dir(project_path)
+                        jsonl_path = os.path.join(src_dir, f"{agent.session_id}.jsonl")
+                        try:
+                            age = _time.time() - os.path.getmtime(jsonl_path)
+                            alive = age < 1800
+                        except OSError:
+                            alive = False
+
+                    if alive:
                         if agent.session_id:
                             agents_to_sync.append(
                                 (agent.id, agent.session_id, project_path)
                             )
                         logger.info(
-                            "Agent %s CLI process alive — keeping SYNCING",
-                            agent.id,
+                            "Agent %s CLI process alive (pane=%s) — keeping SYNCING",
+                            agent.id, agent.tmux_pane,
                         )
                         continue
 
-                    # Process is dead — go IDLE
-                    agent.status = AgentStatus.IDLE
+                    # Process is dead or session stale — stop
+                    agent.status = AgentStatus.STOPPED
                     agent.tmux_pane = None
                     msg = Message(
                         agent_id=agent.id,
@@ -2480,7 +2368,7 @@ class AgentDispatcher:
                     db.add(msg)
                     continue
 
-                if agent.status in (AgentStatus.EXECUTING, AgentStatus.PLANNING):
+                if agent.status == AgentStatus.EXECUTING:
                     # Repair session JSONL if agent was mid-execution
                     if agent.session_id:
                         project = db.get(Project, agent.project)

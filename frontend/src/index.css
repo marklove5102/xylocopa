@@ -88,6 +88,10 @@
 
   /* Skeleton loading */
   .bg-skel { background-color: var(--color-skel); }
+
+  /* Hide scrollbar but keep scrolling */
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
 /* ── Global overflow prevention ── */

@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { createAgent, createProject } from "../lib/api";
+import { createAgent, launchTmuxAgent, createProject } from "../lib/api";
 import { MODEL_OPTIONS } from "../lib/constants";
 import ProjectSelector from "../components/ProjectSelector";
-import ModePicker from "../components/ModePicker";
 import WorktreePicker from "../components/WorktreePicker";
 import VoiceRecorder from "../components/VoiceRecorder";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
@@ -119,9 +118,10 @@ export default function NewPage({ theme, onToggleTheme }) {
 function NewAgentForm({ showToast, navigate }) {
   const [project, setProject] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState("AUTO");
   const [model, setModel] = useState(MODEL_OPTIONS[0].value);
   const [worktree, setWorktree] = useState(null);
+  const [syncMode, setSyncMode] = useState(true);
+  const [skipPermissions, setSkipPermissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef(null);
 
@@ -143,9 +143,14 @@ function NewAgentForm({ showToast, navigate }) {
     if (!prompt.trim()) { showToast("Enter a description.", "error"); return; }
     setSubmitting(true);
     try {
-      const agent = await createAgent({ project, prompt: prompt.trim(), mode, model, worktree });
-      showToast("Agent created!");
-      setTimeout(() => navigate(`/agents/${agent.id}`), 400);
+      if (syncMode) {
+        await launchTmuxAgent({ project, prompt: prompt.trim(), model, skip_permissions: skipPermissions });
+        showToast("Launched in tmux — will appear as syncing agent shortly");
+      } else {
+        const agent = await createAgent({ project, prompt: prompt.trim(), mode: "AUTO", model, worktree, skip_permissions: skipPermissions });
+        showToast("Agent created!");
+        setTimeout(() => navigate(`/agents/${agent.id}`), 400);
+      }
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
@@ -190,42 +195,66 @@ function NewAgentForm({ showToast, navigate }) {
         </div>
       </div>
 
-      <div className="rounded-xl bg-surface shadow-card p-4">
-        <label className="block text-sm font-medium text-label mb-3">Mode</label>
-        <ModePicker value={mode} onChange={setMode} />
-        <p className="text-xs text-dim mt-2">Interview: chat only. Plan: review before executing. Auto: execute immediately.</p>
-      </div>
-
-      <div className="rounded-xl bg-surface shadow-card p-4">
-        <label className="block text-sm font-medium text-label mb-3">Model</label>
-        <div className="grid grid-cols-3 gap-3">
-          {MODEL_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setModel(opt.value)}
-              className={`min-h-[44px] rounded-lg text-sm font-medium transition-colors ${
-                model === opt.value
-                  ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/20"
-                  : "bg-elevated text-body hover:bg-hover"
-              }`}
+      <div className="rounded-xl bg-surface shadow-card p-4 space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-label mb-3">Model</label>
+          <div className="grid grid-cols-3 gap-3">
+            {MODEL_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setModel(opt.value)}
+                className={`min-h-[44px] rounded-lg text-sm font-medium transition-colors ${
+                  model === opt.value
+                    ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/20"
+                    : "bg-elevated text-body hover:bg-hover"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2.5 cursor-pointer py-1">
+            <div
+              role="switch"
+              aria-checked={syncMode}
+              onClick={() => setSyncMode(!syncMode)}
+              className={`relative w-10 h-[22px] rounded-full transition-colors ${syncMode ? "bg-emerald-500" : "bg-elevated"}`}
             >
-              {opt.label}
-            </button>
-          ))}
+              <span className={`absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${syncMode ? "translate-x-[18px]" : ""}`} />
+            </div>
+            <span className="text-sm text-label">Sync agent</span>
+            <span className="text-xs text-dim">(tmux on host)</span>
+          </label>
+          <label className="flex items-center gap-2.5 cursor-pointer py-1">
+            <div
+              role="switch"
+              aria-checked={skipPermissions}
+              onClick={() => setSkipPermissions(!skipPermissions)}
+              className={`relative w-10 h-[22px] rounded-full transition-colors ${skipPermissions ? "bg-amber-500" : "bg-elevated"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${skipPermissions ? "translate-x-[18px]" : ""}`} />
+            </div>
+            <span className="text-sm text-label">Skip permissions</span>
+            <span className="text-xs text-dim">(auto-approve tool use)</span>
+          </label>
         </div>
       </div>
 
       <button
         type="submit"
         disabled={submitting || !project || !prompt.trim()}
-        className={`w-full min-h-[48px] rounded-lg text-base font-semibold transition-colors ${
+        className={`w-full min-h-[52px] rounded-xl text-base font-bold tracking-wide uppercase transition-all ${
           submitting || !project || !prompt.trim()
             ? "bg-elevated text-dim cursor-not-allowed"
-            : "bg-cyan-500 hover:bg-cyan-400 text-white shadow-md shadow-cyan-500/20"
+            : syncMode
+              ? "bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white shadow-lg shadow-emerald-500/25"
+              : "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-lg shadow-cyan-500/25"
         }`}
       >
-        {submitting ? "Creating Agent..." : "Create Agent"}
+        {submitting ? "Creating..." : syncMode ? "Launch Sync Agent" : "Create Agent"}
       </button>
     </form>
   );

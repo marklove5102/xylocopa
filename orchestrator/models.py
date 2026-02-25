@@ -74,8 +74,6 @@ class Task(Base):
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True
     )
-    plan: Mapped[str | None] = mapped_column(Text, nullable=True)
-    plan_approved: Mapped[bool] = mapped_column(Boolean, default=False)
     container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)  # stores pid_str
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     retries: Mapped[int] = mapped_column(Integer, default=0)
@@ -102,8 +100,6 @@ class Agent(Base):
     )
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     worktree: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    plan: Mapped[str | None] = mapped_column(Text, nullable=True)
-    plan_approved: Mapped[bool] = mapped_column(Boolean, default=False)
     session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cli_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     tmux_pane: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -113,6 +109,7 @@ class Agent(Base):
     unread_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)
+    skip_permissions: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class Message(Base):
