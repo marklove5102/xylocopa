@@ -397,8 +397,8 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       return;
     }
     if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id === id) {
-      // Clear streaming when agent is no longer executing
-      if (lastEvent.data.status !== "EXECUTING") {
+      // Clear streaming when agent is no longer executing/syncing
+      if (lastEvent.data.status !== "EXECUTING" && lastEvent.data.status !== "SYNCING") {
         setStreamingContent(null);
       }
       loadData();
@@ -672,11 +672,11 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           <PlanReviewBar onApprove={handleApprove} onReject={handleReject} />
         )}
 
-        {/* Streaming output or typing indicator while executing */}
-        {isExecuting && (
-          streamingContent
-            ? <StreamingBubble content={streamingContent} project={agent.project} />
-            : <TypingIndicator />
+        {/* Streaming output or typing indicator while executing/syncing */}
+        {(isExecuting || isSyncing) && (
+          streamingContent !== null
+            ? (streamingContent ? <StreamingBubble content={streamingContent} project={agent.project} /> : <TypingIndicator />)
+            : isExecuting ? <TypingIndicator /> : null
         )}
 
         <div ref={messagesEndRef} />

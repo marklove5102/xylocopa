@@ -1207,10 +1207,12 @@ class AgentDispatcher:
             _session_source_dir(project_path), f"{session_id}.jsonl"
         )
 
-        from websocket import emit_agent_update, emit_new_message
+        from websocket import emit_agent_stream, emit_agent_update, emit_new_message
 
         last_size = 0
         last_turn_count = 0
+        last_tail_hash = ""  # Hash of last turn content to detect updates
+        is_generating = False
 
         # Get the current file size and turn count so we only import new turns
         try:
@@ -1221,6 +1223,35 @@ class AgentDispatcher:
 
         initial_turns = _parse_session_turns(jsonl_path)
         last_turn_count = len(initial_turns)
+        if initial_turns:
+            last_tail_hash = str(len(initial_turns[-1][1]))
+
+        # Reconcile: update any existing DB messages whose content grew
+        # since they were first imported (e.g. assistant was mid-response).
+        db = SessionLocal()
+        try:
+            role_map = {"user": MessageRole.USER, "assistant": MessageRole.AGENT}
+            existing_msgs = db.query(Message).filter(
+                Message.agent_id == agent_id,
+                Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
+            ).order_by(Message.created_at).all()
+            updated = 0
+            for msg, (role, content) in zip(existing_msgs, initial_turns):
+                if role not in role_map:
+                    continue
+                if len(msg.content) < len(content):
+                    msg.content = content
+                    msg.completed_at = _utcnow()
+                    updated += 1
+            if updated:
+                db.commit()
+                self._emit(emit_new_message(agent_id, "sync"))
+                logger.info(
+                    "Reconciled %d stale messages for agent %s",
+                    updated, agent_id,
+                )
+        finally:
+            db.close()
 
         while True:
             await asyncio.sleep(POLL_INTERVAL)
@@ -1230,66 +1261,128 @@ class AgentDispatcher:
             except OSError:
                 continue
 
-            if current_size > last_size:
-                last_size = current_size
+            if current_size <= last_size:
+                continue
+            last_size = current_size
 
-                # Parse full file for new turns
-                turns = _parse_session_turns(jsonl_path)
-                new_turns = turns[last_turn_count:]
+            # Parse full file for turns
+            turns = _parse_session_turns(jsonl_path)
+            new_turns = turns[last_turn_count:]
 
-                if new_turns:
-                    db = SessionLocal()
-                    try:
-                        agent = db.get(Agent, agent_id)
-                        if not agent or agent.status != AgentStatus.SYNCING:
-                            break
+            # Check if the last existing turn's content grew (same turn count
+            # but the assistant accumulated more tool calls / text blocks)
+            tail_hash = str(len(turns[-1][1])) if turns else ""
+            last_turn_updated = (
+                not new_turns
+                and len(turns) == last_turn_count
+                and tail_hash != last_tail_hash
+                and turns
+                and turns[-1][0] == "assistant"
+            )
 
-                        for role, content in new_turns:
-                            if role == "user":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.USER,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    completed_at=_utcnow(),
-                                )
-                            elif role == "assistant":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.AGENT,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    completed_at=_utcnow(),
-                                )
-                            elif role == "system":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.SYSTEM,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    completed_at=_utcnow(),
-                                )
-                            else:
-                                continue
-                            db.add(msg)
+            if not new_turns and not last_turn_updated:
+                if not is_generating:
+                    is_generating = True
+                    self._emit(emit_agent_stream(agent_id, ""))
+                continue
 
-                        agent.last_message_preview = (new_turns[-1][1] or "")[:200]
+            db = SessionLocal()
+            try:
+                agent = db.get(Agent, agent_id)
+                if not agent or agent.status != AgentStatus.SYNCING:
+                    break
+
+                if last_turn_updated:
+                    # Update the last agent message in-place
+                    last_msg = db.query(Message).filter(
+                        Message.agent_id == agent_id,
+                        Message.role == MessageRole.AGENT,
+                    ).order_by(Message.created_at.desc()).first()
+                    if last_msg:
+                        last_msg.content = turns[-1][1]
+                        last_msg.completed_at = _utcnow()
+                        agent.last_message_preview = (turns[-1][1] or "")[:200]
                         agent.last_message_at = _utcnow()
-                        agent.unread_count += len(new_turns)
                         db.commit()
-
-                        self._emit(emit_agent_update(
-                            agent.id, agent.status.value, agent.project
-                        ))
                         self._emit(emit_new_message(agent.id, "sync"))
-
-                        last_turn_count = len(turns)
+                        last_tail_hash = tail_hash
+                        is_generating = False
                         logger.info(
-                            "Synced %d new turns for agent %s",
-                            len(new_turns), agent_id,
+                            "Updated last turn content for agent %s",
+                            agent_id,
                         )
-                    finally:
-                        db.close()
+                else:
+                    # Before importing new turns, check if the turn just
+                    # before the new ones grew (assistant was mid-response
+                    # last time, now finished and user sent a new message).
+                    if last_turn_count > 0 and new_turns:
+                        prev_role, prev_content = turns[last_turn_count - 1]
+                        if prev_role == "assistant":
+                            last_agent_msg = db.query(Message).filter(
+                                Message.agent_id == agent_id,
+                                Message.role == MessageRole.AGENT,
+                            ).order_by(Message.created_at.desc()).first()
+                            if (
+                                last_agent_msg
+                                and len(last_agent_msg.content) < len(prev_content)
+                            ):
+                                old_len = len(last_agent_msg.content)
+                                last_agent_msg.content = prev_content
+                                last_agent_msg.completed_at = _utcnow()
+                                logger.info(
+                                    "Updated previous turn content for agent %s "
+                                    "(%d -> %d chars)",
+                                    agent_id, old_len, len(prev_content),
+                                )
+
+                    # Import new turns
+                    for role, content in new_turns:
+                        if role == "user":
+                            msg = Message(
+                                agent_id=agent_id,
+                                role=MessageRole.USER,
+                                content=content,
+                                status=MessageStatus.COMPLETED,
+                                completed_at=_utcnow(),
+                            )
+                        elif role == "assistant":
+                            msg = Message(
+                                agent_id=agent_id,
+                                role=MessageRole.AGENT,
+                                content=content,
+                                status=MessageStatus.COMPLETED,
+                                completed_at=_utcnow(),
+                            )
+                        elif role == "system":
+                            msg = Message(
+                                agent_id=agent_id,
+                                role=MessageRole.SYSTEM,
+                                content=content,
+                                status=MessageStatus.COMPLETED,
+                                completed_at=_utcnow(),
+                            )
+                        else:
+                            continue
+                        db.add(msg)
+
+                    agent.last_message_preview = (new_turns[-1][1] or "")[:200]
+                    agent.last_message_at = _utcnow()
+                    agent.unread_count += len(new_turns)
+                    db.commit()
+
+                    last_turn_count = len(turns)
+                    last_tail_hash = tail_hash
+                    is_generating = False
+                    self._emit(emit_agent_update(
+                        agent.id, agent.status.value, agent.project
+                    ))
+                    self._emit(emit_new_message(agent.id, "sync"))
+                    logger.info(
+                        "Synced %d new turns for agent %s",
+                        len(new_turns), agent_id,
+                    )
+            finally:
+                db.close()
 
             # Check if the CLI session has ended by looking for a 'result' event
             if self._session_has_ended(jsonl_path):
