@@ -1371,6 +1371,49 @@ async def send_agent_message(
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is stopped")
+
+    # SYNCING agents with a tmux pane: send directly via tmux
+    is_syncing_with_tmux = (
+        agent.status == AgentStatus.SYNCING
+        and agent.tmux_pane
+        and not body.queue
+        and not body.scheduled_at
+    )
+    if is_syncing_with_tmux:
+        from agent_dispatcher import send_tmux_message, verify_tmux_pane
+
+        if not verify_tmux_pane(agent.tmux_pane):
+            agent.tmux_pane = None
+            db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="tmux pane no longer exists — use send later to queue",
+            )
+
+        ok = send_tmux_message(agent.tmux_pane, body.content)
+        if not ok:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send via tmux",
+            )
+
+        # Record the message as completed (it was sent directly)
+        msg = Message(
+            agent_id=agent.id,
+            role=MessageRole.USER,
+            content=body.content,
+            status=MessageStatus.COMPLETED,
+            source="web",
+            completed_at=_utcnow(),
+        )
+        db.add(msg)
+        agent.last_message_preview = body.content[:200]
+        agent.last_message_at = _utcnow()
+        db.commit()
+        db.refresh(msg)
+        logger.info("Message %s sent to agent %s via tmux pane %s", msg.id, agent.id, agent.tmux_pane)
+        return msg
+
     is_busy = agent.status in (AgentStatus.EXECUTING, AgentStatus.SYNCING)
     if is_busy and not body.queue:
         raise HTTPException(status_code=400, detail="Agent is busy — use send later to queue")
@@ -1588,11 +1631,29 @@ async def serve_project_file(project: str, path: str, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
 
     base_dir = os.path.realpath(proj.path)
-    full_path = os.path.realpath(os.path.join(base_dir, path))
+    base_name = os.path.basename(base_dir)
+
+    # Normalise the requested path:
+    # 1. Strip absolute project-path prefix (Claude sometimes prints full paths)
+    # 2. Strip leading project-directory-name prefix (e.g. "splitvla/file.webp"
+    #    when the project root is already splitvla/)
+    clean = path
+    if clean.startswith(base_dir + "/"):
+        clean = clean[len(base_dir) + 1:]
+    elif clean.startswith(base_name + "/"):
+        clean = clean[len(base_name) + 1:]
+
+    full_path = os.path.realpath(os.path.join(base_dir, clean))
     if not full_path.startswith(base_dir + os.sep):
         raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Fallback: try the original path as-is if normalised version doesn't exist
     if not os.path.isfile(full_path):
-        raise HTTPException(status_code=404, detail="File not found")
+        fallback = os.path.realpath(os.path.join(base_dir, path))
+        if fallback.startswith(base_dir + os.sep) and os.path.isfile(fallback):
+            full_path = fallback
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
 
     media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
     return FileResponse(full_path, media_type=media_type)

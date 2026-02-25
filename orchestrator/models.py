@@ -106,6 +106,7 @@ class Agent(Base):
     plan_approved: Mapped[bool] = mapped_column(Boolean, default=False)
     session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cli_sync: Mapped[bool] = mapped_column(Boolean, default=False)
+    tmux_pane: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_message_preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -130,6 +131,7 @@ class Message(Base):
     )
     stream_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "web" | "cli" | None
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

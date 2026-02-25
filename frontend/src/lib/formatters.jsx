@@ -88,7 +88,7 @@ export function renderMarkdown(text, project) {
       !imgMatch && line.trim().match(/^(\S+\.(png|jpg|jpeg|gif|svg|webp))$/i);
     if (imgMatch || plainImgMatch) {
       const src = imgMatch ? imgMatch[1] : plainImgMatch[1];
-      const cleanSrc = src.replace(/^\/projects\/[^/]+\//, "").replace(/^\/+/, "");
+      const cleanSrc = cleanProjectPath(src, project);
       const resolvedSrc = src.startsWith("http")
         ? src
         : `/api/files/${encodeURIComponent(project)}/${cleanSrc.split("/").map(encodeURIComponent).join("/")}`;
@@ -238,6 +238,31 @@ function tokenizeBoldItalic(text) {
   return tokens;
 }
 
+/**
+ * Normalise a file path relative to a project.
+ * Strips common prefixes that Claude outputs:
+ *  - /projects/{name}/...
+ *  - {project-name}/...  (e.g. "splitvla/file.webp" when project is "splitvla")
+ *  - absolute paths containing the project name
+ *  - leading slashes
+ */
+function cleanProjectPath(raw, project) {
+  let p = raw;
+  // /projects/{name}/...
+  p = p.replace(/^\/projects\/[^/]+\//, "");
+  // absolute path: strip everything up to and including project-name dir
+  if (project) {
+    const absRe = new RegExp(`^.*/` + project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + `/`);
+    p = p.replace(absRe, "");
+    // relative project-name prefix: "splitvla/file.webp" → "file.webp"
+    if (p.startsWith(project + "/")) {
+      p = p.slice(project.length + 1);
+    }
+  }
+  p = p.replace(/^\/+/, "");
+  return p;
+}
+
 // File extensions we detect for inline previews
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 const VIDEO_EXTS = /\.(mp4|webm|mov)$/i;
@@ -275,9 +300,7 @@ export function extractFileAttachments(text, project) {
 
   const addPath = (rawPath) => {
     if (!rawPath || !ALL_EXTS.test(rawPath)) return;
-    // Strip absolute /projects/{name}/ prefix
-    let path = rawPath.replace(/^\/projects\/[^/]+\//, "");
-    path = path.replace(/^\/+/, "");
+    let path = cleanProjectPath(rawPath, project);
     if (seen.has(path) || inlineRendered.has(rawPath)) return;
     seen.add(path);
 
