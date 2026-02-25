@@ -93,8 +93,12 @@ function AuthGuard({ children }) {
         .then((r) => {
           if (r.authenticated) {
             setAuthed(true);
-            // Auto-enable push notifications if supported and not yet set up
-            if (isPushSupported() && !isPushEnabled()) {
+            // Request notification permission for browser notifications
+            if (typeof Notification !== "undefined" && Notification.permission === "default") {
+              Notification.requestPermission().catch(() => {});
+            }
+            // Refresh push subscription on every load (handles Safari expiry)
+            if (isPushSupported()) {
               setupPushNotifications().catch(() => {});
             }
           } else {

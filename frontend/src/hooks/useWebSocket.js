@@ -1,6 +1,31 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { getAuthToken } from "../lib/api";
 
+/** Show a browser notification for relevant WebSocket events.
+ *  Only fires when the tab is hidden (user is elsewhere). */
+function showBrowserNotification(event) {
+  if (document.visibilityState === "visible") return;
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+
+  const d = event.data || {};
+  let title, body;
+
+  if (event.type === "agent_update") {
+    const s = d.status;
+    if (s === "IDLE") { title = "Agent done"; body = d.agent_id?.slice(0, 8); }
+    else if (s === "ERROR") { title = "Agent error"; body = d.agent_id?.slice(0, 8); }
+    else return; // Don't notify for EXECUTING/SYNCING transitions
+  } else {
+    return; // Only notify on agent status changes
+  }
+
+  try {
+    const n = new Notification(title, { body, tag: d.agent_id, renotify: true });
+    n.onclick = () => { window.focus(); n.close(); };
+    setTimeout(() => n.close(), 8000);
+  } catch { /* ignore */ }
+}
+
 /**
  * Auto-reconnecting WebSocket hook for real-time status updates.
  *
@@ -39,6 +64,7 @@ export default function useWebSocket() {
           const event = JSON.parse(e.data);
           if (event.type !== "pong") {
             setLastEvent(event);
+            showBrowserNotification(event);
           }
         } catch {
           // ignore non-JSON

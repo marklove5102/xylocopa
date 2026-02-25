@@ -40,13 +40,16 @@ export async function setupPushNotifications() {
     // Convert base64url to Uint8Array
     const applicationServerKey = urlBase64ToUint8Array(publicKey);
 
-    // Subscribe to push
-    const subscription = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey,
-    });
+    // Check for existing subscription first — re-subscribe if expired
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+    }
 
-    // Send subscription to backend
+    // Send subscription to backend (always, to handle endpoint rotation)
     const sub = subscription.toJSON();
     const postRes = await authedFetch("/api/push/subscribe", {
       method: "POST",
