@@ -1228,6 +1228,8 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is already stopped")
+    if agent.status == AgentStatus.SYNCING:
+        raise HTTPException(status_code=400, detail="Agent is syncing from CLI — stop the CLI session instead")
 
     agent.status = AgentStatus.STOPPED
 

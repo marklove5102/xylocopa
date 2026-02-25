@@ -20,8 +20,8 @@ export function relativeTime(dateStr) {
 
 /**
  * Extremely lightweight markdown-ish renderer.
- * Handles ## headers, fenced code blocks, inline code, bold, italic,
- * and image paths that look like local file references.
+ * Handles ## headers, fenced code blocks, tables, inline code, bold,
+ * italic, and image paths that look like local file references.
  */
 export function renderMarkdown(text, project) {
   if (!text) return null;
@@ -101,6 +101,54 @@ export function renderMarkdown(text, project) {
       );
       i++;
       continue;
+    }
+
+    // Markdown table
+    if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+      const tableRows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+        tableRows.push(lines[i].trim());
+        i++;
+      }
+      if (tableRows.length >= 2) {
+        // Parse header, separator, and body rows
+        const parseRow = (row) =>
+          row.split("|").slice(1, -1).map((c) => c.trim());
+        const header = parseRow(tableRows[0]);
+        // Skip separator row (|---|---|)
+        const isSep = (row) => /^[\s|:-]+$/.test(row);
+        const bodyStart = isSep(tableRows[1]) ? 2 : 1;
+        const bodyRows = tableRows.slice(bodyStart).filter((r) => !isSep(r));
+        elements.push(
+          <div key={elements.length} className="my-2 overflow-x-auto rounded-lg border border-divider">
+            <table className="min-w-full text-xs text-body">
+              <thead>
+                <tr className="bg-inset">
+                  {header.map((h, j) => (
+                    <th key={j} className="px-3 py-1.5 text-left font-semibold text-heading whitespace-nowrap border-b border-divider">
+                      {renderInline(h)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, ri) => (
+                  <tr key={ri} className={ri % 2 ? "bg-inset/50" : ""}>
+                    {parseRow(row).map((cell, ci) => (
+                      <td key={ci} className="px-3 py-1.5 whitespace-pre-wrap border-b border-divider last:border-b-0">
+                        {renderInline(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        continue;
+      }
+      // Fallback: not a real table, rewind
+      i -= tableRows.length;
     }
 
     // Empty line
