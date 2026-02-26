@@ -18,6 +18,7 @@ import { relativeTime, renderMarkdown, extractFileAttachments } from "../lib/for
 import FileAttachments from "../components/FilePreview";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName } from "../lib/constants";
 import VoiceRecorder from "../components/VoiceRecorder";
+import WaveformVisualizer from "../components/WaveformVisualizer";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { isNotificationsEnabled, setNotificationsEnabled, clearAgentNotified } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
@@ -537,21 +538,26 @@ function ChatInput({ onSend, onSendLater, disabled, disabledReason, isBusy, tmux
   return (
     <div className="pb-2 safe-area-pb-tight flex justify-center px-4">
       <div className="glass-bar-nav rounded-[28px] px-3 py-2.5 flex items-end gap-2 w-full relative" style={{ maxWidth: "24rem" }}>
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleBlur}
-          placeholder={tmuxMode ? "Send via tmux..." : isBusy ? "Queue a message..." : disabled ? disabledReason : "Type a message..."}
-          disabled={!canType}
-          rows={1}
-          className="flex-1 min-h-[40px] max-h-[160px] rounded-xl bg-transparent px-3 py-2.5 text-sm text-heading placeholder-hint resize-none focus:outline-none transition-colors disabled:opacity-50"
-        />
+        {voice.recording && voice.analyserNode ? (
+          <div className="flex-1 min-h-[40px] flex items-center px-3">
+            <WaveformVisualizer analyserNode={voice.analyserNode} className="flex-1 h-8" />
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
+            placeholder={tmuxMode ? "Send via tmux..." : isBusy ? "Queue a message..." : disabled ? disabledReason : "Type a message..."}
+            disabled={!canType}
+            rows={1}
+            className="flex-1 min-h-[40px] max-h-[160px] rounded-xl bg-transparent px-3 py-2.5 text-sm text-heading placeholder-hint resize-none focus:outline-none transition-colors disabled:opacity-50"
+          />
+        )}
         <VoiceRecorder
           recording={voice.recording}
           voiceLoading={voice.voiceLoading}
-          analyserNode={voice.analyserNode}
           micError={voice.micError || voiceError}
           onToggle={voice.toggleRecording}
         />
