@@ -498,6 +498,42 @@ async def system_stats():
     except Exception:
         stats["gpus"] = None
 
+    # AgentHive own process usage (uvicorn + vite)
+    try:
+        import psutil
+        proc = psutil.Process(os.getpid())
+        mem_mb = proc.memory_info().rss / (1024 * 1024)
+        cpu = proc.cpu_percent(interval=0)
+        # Include child processes (worker threads, etc.)
+        for child in proc.children(recursive=True):
+            try:
+                mem_mb += child.memory_info().rss / (1024 * 1024)
+                cpu += child.cpu_percent(interval=0)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        stats["agenthive"] = {
+            "mem_mb": round(mem_mb, 1),
+            "cpu_pct": round(cpu, 1),
+        }
+    except ImportError:
+        # Fallback without psutil — just read own process from /proc
+        try:
+            pid = os.getpid()
+            with open(f"/proc/{pid}/status") as f:
+                rss_kb = 0
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        rss_kb = int(line.split()[1])
+                        break
+            stats["agenthive"] = {
+                "mem_mb": round(rss_kb / 1024, 1),
+                "cpu_pct": 0,
+            }
+        except Exception:
+            stats["agenthive"] = None
+    except Exception:
+        stats["agenthive"] = None
+
     return stats
 
 
