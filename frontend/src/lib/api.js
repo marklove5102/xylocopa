@@ -152,6 +152,7 @@ export const mergeGitBranch = (project, branch) =>
 // --- System ---
 export const fetchSystemStats = () => request("/api/system/stats");
 export const fetchTokenUsage = () => request("/api/system/token-usage");
+export const restartServer = () => request("/api/system/restart", { method: "POST" });
 export const fetchProcesses = () => request("/api/processes");
 
 // --- Voice ---

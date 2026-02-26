@@ -537,6 +537,25 @@ async def system_stats():
     return stats
 
 
+@app.post("/api/system/restart")
+async def system_restart():
+    """Restart the AgentHive server.
+
+    Exits the process; the systemd service (Restart=always) will respawn it.
+    Returns a 200 before exiting so the frontend gets confirmation.
+    """
+    import signal
+
+    logger.warning("Restart requested via API — shutting down for systemd respawn")
+
+    async def _delayed_exit():
+        await asyncio.sleep(0.5)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_delayed_exit())
+    return {"status": "restarting"}
+
+
 @app.get("/api/system/token-usage")
 async def token_usage():
     """Query Claude API token usage via OAuth credentials."""
