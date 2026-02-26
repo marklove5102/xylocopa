@@ -708,7 +708,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           <VoiceRecorder
             recording={voice.recording}
             voiceLoading={voice.voiceLoading}
-            analyserNode={voice.analyserNode}
             micError={voice.micError}
             onToggle={voice.toggleRecording}
           />

@@ -188,7 +188,6 @@ function NewAgentForm({ showToast, navigate }) {
           <VoiceRecorder
             recording={voice.recording}
             voiceLoading={voice.voiceLoading}
-            analyserNode={voice.analyserNode}
             micError={voice.micError}
             onToggle={voice.toggleRecording}
           />
