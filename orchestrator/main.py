@@ -1560,11 +1560,15 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         capture_output=True, text=True,
     ).stdout.strip()
 
-    # Clear CLAUDECODE vars in the tmux session so Claude doesn't think
-    # it's running inside another Claude Code session (nesting detection).
+    # Clear environment vars in the tmux session:
+    # - CLAUDECODE / CLAUDE_CODE_ENTRYPOINT: prevents nesting detection
+    # - AGENTHIVE_MANAGED: prevents _is_orchestrator_process() from
+    #   misidentifying this tmux-launched claude as an orchestrator subprocess
+    #   (the server's systemd unit sets AGENTHIVE_MANAGED=1 which gets
+    #   inherited by tmux sessions spawned from subprocess.run)
     subprocess.run(
         ["tmux", "send-keys", "-t", pane_id,
-         "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT", "Enter"],
+         "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT AGENTHIVE_MANAGED", "Enter"],
         check=True,
     )
 
@@ -1610,9 +1614,10 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # detect session JSONL, and start sync.
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad and prompt:
-        asyncio.ensure_future(
+        launch_task = asyncio.ensure_future(
             _launch_tmux_background(ad, agent.id, pane_id, prompt, proj.path)
         )
+        ad.track_launch_task(agent.id, launch_task)
 
     logger.info(
         "Launched tmux claude session in pane %s for project %s (agent %s)",
@@ -1631,7 +1636,9 @@ async def _launch_tmux_background(
     3. Detect the session JSONL and start the sync loop
 
     On any failure, transitions the agent to ERROR so it doesn't stay
-    stuck in STARTING forever.
+    stuck in STARTING forever.  Handles cancellation gracefully so that
+    stopping the agent while the launch is in progress doesn't leave
+    zombie error transitions.
     """
     import subprocess
 
@@ -1656,93 +1663,98 @@ async def _launch_tmux_background(
             db.close()
         logger.warning("tmux launch failed for agent %s: %s", agent_id, reason)
 
-    # Step 1: Wait for Claude's TUI to fully load (up to 30s).
-    # Two phases:
-    #   a) Detect the claude process in the pane
-    #   b) Wait for the TUI input prompt (❯) to appear in the pane content
-    process_detected = False
-    for _ in range(30):
-        await asyncio.sleep(1)
-        pane_map = _build_tmux_claude_map()
-        if pane_id in pane_map and not pane_map[pane_id]["is_orchestrator"]:
-            process_detected = True
-            break
-    if not process_detected:
-        _mark_error("Claude TUI did not start in pane %s within 30s" % pane_id)
-        return
-
-    # Wait for the TUI input prompt to appear (up to 15s after process detected)
-    tui_ready = False
-    for _ in range(15):
-        await asyncio.sleep(1)
-        try:
-            capture = subprocess.run(
-                ["tmux", "capture-pane", "-t", pane_id, "-p"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if capture.returncode == 0 and "\u276f" in capture.stdout:
-                tui_ready = True
-                break
-        except (subprocess.TimeoutExpired, OSError):
-            continue
-    if not tui_ready:
-        _mark_error("Claude TUI input prompt did not appear in pane %s within 15s" % pane_id)
-        return
-
-    # Extra settle time — Ink's input handler may not be wired up
-    # immediately when ❯ first renders.
-    await asyncio.sleep(2)
-
-    # Step 2: Send the prompt
-    if not send_tmux_message(pane_id, prompt):
-        _mark_error("Failed to send prompt to tmux pane %s" % pane_id)
-        return
-    logger.info("Sent initial prompt to tmux pane %s for agent %s", pane_id, agent_id)
-
-    # Step 3: Wait for session JSONL to appear (up to 60s)
-    session_dir = session_source_dir(project_path)
-    session_id = None
-    for _ in range(60):
-        await asyncio.sleep(1)
-        try:
-            candidates = []
-            for fname in os.listdir(session_dir):
-                if not fname.endswith(".jsonl"):
-                    continue
-                fpath = os.path.join(session_dir, fname)
-                candidates.append((fname.replace(".jsonl", ""), os.path.getmtime(fpath)))
-            if candidates:
-                # Pick the most recently modified
-                candidates.sort(key=lambda x: x[1], reverse=True)
-                session_id = candidates[0][0]
-                break
-        except OSError:
-            continue
-
-    if not session_id:
-        _mark_error("No session JSONL appeared for agent %s" % agent_id)
-        return
-
-    # Update agent with session_id and transition to SYNCING
-    db = SessionLocal()
     try:
-        agent = db.get(Agent, agent_id)
-        if not agent or agent.status == AgentStatus.STOPPED:
+        # Step 1: Wait for Claude's TUI to fully load (up to 30s).
+        # Two phases:
+        #   a) Detect the claude process in the pane
+        #   b) Wait for the TUI input prompt (❯) to appear in the pane content
+        process_detected = False
+        for _ in range(30):
+            await asyncio.sleep(1)
+            pane_map = _build_tmux_claude_map()
+            if pane_id in pane_map and not pane_map[pane_id]["is_orchestrator"]:
+                process_detected = True
+                break
+        if not process_detected:
+            _mark_error("Claude TUI did not start in pane %s within 30s" % pane_id)
             return
-        agent.session_id = session_id
-        agent.status = AgentStatus.SYNCING
-        db.commit()
 
-        ad._emit(emit_agent_update(agent_id, "SYNCING", agent.project))
+        # Wait for the TUI input prompt to appear (up to 15s after process detected)
+        tui_ready = False
+        for _ in range(15):
+            await asyncio.sleep(1)
+            try:
+                capture = subprocess.run(
+                    ["tmux", "capture-pane", "-t", pane_id, "-p"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if capture.returncode == 0 and "\u276f" in capture.stdout:
+                    tui_ready = True
+                    break
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+        if not tui_ready:
+            _mark_error("Claude TUI input prompt did not appear in pane %s within 15s" % pane_id)
+            return
+
+        # Extra settle time — Ink's input handler may not be wired up
+        # immediately when ❯ first renders.
+        await asyncio.sleep(2)
+
+        # Step 2: Send the prompt
+        if not send_tmux_message(pane_id, prompt):
+            _mark_error("Failed to send prompt to tmux pane %s" % pane_id)
+            return
+        logger.info("Sent initial prompt to tmux pane %s for agent %s", pane_id, agent_id)
+
+        # Step 3: Wait for session JSONL to appear (up to 60s)
+        session_dir = session_source_dir(project_path)
+        session_id = None
+        for _ in range(60):
+            await asyncio.sleep(1)
+            try:
+                candidates = []
+                for fname in os.listdir(session_dir):
+                    if not fname.endswith(".jsonl"):
+                        continue
+                    fpath = os.path.join(session_dir, fname)
+                    candidates.append((fname.replace(".jsonl", ""), os.path.getmtime(fpath)))
+                if candidates:
+                    # Pick the most recently modified
+                    candidates.sort(key=lambda x: x[1], reverse=True)
+                    session_id = candidates[0][0]
+                    break
+            except OSError:
+                continue
+
+        if not session_id:
+            _mark_error("No session JSONL appeared for agent %s" % agent_id)
+            return
+
+        # Update agent with session_id and transition to SYNCING
+        db = SessionLocal()
+        try:
+            agent = db.get(Agent, agent_id)
+            if not agent or agent.status == AgentStatus.STOPPED:
+                return
+            agent.session_id = session_id
+            agent.status = AgentStatus.SYNCING
+            db.commit()
+
+            ad._emit(emit_agent_update(agent_id, "SYNCING", agent.project))
+        finally:
+            db.close()
+
+        # Start the session sync loop
+        ad.start_session_sync(agent_id, session_id, project_path)
+        logger.info(
+            "Started sync for launched tmux agent %s (session %s)",
+            agent_id, session_id[:12],
+        )
+    except asyncio.CancelledError:
+        logger.info("Launch task cancelled for agent %s", agent_id)
     finally:
-        db.close()
-
-    # Start the session sync loop
-    ad.start_session_sync(agent_id, session_id, project_path)
-    logger.info(
-        "Started sync for launched tmux agent %s (session %s)",
-        agent_id, session_id[:12],
-    )
+        ad._launch_tasks.pop(agent_id, None)
 
 
 @app.post("/api/agents/scan")
@@ -1839,10 +1851,11 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
     )
     db.add(msg)
 
-    # Cancel any active sync task
+    # Cancel any active sync or launch tasks
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
         ad._cancel_sync_task(agent.id)
+        ad._cancel_launch_task(agent.id)
 
     db.commit()
     db.refresh(agent)

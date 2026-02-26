@@ -398,15 +398,20 @@ def _get_session_pid(session_id: str) -> int | None:
 def _is_orchestrator_process(pid: int) -> bool:
     """Check if a PID is an orchestrator-spawned claude process.
 
-    Orchestrator-managed subprocesses (via WorkerManager) have the
-    AGENTHIVE_MANAGED=1 environment variable set.  Tmux-launched CLI
-    sessions (including those started from the web UI) do NOT have this
-    var, so they are correctly detected as sync candidates.
+    Orchestrator-managed subprocesses (via WorkerManager) always run with
+    ``--output-format stream-json`` in non-interactive mode.  Interactive
+    TUI sessions (tmux-launched from the web UI or started by the user on
+    the CLI) never use this flag.
+
+    We check /proc/{pid}/cmdline rather than the environment because the
+    systemd service sets AGENTHIVE_MANAGED=1 on the uvicorn server, and
+    that env var propagates to the tmux server and all panes, making
+    environment-based detection unreliable.
     """
     try:
-        with open(f"/proc/{pid}/environ", "r") as f:
-            environ = f.read()
-        return "AGENTHIVE_MANAGED=1" in environ
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = f.read().decode("utf-8", errors="replace")
+        return "--output-format" in cmdline
     except OSError:
         return False
 
@@ -684,6 +689,9 @@ class AgentDispatcher:
 
         # CLI session sync tasks: agent_id -> asyncio.Task
         self._sync_tasks: dict[str, asyncio.Task] = {}
+
+        # Tmux launch background tasks: agent_id -> asyncio.Task
+        self._launch_tasks: dict[str, asyncio.Task] = {}
 
         # CLI auto-detect tick counter (run every ~30s, not every 2s tick)
         self._cli_detect_counter = 0
@@ -1629,12 +1637,13 @@ class AgentDispatcher:
                     except OSError:
                         alive = False
 
-            # For STARTING agents without pane or session_id, give them
-            # a grace period (60s) for the background task to set things up.
+            # For STARTING agents without a session_id, give them a grace
+            # period (60s) for the background task to set things up.
+            # This covers both orchestrator-spawned and tmux-launched agents
+            # where Claude TUI may still be loading.
             if (
                 not alive
                 and agent.status == AgentStatus.STARTING
-                and not agent.tmux_pane
                 and not agent.session_id
             ):
                 created = agent.created_at
@@ -1679,6 +1688,7 @@ class AgentDispatcher:
             agent.status = AgentStatus.STOPPED
             agent.tmux_pane = None
             self._cancel_sync_task(agent.id)
+            self._cancel_launch_task(agent.id)
             self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
 
     # ---- Streaming output ----
@@ -1827,6 +1837,17 @@ class AgentDispatcher:
     def _cancel_sync_task(self, agent_id: str):
         """Cancel and clean up a sync task."""
         task = self._sync_tasks.pop(agent_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def track_launch_task(self, agent_id: str, task: asyncio.Task):
+        """Track a tmux launch background task so it can be cancelled."""
+        self._cancel_launch_task(agent_id)
+        self._launch_tasks[agent_id] = task
+
+    def _cancel_launch_task(self, agent_id: str):
+        """Cancel and clean up a launch background task."""
+        task = self._launch_tasks.pop(agent_id, None)
         if task and not task.done():
             task.cancel()
 
