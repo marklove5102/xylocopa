@@ -924,7 +924,6 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   let disabledReason = "";
   if (isStopped) disabledReason = "Agent is stopped — click Resume to restart";
   else if (isError) disabledReason = "Agent errored — click Resume to restart";
-  else if (isSyncing && !hasTmux) disabledReason = "Syncing from CLI session...";
 
   return (
     <div className="flex flex-col h-full">
@@ -1126,9 +1125,9 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       <ChatInput
         onSend={handleSend}
         onSendLater={handleSendLater}
-        disabled={isStopped || isError || (isSyncing && !hasTmux)}
+        disabled={isStopped || isError}
         disabledReason={disabledReason}
-        isBusy={isExecuting}
+        isBusy={isExecuting || (isSyncing && !hasTmux)}
         tmuxMode={hasTmux}
       />
 
