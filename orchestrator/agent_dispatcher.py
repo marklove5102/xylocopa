@@ -260,6 +260,26 @@ def _detect_session_model(jsonl_path: str) -> str | None:
     return None
 
 
+import re as _re
+
+_PREAMBLE_RE = _re.compile(
+    r"^You are working in project: .+?\n"
+    r"Project path: .+?\n\n"
+    r"First read the project's CLAUDE\.md to understand project conventions\.\n\n",
+    _re.DOTALL,
+)
+_POSTAMBLE_RE = _re.compile(
+    r"\n\nIf you make code changes, commit with message format: \[agent-[0-9a-f]+\] short description$"
+)
+
+
+def _strip_agent_preamble(content: str) -> str:
+    """Strip orchestrator-injected preamble/postamble from user messages."""
+    text = _PREAMBLE_RE.sub("", content)
+    text = _POSTAMBLE_RE.sub("", text)
+    return text.strip() if text != content else content
+
+
 def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str]]:
     """Parse a Claude Code session JSONL into conversation turns.
 
@@ -318,7 +338,8 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str]]:
                     turns.append(("system", content))
                     continue
                 flush_assistant()
-                turns.append(("user", content))
+                clean = _strip_agent_preamble(stripped)
+                turns.append(("user", clean))
             # list content = tool_result, skip (belongs to assistant turn)
 
         elif entry_type == "assistant":
@@ -345,7 +366,8 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str]]:
                 queued_content = entry.get("content", "")
                 if isinstance(queued_content, str) and queued_content.strip():
                     flush_assistant()
-                    turns.append(("user", queued_content.strip()))
+                    clean_q = _strip_agent_preamble(queued_content.strip())
+                    turns.append(("user", clean_q))
 
         elif entry_type == "system":
             # Use structured fields from JSONL (subtype, content)
