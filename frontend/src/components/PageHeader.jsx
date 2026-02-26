@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
+import { restartServer } from "../lib/api";
 
 const SunIcon = (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -16,6 +18,7 @@ const MoonIcon = (
 export default function PageHeader({ title, theme, onToggleTheme, actions, children }) {
   const navigate = useNavigate();
   const health = useHealthStatus();
+  const [restarting, setRestarting] = useState(false);
 
   const isHealthy = health && health.status === "ok" && health.db === "ok" && health.claude_cli === "ok";
   const chipCls = health === null
@@ -39,6 +42,23 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, child
         >
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
           {chipLabel}
+        </button>
+        <button
+          type="button"
+          title="Restart AgentHive"
+          disabled={restarting}
+          onClick={async () => {
+            if (!confirm("Restart AgentHive server?")) return;
+            setRestarting(true);
+            try {
+              await restartServer();
+            } catch {}
+          }}
+          className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${restarting ? "text-amber-400 animate-spin" : "text-dim hover:text-heading hover:bg-input"}`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
         </button>
         {onToggleTheme && (
           <button
