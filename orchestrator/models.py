@@ -99,6 +99,7 @@ class Agent(Base):
     cli_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     tmux_pane: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    effort: Mapped[str | None] = mapped_column(String(10), nullable=True)
     last_message_preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     unread_count: Mapped[int] = mapped_column(Integer, default=0)

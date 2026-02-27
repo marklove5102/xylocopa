@@ -118,8 +118,11 @@ export const scanAgents = () =>
   request("/api/agents/scan", { method: "POST" });
 export const stopAgent = (id) =>
   request(`/api/agents/${id}`, { method: "DELETE" });
-export const resumeAgent = (id) =>
-  request(`/api/agents/${id}/resume`, { method: "POST" });
+export const resumeAgent = (id, body = null) =>
+  request(`/api/agents/${id}/resume`, {
+    method: "POST",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
 export const fetchMessages = (agentId, limit = 100) =>
   request(`/api/agents/${agentId}/messages?limit=${limit}`);
 export const sendMessage = (agentId, content, { queue = false, scheduled_at = null } = {}) =>
@@ -136,6 +139,15 @@ export const updateMessage = (agentId, messageId, data) =>
     method: "PUT",
     body: JSON.stringify(data),
   });
+// --- Message search ---
+export const searchMessages = (query, { project, role, limit } = {}) => {
+  const params = new URLSearchParams({ q: query });
+  if (project) params.set("project", project);
+  if (role) params.set("role", role);
+  if (limit) params.set("limit", String(limit));
+  return request(`/api/messages/search?${params}`);
+};
+
 // --- Health ---
 export const fetchHealth = () => request("/api/health");
 
@@ -185,4 +197,15 @@ export async function transcribeVoice(audioBlob, mimeType) {
     throw new Error(body?.detail || `Voice API error (${res.status})`);
   }
   return res.json();
+}
+
+export async function generateWorktreeName(prompt) {
+  const res = await authedFetch("/api/worktree-name", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.name || null;
 }

@@ -1,6 +1,7 @@
 """AgentHive — FastAPI entry point."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -20,7 +21,7 @@ from starlette.responses import JSONResponse
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from config import AUTH_TIMEOUT_MINUTES, CC_MODEL, PROJECT_CONFIGS_PATH
+from config import AUTH_TIMEOUT_MINUTES, CC_MODEL, OPENAI_API_KEY, PROJECT_CONFIGS_PATH
 from database import SessionLocal, get_db, init_db
 from log_config import setup_logging
 from models import (
@@ -41,6 +42,8 @@ from schemas import (
     AgentTaskDetail,
     HealthResponse,
     MessageOut,
+    MessageSearchResponse,
+    MessageSearchResult,
     ProjectCreate,
     ProjectOut,
     ProjectRename,
@@ -85,6 +88,14 @@ def _effective_task_status(msg: Message, agent: Agent) -> str:
     if agent.status == AgentStatus.STOPPED:
         return "CANCELLED"
     return "PENDING"
+
+
+def _compute_successor_id(agent_id: str, db: Session) -> str | None:
+    """Return the ID of the most recent successor agent, if any."""
+    successor = db.query(Agent).filter(
+        Agent.parent_id == agent_id,
+    ).order_by(Agent.created_at.desc()).first()
+    return successor.id if successor else None
 
 
 _RESERVED_FOLDER_NAMES = {"trash", "folders"}
@@ -144,6 +155,21 @@ def load_registry(db: Session):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
+    import socket
+
+    port = int(os.environ.get("PORT", 8080))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+        except OSError:
+            logger.error(
+                "Port %d already in use — another instance may be running. "
+                "Exiting to avoid conflicts.",
+                port,
+            )
+            yield
+            return
+
     logger.info("AgentHive starting up...")
     init_db()
     logger.info("Database initialized")
@@ -212,6 +238,8 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.exception("Background task raised during shutdown")
     if dispatch_task:
         dispatcher.stop()
     if agent_dispatch_task:
@@ -541,18 +569,38 @@ async def system_stats():
 async def system_restart():
     """Restart the AgentHive server.
 
-    Exits the process; the systemd service (Restart=always) will respawn it.
+    Spawns a new instance via run.sh, then exits the current process.
     Returns a 200 before exiting so the frontend gets confirmation.
     """
     import signal
+    import subprocess as _sp
 
-    logger.warning("Restart requested via API — shutting down for systemd respawn")
+    logger.warning("Restart requested via API — spawning new instance and exiting")
 
-    async def _delayed_exit():
+    # Resolve project root (one level up from orchestrator/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    run_script = os.path.join(project_root, "run.sh")
+
+    async def _delayed_restart():
         await asyncio.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        # Spawn a wrapper that waits for us to die, then starts run.sh
+        my_pid = os.getpid()
+        log_path = os.path.join(project_root, "logs", "server.log")
+        _sp.Popen(
+            [
+                "bash", "-c",
+                f'while kill -0 {my_pid} 2>/dev/null; do sleep 0.2; done; '
+                f'exec bash "{run_script}" >> "{log_path}" 2>&1',
+            ],
+            cwd=project_root,
+            start_new_session=True,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+        )
+        await asyncio.sleep(0.2)
+        os.kill(my_pid, signal.SIGTERM)
 
-    asyncio.create_task(_delayed_exit())
+    asyncio.create_task(_delayed_restart())
     return {"status": "restarting"}
 
 
@@ -1421,6 +1469,50 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 
 # ---- Agents ----
 
+def _generate_worktree_name_local(prompt: str) -> str:
+    """Generate a short branch-style worktree name from the prompt (no API)."""
+    words = re.sub(r"[^a-zA-Z0-9\s]", "", prompt).lower().split()
+    skip = {"the", "a", "an", "to", "in", "on", "for", "and", "or", "is", "it", "of", "with", "my", "me", "i", "this", "that", "please", "can", "you", "do", "make", "let"}
+    words = [w for w in words if w not in skip][:4]
+    return "-".join(words) if words else "task"
+
+
+@app.post("/api/worktree-name")
+async def generate_worktree_name(request: Request):
+    """Generate a short branch name from a prompt using GPT-4o-mini."""
+    body = await request.json()
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        return {"name": "task"}
+
+    if not OPENAI_API_KEY:
+        return {"name": _generate_worktree_name_local(prompt)}
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "Generate a short git branch name (kebab-case, lowercase, "
+                    "3-5 words, no special chars) summarizing the task. "
+                    "Reply with ONLY the branch name, nothing else."
+                )},
+                {"role": "user", "content": prompt[:500]},
+            ],
+            max_tokens=30,
+            temperature=0.3,
+        )
+        name = resp.choices[0].message.content.strip().lower()
+        name = re.sub(r"[^a-z0-9-]", "-", name).strip("-")
+        name = re.sub(r"-+", "-", name)
+        return {"name": name or _generate_worktree_name_local(prompt)}
+    except Exception as e:
+        logger.warning("Worktree name generation failed: %s", e)
+        return {"name": _generate_worktree_name_local(prompt)}
+
+
 @app.post("/api/agents", response_model=AgentOut, status_code=201)
 async def create_agent(body: AgentCreate, request: Request, db: Session = Depends(get_db)):
     """Create a new agent with an initial message."""
@@ -1442,13 +1534,24 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
     is_sync = body.sync_session and body.resume_session_id
     initial_status = AgentStatus.SYNCING if is_sync else AgentStatus.STARTING
 
+    # Pre-generate agent ID so we can use it for worktree naming
+    import uuid
+    agent_id = uuid.uuid4().hex[:12]
+
+    # Resolve worktree name: "auto" → GPT-generated branch name
+    wt = body.worktree
+    if wt == "auto":
+        wt = _generate_worktree_name_local(body.prompt)
+
     agent = Agent(
+        id=agent_id,
         project=body.project,
         name=name,
         mode=body.mode,
         status=initial_status,
         model=agent_model,
-        worktree=body.worktree,
+        effort=body.effort,
+        worktree=wt,
         timeout_seconds=body.timeout_seconds,
         session_id=body.resume_session_id,
         cli_sync=bool(is_sync),
@@ -1513,6 +1616,8 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     project_name = body.get("project")
     prompt = body.get("prompt", "").strip()
     model = body.get("model")
+    effort = body.get("effort")
+    worktree = body.get("worktree")
     skip_permissions = body.get("skip_permissions", True)
 
     if not project_name:
@@ -1524,6 +1629,15 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     if not os.path.isdir(proj.path):
         raise HTTPException(status_code=400, detail="Project directory not found on disk")
 
+    # Each agent gets its own tmux session: "ah-{agent_id_prefix}"
+    # Pre-generate agent ID so we can use it in the session name
+    import secrets
+    agent_hex = secrets.token_hex(6)
+
+    # Resolve worktree name: "auto" → GPT-generated branch name
+    if worktree == "auto" and prompt:
+        worktree = _generate_worktree_name_local(prompt)
+
     # Build the claude command in INTERACTIVE mode (no -p, so the user
     # gets the full TUI and can attach via tmux).
     cmd_parts = [CLAUDE_BIN]
@@ -1531,15 +1645,12 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         cmd_parts.append("--dangerously-skip-permissions")
     if model:
         cmd_parts += ["--model", model]
+    if effort:
+        cmd_parts += ["--effort", effort]
+    if worktree:
+        cmd_parts += ["--worktree", worktree]
     claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
-
-    # Each agent gets its own tmux session: "project-HHMM-subject"
-    now = datetime.now(timezone.utc)
-    time_tag = now.strftime("%H%M")
-    subject = (prompt or "claude")[:30]
-    # Clean for tmux session name: no dots, colons, or spaces
-    subject_clean = re.sub(r'[^a-zA-Z0-9_-]', '-', subject).strip('-')[:30]
-    tmux_session = f"{project_name}-{time_tag}-{subject_clean}"
+    tmux_session = f"ah-{agent_hex[:8]}"
 
     # Create a new detached tmux session for this agent
     subprocess.run(
@@ -1573,6 +1684,7 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # Create Agent record immediately so the frontend can navigate to it.
     agent_name = (prompt or "CLI session")[:80]
     agent = Agent(
+        id=agent_hex,
         project=project_name,
         name=agent_name,
         mode=AgentMode.AUTO,
@@ -1580,6 +1692,8 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         model=model or proj.default_model,
         cli_sync=True,
         tmux_pane=pane_id,
+        effort=effort if effort else None,
+        worktree=worktree if worktree else None,
         skip_permissions=skip_permissions,
         last_message_preview=agent_name,
         last_message_at=datetime.now(timezone.utc),
@@ -1790,6 +1904,67 @@ async def agents_unread_count(db: Session = Depends(get_db)):
     return {"unread": int(total)}
 
 
+@app.get("/api/messages/search", response_model=MessageSearchResponse)
+async def search_messages(
+    q: str,
+    project: str | None = None,
+    role: MessageRole | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """Full-text search across all message content."""
+    if len(q) < 2:
+        raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+    if limit > 200:
+        limit = 200
+
+    # Escape LIKE wildcards in user input
+    safe_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    from sqlalchemy import or_
+    query = (
+        db.query(Message, Agent.name, Agent.project)
+        .join(Agent, Message.agent_id == Agent.id)
+        .filter(or_(
+            Message.content.ilike(f"%{safe_q}%", escape="\\"),
+            Agent.id.ilike(f"%{safe_q}%", escape="\\"),
+            Agent.name.ilike(f"%{safe_q}%", escape="\\"),
+        ))
+    )
+    if project:
+        query = query.filter(Agent.project == project)
+    if role:
+        query = query.filter(Message.role == role)
+
+    total = query.count()
+    rows = query.order_by(Message.created_at.desc()).limit(limit).all()
+
+    results = []
+    for msg, agent_name, agent_project in rows:
+        # Build snippet: ~80 chars before and after first match
+        content = msg.content or ""
+        lower = content.lower()
+        idx = lower.find(q.lower())
+        if idx >= 0:
+            start = max(0, idx - 80)
+            end = min(len(content), idx + len(q) + 80)
+            snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+        else:
+            snippet = content[:160] + ("..." if len(content) > 160 else "")
+
+        results.append(MessageSearchResult(
+            message_id=msg.id,
+            agent_id=msg.agent_id,
+            agent_name=agent_name,
+            project=agent_project,
+            role=msg.role,
+            content_snippet=snippet,
+            created_at=msg.created_at,
+        ))
+
+    return MessageSearchResponse(results=results, total=total)
+
+
 @app.get("/api/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, db: Session = Depends(get_db)):
     """Get full agent details."""
@@ -1797,8 +1972,9 @@ async def get_agent(agent_id: str, db: Session = Depends(get_db)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # Compute live session file size
+    # Compute live session file size + successor link
     result = AgentOut.model_validate(agent)
+    result.successor_id = _compute_successor_id(agent.id, db)
     if agent.session_id:
         project = db.get(Project, agent.project)
         if project:
@@ -1880,6 +2056,21 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     if agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
         raise HTTPException(status_code=400, detail="Agent is already running")
 
+    # Block resume if this agent was superseded by a successor
+    successor = db.query(Agent).filter(
+        Agent.parent_id == agent.id,
+    ).order_by(Agent.created_at.desc()).first()
+    if successor:
+        raise HTTPException(
+            status_code=409,
+            detail=json.dumps({
+                "reason": "superseded",
+                "successor_id": successor.id,
+                "successor_name": successor.name,
+                "message": "This agent was continued by a new agent. Open the successor instead.",
+            }),
+        )
+
     project = db.get(Project, agent.project)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1890,6 +2081,14 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     if not wm:
         raise HTTPException(status_code=500, detail="Worker manager not available")
 
+    # Parse optional body for cli_sync resume mode
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    resume_mode = body.get("mode")  # "tmux" | "normal" | None
+
     try:
         wm.ensure_project_ready(project)
 
@@ -1899,9 +2098,57 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         if ad:
             ad._stale_session_retries.pop(agent.id, None)
 
-        # For cli_sync agents with a session, try to re-establish sync
         resumed_sync = False
-        if agent.cli_sync and agent.session_id and ad:
+
+        if agent.cli_sync and resume_mode == "normal":
+            # Convert to normal (non-sync) agent
+            agent.cli_sync = False
+            agent.tmux_pane = None
+            agent.status = AgentStatus.IDLE
+        elif agent.cli_sync and resume_mode == "tmux":
+            # Launch a new tmux session and resume the CLI session in it
+            import shlex
+            import subprocess
+            from config import CLAUDE_BIN
+
+            cmd_parts = [CLAUDE_BIN]
+            if agent.skip_permissions:
+                cmd_parts.append("--dangerously-skip-permissions")
+            if agent.model:
+                cmd_parts += ["--model", agent.model]
+            if agent.session_id:
+                cmd_parts += ["--resume", agent.session_id]
+            claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+
+            tmux_session = f"ah-{agent.id[:8]}"
+
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", tmux_session,
+                 "-c", project.path],
+                check=True,
+            )
+            pane_id = subprocess.run(
+                ["tmux", "display-message", "-t", tmux_session, "-p", "#{pane_id}"],
+                capture_output=True, text=True,
+            ).stdout.strip()
+
+            subprocess.run(
+                ["tmux", "send-keys", "-t", pane_id,
+                 "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT AGENTHIVE_MANAGED", "Enter"],
+                check=True,
+            )
+            subprocess.run(
+                ["tmux", "send-keys", "-t", pane_id, claude_cmd, "Enter"],
+                check=True,
+            )
+
+            agent.tmux_pane = pane_id
+            agent.status = AgentStatus.SYNCING
+            if agent.session_id and ad:
+                ad.start_session_sync(agent.id, agent.session_id, project.path)
+            resumed_sync = True
+        elif agent.cli_sync and agent.session_id and ad:
+            # Default: try to re-establish sync with existing tmux pane
             from agent_dispatcher import _detect_tmux_pane_for_session
             from session_cache import session_source_dir
 
@@ -1918,7 +2165,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
                 ad.start_session_sync(agent.id, agent.session_id, project.path)
                 resumed_sync = True
 
-        if not resumed_sync:
+        if not resumed_sync and agent.status not in (AgentStatus.IDLE, AgentStatus.SYNCING):
             agent.status = AgentStatus.IDLE
 
         msg = Message(
@@ -1930,8 +2177,10 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         db.add(msg)
         db.commit()
         db.refresh(agent)
-        logger.info("Agent %s resumed (sync=%s)", agent.id, resumed_sync)
+        logger.info("Agent %s resumed (sync=%s, mode=%s)", agent.id, resumed_sync, resume_mode)
         return agent
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to resume agent %s", agent.id)
         raise HTTPException(status_code=500, detail=f"Failed to verify project directory: {e}")

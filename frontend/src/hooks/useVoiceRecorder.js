@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { transcribeVoice } from "../lib/api";
 
-const MAX_RECORDING_MS = 60000; // 60 seconds
+const MAX_RECORDING_MS = 300000; // 5 minutes
 
 /**
  * Voice recording hook with AnalyserNode for waveform visualisation.

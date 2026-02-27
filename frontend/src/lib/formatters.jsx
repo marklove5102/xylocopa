@@ -24,7 +24,9 @@ export function relativeTime(dateStr) {
  * italic, and image paths that look like local file references.
  */
 export function renderMarkdown(text, project) {
-  if (!text) return null;
+  if (typeof text !== "string" || !text) return null;
+  project = project || "";
+  try {
   // We import React implicitly via JSX transform
   const lines = text.split("\n");
   const elements = [];
@@ -169,10 +171,56 @@ export function renderMarkdown(text, project) {
   }
 
   return <div className="space-y-0.5">{elements}</div>;
+  } catch (e) {
+    console.error("renderMarkdown error:", e);
+    return <pre className="text-sm text-body whitespace-pre-wrap">{text}</pre>;
+  }
+}
+
+// Agent IDs are 12-char hex strings. Match them as whole tokens
+// (bounded by word boundaries or common delimiters).
+const AGENT_ID_RE = /\b([0-9a-f]{12})\b/g;
+
+/** Linkify agent IDs in a plain text string, returning an array of React elements. */
+function linkifyAgentIds(text, keyPrefix) {
+  const parts = [];
+  let last = 0;
+  let m;
+  AGENT_ID_RE.lastIndex = 0;
+  while ((m = AGENT_ID_RE.exec(text)) !== null) {
+    if (m.index > last) {
+      parts.push(<span key={`${keyPrefix}-t${last}`}>{text.slice(last, m.index)}</span>);
+    }
+    const agentId = m[1];
+    parts.push(
+      <a
+        key={`${keyPrefix}-a${m.index}`}
+        href={`/agents/${agentId}`}
+        className="text-cyan-400 hover:underline font-mono"
+        onClick={(e) => { e.stopPropagation(); }}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          navigator.clipboard.writeText(agentId);
+        }}
+        title="Click to open, double-tap to copy"
+      >
+        {agentId}
+      </a>
+    );
+    last = AGENT_ID_RE.lastIndex;
+  }
+  if (last === 0) return null; // no IDs found — caller uses plain text
+  if (last < text.length) {
+    parts.push(<span key={`${keyPrefix}-t${last}`}>{text.slice(last)}</span>);
+  }
+  return parts;
 }
 
 /** Inline formatting: bold, italic, inline code. Uses React elements only (no innerHTML). */
 export function renderInline(text) {
+  if (typeof text !== "string" || !text) return null;
+  try {
   // Split on inline code first, then handle bold/italic within non-code segments
   const codeParts = text.split(/(`[^`]+`)/g);
   const elements = [];
@@ -180,12 +228,14 @@ export function renderInline(text) {
   for (let i = 0; i < codeParts.length; i++) {
     const part = codeParts[i];
     if (part.startsWith("`") && part.endsWith("`")) {
+      const inner = part.slice(1, -1);
+      const linked = linkifyAgentIds(inner, `c${i}`);
       elements.push(
         <code
           key={i}
           className="px-1 py-0.5 rounded bg-input text-cyan-300 text-xs font-mono"
         >
-          {part.slice(1, -1)}
+          {linked || inner}
         </code>
       );
     } else {
@@ -194,18 +244,23 @@ export function renderInline(text) {
       for (let j = 0; j < tokens.length; j++) {
         const token = tokens[j];
         const key = `${i}-${j}`;
+        const linked = linkifyAgentIds(token.text, key);
         if (token.type === "bold") {
-          elements.push(<strong key={key}>{token.text}</strong>);
+          elements.push(<strong key={key}>{linked || token.text}</strong>);
         } else if (token.type === "italic") {
-          elements.push(<em key={key}>{token.text}</em>);
+          elements.push(<em key={key}>{linked || token.text}</em>);
         } else {
-          elements.push(<span key={key}>{token.text}</span>);
+          elements.push(<span key={key}>{linked || token.text}</span>);
         }
       }
     }
   }
 
   return elements;
+  } catch (e) {
+    console.error("renderInline error:", e);
+    return <span>{text}</span>;
+  }
 }
 
 /**

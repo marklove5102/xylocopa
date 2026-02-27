@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchAgents, stopAgent, scanAgents } from "../lib/api";
+import { fetchAgents, stopAgent, scanAgents, searchMessages } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName } from "../lib/constants";
 import BotIcon from "../components/BotIcon";
@@ -139,6 +139,34 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
+  // Message content search
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    const q = search.trim();
+    if (q.length < 2) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchTimerRef.current = setTimeout(() => {
+      searchMessages(q)
+        .then((data) => {
+          setSearchResults(data);
+          setSearchLoading(false);
+        })
+        .catch(() => {
+          setSearchResults(null);
+          setSearchLoading(false);
+        });
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [search]);
+
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -179,6 +207,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     ? statusFiltered.filter((a) => {
         const q = search.toLowerCase();
         return (
+          a.id?.toLowerCase().includes(q) ||
           a.name?.toLowerCase().includes(q) ||
           a.project?.toLowerCase().includes(q) ||
           a.last_message_preview?.toLowerCase().includes(q)
@@ -328,7 +357,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search agents..."
+            placeholder="Search agents & messages..."
             className="w-full h-9 pl-9 pr-8 rounded-lg bg-surface border border-divider text-sm text-body placeholder-hint focus:outline-none focus:ring-1 focus:ring-cyan-500"
           />
           {search && (
@@ -344,6 +373,66 @@ export default function AgentsPage({ theme, onToggleTheme }) {
           )}
         </div>
       </div>
+
+      {/* Message search results */}
+      {search.trim().length >= 2 && (
+        <div className="px-4 py-2">
+          {searchLoading && (
+            <p className="text-xs text-dim animate-pulse">Searching messages...</p>
+          )}
+          {searchResults && searchResults.results && searchResults.results.length > 0 && (
+            <div className="space-y-1 mb-2">
+              <p className="text-xs text-dim font-medium">
+                {searchResults.total} message{searchResults.total !== 1 ? "s" : ""} found
+              </p>
+              {/* Group results by agent */}
+              {Object.entries(
+                searchResults.results.reduce((acc, r) => {
+                  const key = r.agent_id;
+                  if (!acc[key]) acc[key] = { agent_name: r.agent_name, project: r.project, items: [] };
+                  acc[key].items.push(r);
+                  return acc;
+                }, {})
+              ).map(([agentId, group]) => (
+                <div key={agentId} className="rounded-lg bg-surface border border-divider overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/agents/${agentId}`)}
+                    className="w-full text-left px-3 py-2 bg-elevated hover:bg-hover transition-colors"
+                  >
+                    <span className="text-xs font-semibold text-heading">{group.agent_name}</span>
+                    <span className="text-[10px] text-dim ml-2">{group.project}</span>
+                    <span className="text-[10px] text-faint ml-1">({group.items.length})</span>
+                  </button>
+                  {group.items.slice(0, 3).map((r) => (
+                    <button
+                      key={r.message_id}
+                      type="button"
+                      onClick={() => navigate(`/agents/${r.agent_id}`)}
+                      className="w-full text-left px-3 py-1.5 border-t border-divider hover:bg-hover transition-colors"
+                    >
+                      <p className="text-xs text-body line-clamp-2">{r.content_snippet}</p>
+                      <span className="text-[10px] text-faint">{relativeTime(r.created_at)}</span>
+                    </button>
+                  ))}
+                  {group.items.length > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/agents/${agentId}`)}
+                      className="w-full text-left px-3 py-1 border-t border-divider text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors"
+                    >
+                      +{group.items.length - 3} more
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {searchResults && searchResults.results && searchResults.results.length === 0 && !searchLoading && (
+            <p className="text-xs text-dim">No messages match "{search.trim()}"</p>
+          )}
+        </div>
+      )}
 
       {/* Agent list */}
       <div className={`${selecting ? "pb-28" : "pb-20"} px-4 py-2 space-y-2`}>

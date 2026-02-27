@@ -14,6 +14,18 @@ export default class ErrorBoundary extends Component {
     console.error("ErrorBoundary caught:", error, errorInfo);
   }
 
+  componentDidMount() {
+    // Reset error state before HMR updates so a caught error doesn't
+    // permanently white-screen the app during development.
+    if (import.meta.hot) {
+      import.meta.hot.on("vite:beforeUpdate", () => {
+        if (this.state.hasError) {
+          this.setState({ hasError: false, error: null });
+        }
+      });
+    }
+  }
+
   render() {
     if (this.state.hasError) {
       return (

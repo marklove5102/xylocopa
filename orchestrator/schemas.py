@@ -34,6 +34,7 @@ class AgentCreate(BaseModel):
     prompt: str
     mode: AgentMode = AgentMode.AUTO
     model: str | None = None  # None = use project default
+    effort: str | None = None  # low, medium, high
     worktree: str | None = None  # None = shared main, string = worktree name
     timeout_seconds: int = 1800
     resume_session_id: str | None = None  # Resume an existing Claude session
@@ -52,6 +53,7 @@ class AgentOut(BaseModel):
     cli_sync: bool = False
     tmux_pane: str | None = None
     model: str | None = None
+    effort: str | None = None
     last_message_preview: str | None = None
     last_message_at: datetime | None = None
     unread_count: int = 0
@@ -60,6 +62,7 @@ class AgentOut(BaseModel):
     skip_permissions: bool = True
     muted: bool = False
     parent_id: str | None = None
+    successor_id: str | None = None
     session_size_bytes: int | None = None
 
     model_config = {"from_attributes": True}
@@ -76,6 +79,7 @@ class AgentBrief(BaseModel):
     worktree: str | None = None
     tmux_pane: str | None = None
     model: str | None = None
+    effort: str | None = None
     last_message_preview: str | None = None
     last_message_at: datetime | None = None
     unread_count: int = 0
@@ -109,6 +113,28 @@ class MessageOut(BaseModel):
         if v is not None and isinstance(v, datetime) and v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v
+
+
+class MessageSearchResult(BaseModel):
+    message_id: str
+    agent_id: str
+    agent_name: str
+    project: str
+    role: MessageRole
+    content_snippet: str
+    created_at: datetime
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def ensure_utc_search(cls, v):
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class MessageSearchResponse(BaseModel):
+    results: list[MessageSearchResult] = []
+    total: int = 0
 
 
 class SendMessage(BaseModel):

@@ -182,6 +182,8 @@ class WorkerManager:
 
         if agent.model:
             cmd.extend(["--model", agent.model])
+        if agent.effort:
+            cmd.extend(["--effort", agent.effort])
         if agent.worktree:
             cmd.extend(["--worktree", agent.worktree])
         if resume_session_id:
