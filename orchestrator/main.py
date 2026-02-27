@@ -625,29 +625,37 @@ async def system_restart():
         await asyncio.sleep(0.5)
         my_pid = os.getpid()
         port = int(os.environ.get("PORT", 8080))
+        frontend_port = int(os.environ.get("FRONTEND_PORT", 3000))
         log_path = os.path.join(project_root, "logs", "server.log")
-        # Kill ALL uvicorn processes listening on our port (stale + current),
-        # then wait for the port to be free before starting run.sh.
+        # Kill both Vite (frontend) and uvicorn (backend), then re-run run.sh.
         _sp.Popen(
             [
                 "bash", "-c",
-                # 1. Kill only LISTEN sockets on the port (not browser/proxy clients)
+                # 1. Kill Vite dev server (kill process group to include npm parent)
+                f'for pid in $(lsof -ti :{frontend_port} -sTCP:LISTEN 2>/dev/null); do '
+                f'  kill "$pid" 2>/dev/null; '
+                f'  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d " "); '
+                f'  [ -n "$pgid" ] && kill -- -"$pgid" 2>/dev/null; '
+                f'done; '
+                # 2. Kill uvicorn listeners
                 f'for pid in $(lsof -ti :{port} -sTCP:LISTEN 2>/dev/null); do '
                 f'  kill "$pid" 2>/dev/null; '
                 f'done; '
-                # 2. Also kill ourselves if still alive
+                # 3. Also kill ourselves if still alive
                 f'kill {my_pid} 2>/dev/null; '
-                # 3. Wait for listeners to die
+                # 4. Wait for both ports to be free
                 f'for i in $(seq 1 30); do '
-                f'  lsof -ti :{port} -sTCP:LISTEN >/dev/null 2>&1 || break; '
+                f'  lsof -ti :{port} -sTCP:LISTEN >/dev/null 2>&1 || '
+                f'  lsof -ti :{frontend_port} -sTCP:LISTEN >/dev/null 2>&1 || break; '
                 f'  sleep 0.3; '
                 f'done; '
-                # 4. Force-kill any listener still clinging
-                f'for pid in $(lsof -ti :{port} -sTCP:LISTEN 2>/dev/null); do '
+                # 5. Force-kill any listener still clinging
+                f'for pid in $(lsof -ti :{port} -sTCP:LISTEN 2>/dev/null '
+                f'           $(lsof -ti :{frontend_port} -sTCP:LISTEN 2>/dev/null)); do '
                 f'  kill -9 "$pid" 2>/dev/null; '
                 f'done; '
                 f'sleep 0.5; '
-                # 5. Start the new server
+                # 6. Start fresh (run.sh starts both Vite and uvicorn)
                 f'exec bash "{run_script}" >> "{log_path}" 2>&1',
             ],
             cwd=project_root,

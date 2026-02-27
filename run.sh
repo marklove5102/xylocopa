@@ -52,5 +52,20 @@ for pid in $(lsof -ti :"$PORT" -sTCP:LISTEN 2>/dev/null); do
     kill -9 "$pid" 2>/dev/null
 done
 
+# --- Start Vite dev server if not already running ---
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+VITE_PID=""
+if ! lsof -ti :"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Starting Vite dev server on port $FRONTEND_PORT..."
+    cd "${SCRIPT_DIR}/frontend"
+    nohup npx vite --host 0.0.0.0 --port "$FRONTEND_PORT" \
+        >> "${SCRIPT_DIR}/logs/vite.log" 2>&1 &
+    VITE_PID=$!
+    echo "Vite started (PID $VITE_PID)"
+    cd "${SCRIPT_DIR}"
+else
+    echo "Vite already running on port $FRONTEND_PORT — skipping"
+fi
+
 # Start the orchestrator
 cd orchestrator && exec uvicorn main:app --host 0.0.0.0 --port "$PORT"
