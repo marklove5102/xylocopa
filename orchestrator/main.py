@@ -631,19 +631,19 @@ async def system_restart():
         _sp.Popen(
             [
                 "bash", "-c",
-                # 1. Kill every process listening on the port
-                f'for pid in $(lsof -ti :{port} 2>/dev/null); do '
+                # 1. Kill only LISTEN sockets on the port (not browser/proxy clients)
+                f'for pid in $(lsof -ti :{port} -sTCP:LISTEN 2>/dev/null); do '
                 f'  kill "$pid" 2>/dev/null; '
                 f'done; '
                 # 2. Also kill ourselves if still alive
                 f'kill {my_pid} 2>/dev/null; '
-                # 3. Wait for all to die and port to be free
+                # 3. Wait for listeners to die
                 f'for i in $(seq 1 30); do '
-                f'  lsof -ti :{port} >/dev/null 2>&1 || break; '
+                f'  lsof -ti :{port} -sTCP:LISTEN >/dev/null 2>&1 || break; '
                 f'  sleep 0.3; '
                 f'done; '
-                # 4. Force-kill anything still clinging to the port
-                f'for pid in $(lsof -ti :{port} 2>/dev/null); do '
+                # 4. Force-kill any listener still clinging
+                f'for pid in $(lsof -ti :{port} -sTCP:LISTEN 2>/dev/null); do '
                 f'  kill -9 "$pid" 2>/dev/null; '
                 f'done; '
                 f'sleep 0.5; '
