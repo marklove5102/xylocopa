@@ -4,7 +4,7 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PROJECT_DIR="/home/jyao073/cc-orchestrator"
 BACKEND_SVC="cc-orchestrator.service"
 FRONTEND_SVC="cc-frontend.service"
 
@@ -53,15 +53,15 @@ _systemd_logs() {
 
 BACKEND_PORT="${PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-BACKEND_LOG="/tmp/agenthive-backend.log"
-FRONTEND_LOG="/tmp/agenthive-frontend.log"
+BACKEND_LOG="$PROJECT_DIR/logs/server.log"
+FRONTEND_LOG="$PROJECT_DIR/logs/vite.log"
 
 _backend_pid() {
     lsof -ti:"$BACKEND_PORT" 2>/dev/null | head -1 || true
 }
 
 _frontend_pid() {
-    pgrep -f "node.*vite.*--port ${FRONTEND_PORT}" 2>/dev/null | head -1 || true
+    lsof -ti:"$FRONTEND_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true
 }
 
 _manual_stop() {
@@ -90,7 +90,7 @@ _manual_stop() {
 _manual_start() {
     echo "Starting AgentHive..."
     if [ -z "$(_backend_pid)" ]; then
-        (cd "$SCRIPT_DIR" && nohup bash run.sh > "$BACKEND_LOG" 2>&1 &)
+        (cd "$PROJECT_DIR" && nohup bash run.sh >> "$BACKEND_LOG" 2>&1 &)
         sleep 2
         local pid=$(_backend_pid)
         [ -n "$pid" ] && echo "Backend started (pid $pid)" || echo "Backend failed — check $BACKEND_LOG"
@@ -98,7 +98,7 @@ _manual_start() {
         echo "Backend already running (pid $(_backend_pid))"
     fi
     if [ -z "$(_frontend_pid)" ]; then
-        (cd "$SCRIPT_DIR/frontend" && nohup npx vite --host 0.0.0.0 --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &)
+        (cd "$PROJECT_DIR/frontend" && nohup npx vite --host 0.0.0.0 --port "$FRONTEND_PORT" >> "$FRONTEND_LOG" 2>&1 &)
         sleep 2
         local pid=$(_frontend_pid)
         [ -n "$pid" ] && echo "Frontend started (pid $pid)" || echo "Frontend failed — check $FRONTEND_LOG"
@@ -160,17 +160,27 @@ case "${1:-}" in
         if _has_systemd; then _systemd_status; else _manual_status; fi ;;
     logs)
         if _has_systemd; then _systemd_logs "${2:-}"; else _manual_logs "${2:-}"; fi ;;
+    kill)
+        echo "Force-killing all AgentHive processes..."
+        local bpid fpid
+        bpid=$(_backend_pid)
+        fpid=$(_frontend_pid)
+        [ -n "$bpid" ] && kill -9 "$bpid" 2>/dev/null && echo "Killed backend (pid $bpid)" || echo "Backend not running"
+        [ -n "$fpid" ] && kill -9 "$fpid" 2>/dev/null && echo "Killed frontend (pid $fpid)" || echo "Frontend not running"
+        echo "Done."
+        ;;
     enable)  cmd_enable ;;
     disable) cmd_disable ;;
     *)
-        echo "Usage: agenthive {start|stop|restart|status|logs|enable|disable}"
+        echo "Usage: agenthive {start|stop|restart|status|logs|kill|enable|disable}"
         echo ""
         echo "Commands:"
         echo "  start    Start backend and frontend"
-        echo "  stop     Stop backend and frontend"
+        echo "  stop     Stop backend and frontend (graceful)"
         echo "  restart  Restart both servers"
         echo "  status   Show running state"
         echo "  logs     Tail logs (backend|frontend|all)"
+        echo "  kill     Force-kill all AgentHive processes (SIGKILL)"
         echo "  enable   Enable systemd auto-restart on crash/login"
         echo "  disable  Disable systemd services"
         exit 1

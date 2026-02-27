@@ -461,11 +461,12 @@ def _build_tmux_claude_map() -> dict[str, dict]:
     claude child processes. This is authoritative because a pane's
     process tree is unambiguous.
 
-    Returns: {pane_id: {"pid": int, "cwd": str, "is_orchestrator": bool}}
+    Returns: {pane_id: {"pid": int, "cwd": str, "is_orchestrator": bool, "session_name": str}}
     """
     try:
         result = _sp.run(
-            ["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_pid}"],
+            ["tmux", "list-panes", "-a", "-F",
+             "#{pane_id} #{pane_pid} #{session_name}"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode != 0:
@@ -475,10 +476,11 @@ def _build_tmux_claude_map() -> dict[str, dict]:
 
     pane_map = {}
     for line in result.stdout.strip().splitlines():
-        parts = line.split(None, 1)
-        if len(parts) != 2:
+        parts = line.split(None, 2)
+        if len(parts) < 2:
             continue
-        pane_id, shell_pid = parts
+        pane_id, shell_pid = parts[0], parts[1]
+        session_name = parts[2] if len(parts) > 2 else ""
 
         # Find claude child process of this pane's shell
         try:
@@ -498,12 +500,28 @@ def _build_tmux_claude_map() -> dict[str, dict]:
                         "pid": cpid,
                         "cwd": cwd,
                         "is_orchestrator": _is_orchestrator_process(cpid),
+                        "session_name": session_name,
                     }
                     break
         except (_sp.TimeoutExpired, OSError, ValueError):
             continue
 
     return pane_map
+
+
+def _get_pane_owner(pane_id: str, exclude_agent_id: str | None = None) -> "Agent | None":
+    """Return any non-STOPPED agent that owns *pane_id*, or None."""
+    db = SessionLocal()
+    try:
+        q = db.query(Agent).filter(
+            Agent.tmux_pane == pane_id,
+            Agent.status != AgentStatus.STOPPED,
+        )
+        if exclude_agent_id:
+            q = q.filter(Agent.id != exclude_agent_id)
+        return q.first()
+    finally:
+        db.close()
 
 
 def _detect_tmux_pane_for_session(session_id: str, project_path: str) -> str | None:
@@ -565,6 +583,7 @@ def _detect_tmux_pane_for_session(session_id: str, project_path: str) -> str | N
         (pane_id, info)
         for pane_id, info in pane_map.items()
         if not info["is_orchestrator"] and info["cwd"] == real_project
+        and not _get_pane_owner(pane_id)  # skip panes already owned
     ]
 
     if len(user_candidates) == 1:
@@ -866,11 +885,12 @@ class AgentDispatcher:
         # 4b. Dispatch due scheduled messages to SYNCING agents via tmux
         self._dispatch_tmux_pending(db)
 
-        # 5. Auto-detect running CLI sessions (every ~30s)
+        # 5. Auto-detect running CLI sessions + pane dedup (every ~30s)
         self._cli_detect_counter += 1
         if self._cli_detect_counter >= self._cli_detect_interval:
             self._cli_detect_counter = 0
             self._auto_detect_cli_sessions(db)
+            self._dedup_pane_agents(db)
             self._reap_dead_agents(db)
 
         db.commit()
@@ -1571,6 +1591,10 @@ class AgentDispatcher:
             os.path.realpath(p.path): p for p in projects
         }
 
+        # Expire cached ORM state so we see commits from other DB sessions
+        # (e.g. successor spawns that run in their own SessionLocal).
+        db.expire_all()
+
         # Collect session IDs / tmux panes already owned by active agents
         active_session_ids: set[str] = set()
         active_tmux_panes: set[str] = set()
@@ -1592,14 +1616,14 @@ class AgentDispatcher:
         agents_to_sync: list[tuple[str, str, str]] = []
 
         # Group untracked panes by project path, keyed by PID for matching
-        panes_per_project: dict[str, list[tuple[str, int]]] = {}  # realpath -> [(pane_id, pid)]
+        panes_per_project: dict[str, list[tuple[str, int, str]]] = {}  # realpath -> [(pane_id, pid, session_name)]
         for pane_id, info in pane_map.items():
             if info["is_orchestrator"] or pane_id in active_tmux_panes:
                 continue
             cwd = info["cwd"]
             if cwd in proj_by_path:
                 panes_per_project.setdefault(cwd, []).append(
-                    (pane_id, info["pid"])
+                    (pane_id, info["pid"], info.get("session_name", ""))
                 )
 
         for proj_path, pane_entries in panes_per_project.items():
@@ -1637,7 +1661,7 @@ class AgentDispatcher:
                     unmatched.append((sid, fpath, mtime))
 
             # Assign sessions to panes: PID match first, then mtime fallback
-            for pane_id, pane_pid in pane_entries:
+            for pane_id, pane_pid, tmux_session_name in pane_entries:
                 best_sid, best_fpath = None, None
 
                 # Try exact PID match via debug log
@@ -1660,6 +1684,14 @@ class AgentDispatcher:
                 # --- Try to revive a stopped agent that owns this session ---
                 stopped_agent = stopped_session_agents.get(best_sid)
                 if stopped_agent:
+                    # Guard: skip if another active agent already owns this pane
+                    existing_owner = _get_pane_owner(pane_id, exclude_agent_id=stopped_agent.id)
+                    if existing_owner:
+                        logger.warning(
+                            "Skipping revive of %s — pane %s already owned by %s",
+                            stopped_agent.id, pane_id, existing_owner.id,
+                        )
+                        continue
                     stopped_agent.status = AgentStatus.SYNCING
                     stopped_agent.tmux_pane = pane_id
                     stopped_agent.last_message_at = _utcnow()
@@ -1683,6 +1715,14 @@ class AgentDispatcher:
                 ]
                 if recently_stopped:
                     candidate = max(recently_stopped, key=lambda a: a.last_message_at)
+                    # Guard: skip if another active agent already owns this pane
+                    pane_owner = _get_pane_owner(pane_id, exclude_agent_id=candidate.id)
+                    if pane_owner:
+                        logger.warning(
+                            "Skipping revive of %s — pane %s already owned by %s",
+                            candidate.id, pane_id, pane_owner.id,
+                        )
+                        continue
                     # Guard: don't assign best_sid if another agent already
                     # owns it (prevents shared session_ids → message leaks).
                     if best_sid in all_agent_session_ids:
@@ -1711,17 +1751,40 @@ class AgentDispatcher:
                     continue
 
                 # --- Session change on existing SYNCING pane → spawn successor ---
+                # Only treat as a successor if the tmux session name matches
+                # the existing agent (ah-{id[:8]}), confirming it's the same
+                # tmux session that simply started a new Claude conversation.
+                # If the session name doesn't match, it's an unrelated session
+                # on the same pane — create a fresh agent instead.
                 existing_pane_agent = db.query(Agent).filter(
                     Agent.status == AgentStatus.SYNCING,
                     Agent.tmux_pane == pane_id,
                     Agent.cli_sync == True,
                 ).first()
                 if existing_pane_agent:
-                    db.commit()  # commit pending changes before spawn
-                    self._spawn_successor_agent(
-                        existing_pane_agent.id, best_sid, proj.path,
-                    )
-                    continue
+                    expected_session = f"ah-{existing_pane_agent.id[:8]}"
+                    if tmux_session_name == expected_session:
+                        db.commit()  # commit pending changes before spawn
+                        self._spawn_successor_agent(
+                            existing_pane_agent.id, best_sid, proj.path,
+                        )
+                        continue
+                    else:
+                        # Different tmux session — stop old agent, fall through
+                        # to create a fresh unrelated agent below.
+                        logger.info(
+                            "Pane %s session name %r != expected %r — "
+                            "stopping old agent %s, creating fresh agent",
+                            pane_id, tmux_session_name, expected_session,
+                            existing_pane_agent.id,
+                        )
+                        self._cancel_sync_task(existing_pane_agent.id)
+                        existing_pane_agent.status = AgentStatus.STOPPED
+                        existing_pane_agent.tmux_pane = None
+                        db.flush()
+                        self._emit(emit_agent_update(
+                            existing_pane_agent.id, "STOPPED", proj.name,
+                        ))
 
                 # --- Create new SYNCING agent ---
                 agent_name = "CLI session"
@@ -1754,6 +1817,22 @@ class AgentDispatcher:
                 )
                 db.add(agent)
                 db.flush()
+
+                # Rename tmux session to short ah-{id} format
+                try:
+                    res = _sp.run(
+                        ["tmux", "display-message", "-t", pane_id,
+                         "-p", "#{session_name}"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        _sp.run(
+                            ["tmux", "rename-session", "-t",
+                             res.stdout.strip(), f"ah-{agent.id[:8]}"],
+                            timeout=5,
+                        )
+                except (_sp.TimeoutExpired, OSError):
+                    pass
 
                 # Import existing turns as messages
                 for role, content in turns:
@@ -2194,6 +2273,8 @@ class AgentDispatcher:
             self._cancel_sync_task(old_agent_id)
             old_agent.status = AgentStatus.STOPPED
             old_agent.tmux_pane = None
+            # Keep session_id so the UI can still show session size.
+            # Resume is blocked by the successor check in the API.
             db.flush()
             self._emit(emit_agent_update(old_agent_id, "STOPPED", project_name))
 
@@ -2209,7 +2290,9 @@ class AgentDispatcher:
                     agent_name = (content or "")[:80]
                     break
 
-            # Create new agent
+            # Create new agent — no parent_id linkage since a new session
+            # on the same tmux pane is typically an unrelated conversation,
+            # not a continuation of the old one.
             new_agent = Agent(
                 project=project_name,
                 name=agent_name,
@@ -2219,7 +2302,6 @@ class AgentDispatcher:
                 session_id=new_sid,
                 cli_sync=True,
                 tmux_pane=tmux_pane,
-                parent_id=old_agent_id,
                 last_message_preview=agent_name,
                 last_message_at=_utcnow(),
             )
@@ -2253,6 +2335,25 @@ class AgentDispatcher:
             db.commit()
             self._emit(emit_agent_update(new_agent.id, "SYNCING", project_name))
             self.start_session_sync(new_agent.id, new_sid, project_path)
+
+            # Rename the tmux session to match the new agent ID
+            if tmux_pane:
+                import subprocess as _sp
+                try:
+                    # Get session name from pane ID
+                    res = _sp.run(
+                        ["tmux", "display-message", "-t", tmux_pane,
+                         "-p", "#{session_name}"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        _sp.run(
+                            ["tmux", "rename-session", "-t",
+                             res.stdout.strip(), f"ah-{new_agent.id[:8]}"],
+                            timeout=5,
+                        )
+                except (_sp.TimeoutExpired, OSError):
+                    pass
 
             logger.info(
                 "Spawned successor agent %s for session %s (old: %s)",
@@ -2684,7 +2785,15 @@ class AgentDispatcher:
                     self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
 
                     # Only notify for agent/system turns (not user messages)
-                    if not agent.muted and not self._is_agent_in_use(agent_id, agent.tmux_pane):
+                    _in_use = self._is_agent_in_use(agent_id, agent.tmux_pane)
+                    if not _in_use:
+                        logger.info(
+                            "Push notify %s: pane=%s, pane_attached=%s, ws_viewing=%s",
+                            agent_id, agent.tmux_pane,
+                            self._pane_attached.get(agent.tmux_pane) if agent.tmux_pane else None,
+                            any(v == agent_id for v in getattr(__import__('websocket', fromlist=['ws_manager']), 'ws_manager')._viewing.values()),
+                        )
+                    if not agent.muted and not _in_use:
                         _push_body = ""
                         for _r, _c in reversed(new_turns):
                             if _r == "assistant":
@@ -2830,6 +2939,62 @@ class AgentDispatcher:
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
         return False
+
+    # ---- Pane deduplication ----
+
+    def _dedup_pane_agents(self, db: Session) -> set[str]:
+        """Stop duplicate agents on the same tmux pane, keeping the freshest.
+
+        Returns the set of agent IDs that were stopped.
+        """
+        from websocket import emit_agent_update
+
+        syncing = db.query(Agent).filter(
+            Agent.tmux_pane.is_not(None),
+            Agent.status == AgentStatus.SYNCING,
+        ).all()
+        pane_agents: dict[str, list[Agent]] = {}
+        for agent in syncing:
+            pane_agents.setdefault(agent.tmux_pane, []).append(agent)
+
+        stopped_ids: set[str] = set()
+        for pane_id, dupes in pane_agents.items():
+            if len(dupes) <= 1:
+                continue
+
+            def _session_mtime(a: Agent) -> float:
+                if not a.session_id:
+                    return 0.0
+                p = db.get(Project, a.project)
+                if not p:
+                    return 0.0
+                fpath = os.path.join(
+                    session_source_dir(p.path), f"{a.session_id}.jsonl"
+                )
+                try:
+                    return os.path.getmtime(fpath)
+                except OSError:
+                    return 0.0
+
+            dupes.sort(key=_session_mtime, reverse=True)
+            keeper = dupes[0]
+            for stale in dupes[1:]:
+                logger.info(
+                    "Pane %s claimed by multiple agents — keeping %s, stopping %s",
+                    pane_id, keeper.id, stale.id,
+                )
+                self._cancel_sync_task(stale.id)
+                stale.status = AgentStatus.STOPPED
+                stale.tmux_pane = None
+                db.add(Message(
+                    agent_id=stale.id, role=MessageRole.SYSTEM,
+                    content="CLI session ended — another agent owns this tmux pane",
+                    status=MessageStatus.COMPLETED,
+                ))
+                stopped_ids.add(stale.id)
+                self._emit(emit_agent_update(stale.id, "STOPPED", stale.project))
+
+        return stopped_ids
 
     # ---- Recovery ----
 
@@ -3030,50 +3195,12 @@ class AgentDispatcher:
                     m.completed_at = None
                     m.error_message = None
 
-            # Deduplicate: when multiple agents claim the same tmux pane,
-            # keep only the one with the freshest session file and STOP the rest.
-            pane_agents: dict[str, list[Agent]] = {}
-            for agent in agents:
-                if agent.tmux_pane and agent.status == AgentStatus.SYNCING:
-                    pane_agents.setdefault(agent.tmux_pane, []).append(agent)
-            for pane_id, dupes in pane_agents.items():
-                if len(dupes) <= 1:
-                    continue
-                # Pick the agent with the most recently modified session file
-                import time as _time
-                def _session_mtime(a: Agent) -> float:
-                    if not a.session_id:
-                        return 0.0
-                    p = db.get(Project, a.project)
-                    if not p:
-                        return 0.0
-                    fpath = os.path.join(
-                        session_source_dir(p.path), f"{a.session_id}.jsonl"
-                    )
-                    try:
-                        return os.path.getmtime(fpath)
-                    except OSError:
-                        return 0.0
-
-                dupes.sort(key=_session_mtime, reverse=True)
-                keeper = dupes[0]
-                for stale in dupes[1:]:
-                    logger.info(
-                        "Pane %s claimed by multiple agents — keeping %s, stopping %s",
-                        pane_id, keeper.id, stale.id,
-                    )
-                    stale.status = AgentStatus.STOPPED
-                    stale.tmux_pane = None
-                    db.add(Message(
-                        agent_id=stale.id, role=MessageRole.SYSTEM,
-                        content="CLI session ended — another agent owns this tmux pane",
-                        status=MessageStatus.COMPLETED,
-                    ))
-                    # Remove from sync list
-                    agents_to_sync = [
-                        (aid, sid, pp) for aid, sid, pp in agents_to_sync
-                        if aid != stale.id
-                    ]
+            # Deduplicate pane ownership
+            stopped_ids = self._dedup_pane_agents(db)
+            agents_to_sync = [
+                (aid, sid, pp) for aid, sid, pp in agents_to_sync
+                if aid not in stopped_ids
+            ]
 
             if agents:
                 db.commit()

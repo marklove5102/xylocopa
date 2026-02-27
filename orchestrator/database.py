@@ -66,6 +66,13 @@ def init_db():
             conn.execute(text("ALTER TABLE agents ADD COLUMN worktree VARCHAR(200)"))
             conn.commit()
 
+        # Add effort column to agents if missing
+        result = conn.execute(text("PRAGMA table_info(agents)"))
+        columns = {row[1] for row in result}
+        if "effort" not in columns:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN effort VARCHAR(10)"))
+            conn.commit()
+
         # Migrate priority → mode column on agents table
         result = conn.execute(text("PRAGMA table_info(agents)"))
         columns = {row[1] for row in result}

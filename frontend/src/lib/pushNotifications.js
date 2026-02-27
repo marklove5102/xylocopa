@@ -22,6 +22,9 @@ function setPushEnabled(v) {
  */
 export async function setupPushNotifications() {
   if (!isPushSupported()) return false;
+  // Skip service worker registration in dev mode — it conflicts with Vite HMR
+  // and causes white screen crashes in standalone PWA mode.
+  if (import.meta.env.DEV) return false;
 
   try {
     // Request notification permission

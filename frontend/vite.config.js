@@ -17,10 +17,19 @@ export default defineConfig({
     https: httpsConfig,
     host: '0.0.0.0',
     port: 3000,
+    hmr: {
+      // Explicit HMR config stabilises the WebSocket on mobile with self-signed certs
+      protocol: httpsConfig ? 'wss' : 'ws',
+      port: 3000,
+    },
     proxy: {
       '/api': 'http://localhost:8080',
       '/ws': { target: 'ws://localhost:8080', ws: true },
     },
+  },
+  optimizeDeps: {
+    // Work around TailwindCSS v4 HMR cache invalidation bug
+    exclude: ['@tailwindcss/vite'],
   },
   test: {
     environment: 'jsdom',

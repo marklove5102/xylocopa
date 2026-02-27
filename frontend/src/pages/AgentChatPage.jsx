@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Component } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   fetchAgent,
@@ -16,6 +16,27 @@ import {
   updateAgent,
 } from "../lib/api";
 import { relativeTime, renderMarkdown, extractFileAttachments } from "../lib/formatters";
+
+// Mini error boundary that wraps individual markdown renders so a single
+// broken message doesn't crash the entire chat page.
+class SafeMarkdown extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error, info) {
+    console.error("SafeMarkdown caught:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return <pre className="text-sm text-body whitespace-pre-wrap">{this.props.fallback || "Error rendering message"}</pre>;
+    }
+    return this.props.children;
+  }
+}
 import FileAttachments from "../components/FilePreview";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName } from "../lib/constants";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -158,11 +179,17 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     : null;
 
   // Editing UI for scheduled/pending messages
+  const editDateRef = useRef(null);
+
   if (editing) {
+    const scheduleLabel = editSchedule
+      ? new Date(editSchedule).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      : "Set time";
+
     return (
       <div className="flex justify-end my-2">
-        <div className="max-w-[85%] w-full">
-          <div className="rounded-2xl px-4 py-2.5 bg-amber-600/60 text-white rounded-br-md space-y-2">
+        <div className="max-w-[85%]">
+          <div className="rounded-2xl px-4 py-2.5 bg-amber-600/60 text-white rounded-br-md space-y-2 overflow-hidden">
             <textarea
               ref={editTextareaRef}
               value={editContent}
@@ -171,12 +198,24 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               className="w-full rounded-lg bg-black/20 border border-amber-400/40 px-2 py-1.5 text-sm text-white placeholder-amber-200/50 resize-none focus:border-amber-300 focus:outline-none"
             />
             <input
+              ref={editDateRef}
               type="datetime-local"
               value={editSchedule}
               onChange={(e) => setEditSchedule(e.target.value)}
               min={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; })()}
-              className="w-full rounded-lg bg-black/20 border border-amber-400/40 px-2 py-1.5 text-sm text-white focus:border-amber-300 focus:outline-none"
+              className="sr-only"
+              tabIndex={-1}
             />
+            <button
+              type="button"
+              onClick={() => editDateRef.current?.showPicker?.() || editDateRef.current?.click()}
+              className="w-full rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-sm py-1.5 font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              {scheduleLabel}
+            </button>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -221,7 +260,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             <p className="text-sm whitespace-pre-wrap">{message.content}</p>
           ) : (
             <div className="text-sm">
-              {renderMarkdown(message.content, project)}
+              <SafeMarkdown fallback={message.content}>
+                {renderMarkdown(message.content, project)}
+              </SafeMarkdown>
             </div>
           )}
           <div className={`text-xs mt-1 flex items-center gap-1.5 ${
@@ -330,6 +371,7 @@ function TypingIndicator() {
   );
 }
 
+
 // --- Initializing Indicator (shown when agent is starting with no messages) ---
 
 function InitializingIndicator() {
@@ -353,7 +395,9 @@ function StreamingBubble({ content, project }) {
       <div className="max-w-[85%]">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md">
           <div className="text-sm">
-            {renderMarkdown(content, project)}
+            <SafeMarkdown fallback={content}>
+              {renderMarkdown(content, project)}
+            </SafeMarkdown>
           </div>
           <div className="flex items-center gap-1.5 mt-1">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -367,129 +411,7 @@ function StreamingBubble({ content, project }) {
 
 // --- Send Later Time Picker ---
 
-function SendLaterPicker({ onSelect, onClose }) {
-  const [customValue, setCustomValue] = useState("");
-  const pickerRef = useRef(null);
-  const inputRef = useRef(null);
-
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target)) onClose();
-    };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("touchstart", handler);
-    return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("touchstart", handler);
-    };
-  }, [onClose]);
-
-  const presets = [
-    { label: "30 minutes", minutes: 30 },
-    { label: "1 hour", minutes: 60 },
-    { label: "2 hours", minutes: 120 },
-    { label: "4 hours", minutes: 240 },
-  ];
-
-  // "Tomorrow 9 AM" in local time
-  const tomorrowMorning = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(9, 0, 0, 0);
-    return d;
-  };
-
-  const handlePreset = (minutes) => {
-    const d = new Date(Date.now() + minutes * 60000);
-    onSelect(d.toISOString());
-  };
-
-  const handleTomorrow = () => {
-    onSelect(tomorrowMorning().toISOString());
-  };
-
-  const openNativePicker = () => {
-    if (inputRef.current) {
-      inputRef.current.showPicker?.();
-      inputRef.current.focus();
-    }
-  };
-
-  const handleDateChange = (e) => {
-    const val = e.target.value;
-    if (!val) return;
-    setCustomValue(val);
-    const d = new Date(val);
-    if (!isNaN(d.getTime()) && d > new Date()) {
-      onSelect(d.toISOString());
-    }
-  };
-
-  const localMin = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; })();
-
-  const displayTime = customValue
-    ? new Date(customValue).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-    : null;
-
-  return (
-    <div
-      ref={pickerRef}
-      className="absolute bottom-12 right-0 w-56 bg-surface border border-divider rounded-xl shadow-lg overflow-hidden z-50"
-    >
-      <div className="px-3 py-2 border-b border-divider">
-        <span className="text-xs font-semibold text-heading">Send Later</span>
-      </div>
-      <div className="py-1">
-        {presets.map((p) => (
-          <button
-            key={p.minutes}
-            type="button"
-            onClick={() => handlePreset(p.minutes)}
-            className="w-full text-left px-3 py-2 text-sm text-body hover:bg-input transition-colors flex items-center gap-2"
-          >
-            <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
-            </svg>
-            {p.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={handleTomorrow}
-          className="w-full text-left px-3 py-2 text-sm text-body hover:bg-input transition-colors flex items-center gap-2"
-        >
-          <svg className="w-4 h-4 text-orange-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          Tomorrow 9 AM
-        </button>
-      </div>
-      <div className="border-t border-divider px-3 py-2">
-        {/* Hidden native picker — triggered by the button below */}
-        <input
-          ref={inputRef}
-          type="datetime-local"
-          value={customValue}
-          onChange={handleDateChange}
-          min={localMin}
-          className="sr-only"
-          tabIndex={-1}
-        />
-        <button
-          type="button"
-          onClick={openNativePicker}
-          className="w-full rounded-lg bg-amber-500 hover:bg-amber-400 text-white text-sm py-1.5 font-medium transition-colors flex items-center justify-center gap-2"
-        >
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          {displayTime || "Pick a time"}
-        </button>
-      </div>
-    </div>
-  );
-}
+import SendLaterPicker from "../components/SendLaterPicker";
 
 // --- Chat Input ---
 
@@ -561,7 +483,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
       <div className="glass-bar-nav rounded-[28px] px-3 py-2.5 flex items-end gap-2 w-full relative" style={{ maxWidth: "24rem" }}>
         {voice.recording && voice.analyserNode ? (
           <div className="flex-1 min-h-[40px] flex items-center px-3">
-            <WaveformVisualizer analyserNode={voice.analyserNode} remainingSeconds={voice.remainingSeconds} className="flex-1 h-8" />
+            <WaveformVisualizer analyserNode={voice.analyserNode} remainingSeconds={voice.remainingSeconds} onTap={voice.toggleRecording} className="flex-1 h-8" />
           </div>
         ) : (
           <textarea
@@ -638,6 +560,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [showResumeModal, setShowResumeModal] = useState(false);
   const [starred, setStarred] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
   const [muted, setMuted] = useState(() => isAgentMuted(id));
@@ -671,8 +594,9 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         fetchMessages(id),
       ]);
       if (controller.signal.aborted) return;
+      if (!agentData || !agentData.id) return;
       setAgent(agentData);
-      setMessages(msgData);
+      setMessages(Array.isArray(msgData) ? msgData : []);
       if (!initialLoadDone.current && agentData.muted != null) {
         setMuted(agentData.muted);
         setAgentMuted(id, agentData.muted);
@@ -901,13 +825,28 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   };
 
   // Resume agent
-  const handleResume = async () => {
+  const handleResume = async (mode = null) => {
+    // For cli_sync agents without a successor, show the resume modal
+    if (!mode && agent?.cli_sync && !agent?.successor_id) {
+      setShowResumeModal(true);
+      return;
+    }
     setResuming(true);
+    setShowResumeModal(false);
     try {
-      await resumeAgent(id);
+      await resumeAgent(id, mode ? { mode } : null);
       showToast("Agent resumed");
       loadData();
     } catch (err) {
+      // Handle superseded agent (409)
+      try {
+        const info = JSON.parse(err.message);
+        if (info.reason === "superseded") {
+          showToast("This agent was continued by a successor", "error");
+          loadData(); // refresh to pick up successor_id
+          return;
+        }
+      } catch {}
       showToast("Failed: " + err.message, "error");
     } finally {
       setResuming(false);
@@ -1082,10 +1021,21 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
             </div>
 
             <div className="shrink-0 flex items-center gap-1.5">
-              {isStopped || isError ? (
+              {(isStopped || isError) && agent?.successor_id ? (
                 <button
                   type="button"
-                  onClick={handleResume}
+                  onClick={() => navigate(`/agents/${agent.successor_id}`)}
+                  className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                >
+                  Continued
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              ) : (isStopped || isError) ? (
+                <button
+                  type="button"
+                  onClick={() => handleResume()}
                   disabled={resuming}
                   className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white transition-colors disabled:opacity-50"
                 >
@@ -1121,40 +1071,47 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         </div>
       </div>
 
-      {/* Parent agent link */}
-      {agent.parent_id && (
-        <div className="shrink-0 bg-surface border-b border-divider px-4 py-1.5">
-          <div className="max-w-2xl mx-auto">
+      {/* Agent ID + session size + parent link */}
+      <div className="shrink-0 bg-surface border-b border-divider px-4 py-1">
+        <div className="max-w-2xl mx-auto flex items-center gap-2">
+          {agent.parent_id && (
             <button
               type="button"
               onClick={() => navigate(`/agents/${agent.parent_id}`)}
-              className="text-xs text-cyan-400 hover:underline flex items-center gap-1"
+              className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
             >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
               Continued from previous session
             </button>
-          </div>
+          )}
+          <span className="ml-auto flex items-center gap-2">
+            <span
+              className="text-[10px] text-faint font-mono opacity-50 cursor-pointer active:text-cyan-400 transition-colors select-none"
+              onDoubleClick={() => {
+                navigator.clipboard.writeText(agent.id).then(() => {
+                  showToast("Copied " + agent.id);
+                });
+              }}
+              title="Double-tap to copy"
+            >{agent.id}</span>
+            {agent.session_size_bytes != null && agent.session_size_bytes > 0 && (
+              <span className="flex items-center gap-1" title="Large sessions use more tokens per message. Consider using /compact in the CLI.">
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${
+                  agent.session_size_bytes < 512000 ? "bg-green-500" :
+                  agent.session_size_bytes < 2097152 ? "bg-amber-500" : "bg-red-500"
+                }`} />
+                <span className="text-[10px] text-dim">
+                  {agent.session_size_bytes < 1024 ? `${agent.session_size_bytes} B` :
+                    agent.session_size_bytes < 1048576 ? `${(agent.session_size_bytes / 1024).toFixed(1)} KB` :
+                    `${(agent.session_size_bytes / 1048576).toFixed(1)} MB`}
+                </span>
+              </span>
+            )}
+          </span>
         </div>
-      )}
-
-      {/* Session size indicator */}
-      {agent.session_size_bytes != null && agent.session_size_bytes > 0 && (
-        <div className="shrink-0 bg-surface border-b border-divider px-4 py-1">
-          <div className="max-w-2xl mx-auto flex items-center gap-1.5">
-            <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-              agent.session_size_bytes < 512000 ? "bg-green-500" :
-              agent.session_size_bytes < 2097152 ? "bg-amber-500" : "bg-red-500"
-            }`} />
-            <span className="text-[10px] text-dim" title="Large sessions use more tokens per message. Consider using /compact in the CLI.">
-              Session: {agent.session_size_bytes < 1024 ? `${agent.session_size_bytes} B` :
-                agent.session_size_bytes < 1048576 ? `${(agent.session_size_bytes / 1024).toFixed(1)} KB` :
-                `${(agent.session_size_bytes / 1048576).toFixed(1)} MB`}
-            </span>
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* Messages */}
       <div
@@ -1167,18 +1124,21 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           <InitializingIndicator />
         ) : (
           <>
-            {messages.map((msg) => (
+            {messages.filter((m) => !(m.role === "USER" && m.status === "PENDING")).map((msg) => (
               <ChatBubble key={msg.id} message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} />
             ))}
 
-            {/* Streaming output or typing indicator while executing/syncing */}
-            {(isExecuting || isSyncing) && (
+            {/* Streaming output or typing indicator while executing */}
+            {isExecuting && (
               streamingContent !== null
                 ? (streamingContent ? <StreamingBubble content={streamingContent} project={agent.project} /> : <TypingIndicator />)
-                : isExecuting ? <TypingIndicator />
-                : isSyncing && messages.length > 0 && messages[messages.length - 1].role === "USER" && !(messages[messages.length - 1].status === "PENDING" && messages[messages.length - 1].scheduled_at) ? <TypingIndicator />
-                : null
+                : <TypingIndicator />
             )}
+
+            {/* Pending/scheduled messages always at the bottom */}
+            {messages.filter((m) => m.role === "USER" && m.status === "PENDING").map((msg) => (
+              <ChatBubble key={msg.id} message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} />
+            ))}
           </>
         )}
 
@@ -1217,6 +1177,42 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
                 type="button"
                 onClick={() => setShowStopConfirm(false)}
                 className="flex-1 min-h-[44px] rounded-lg bg-input hover:bg-elevated text-body text-sm transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResumeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-surface rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-card">
+            <h3 className="text-lg font-bold text-heading">Resume Agent</h3>
+            <p className="text-sm text-label">
+              This was a tmux CLI session. How would you like to resume it?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={resuming}
+                onClick={() => handleResume("tmux")}
+                className="min-h-[44px] rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+              >
+                {resuming ? "Resuming..." : "Resume in new tmux session"}
+              </button>
+              <button
+                type="button"
+                disabled={resuming}
+                onClick={() => handleResume("normal")}
+                className="min-h-[44px] rounded-lg bg-input hover:bg-elevated text-body font-semibold text-sm transition-colors disabled:opacity-50"
+              >
+                Resume as normal agent
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowResumeModal(false)}
+                className="min-h-[44px] rounded-lg text-dim text-sm transition-colors hover:text-body"
               >
                 Cancel
               </button>

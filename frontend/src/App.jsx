@@ -208,6 +208,7 @@ export default function App() {
   }, []);
 
   return (
+    <ErrorBoundary>
     <div className="flex flex-col h-screen bg-page text-heading min-w-[320px] overflow-x-hidden">
       {/* Main content area */}
       <main className="flex-1 min-h-0 overflow-hidden">
@@ -283,5 +284,6 @@ export default function App() {
       )}
 
     </div>
+    </ErrorBoundary>
   );
 }
