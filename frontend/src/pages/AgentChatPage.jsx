@@ -821,10 +821,10 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
             title="Send Escape to agent (dismiss prompt)"
             className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
               escCooldown
-                ? "bg-elevated text-dim cursor-not-allowed"
+                ? "bg-elevated text-dim/30 cursor-not-allowed opacity-50"
                 : escapeUrgent
                   ? "bg-red-500/80 hover:bg-red-500 text-white"
-                  : "bg-elevated hover:bg-hover text-dim hover:text-body"
+                  : "bg-surface border border-divider hover:bg-hover text-body cursor-pointer"
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
@@ -1241,6 +1241,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const isExecuting = agent.status === "EXECUTING";
   const isSyncing = agent.status === "SYNCING";
   const hasTmux = isSyncing && !!agent.tmux_pane;
+  const hasTmuxPane = !!agent.tmux_pane;
   const isStopped = agent.status === "STOPPED";
   const isError = agent.status === "ERROR";
 
@@ -1513,7 +1514,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         disabledReason={disabledReason}
         isBusy={isExecuting || (isSyncing && !hasTmux)}
         tmuxMode={hasTmux}
-        onEscape={hasTmux ? async () => { await escapeAgent(id); loadData(); } : null}
+        onEscape={hasTmuxPane && !isStopped && !isError ? async () => { await escapeAgent(id); loadData(); } : null}
         escapeUrgent={isExecuting || isSyncing || hasPendingInteractive}
       />
 
