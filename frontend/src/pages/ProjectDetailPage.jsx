@@ -28,6 +28,7 @@ import { relativeTime } from "../lib/formatters";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName } from "../lib/constants";
 import FilterTabs from "../components/FilterTabs";
 import ProjectFileModal from "../components/ProjectFileModal";
+import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import useWebSocket from "../hooks/useWebSocket";
 
 const AGENT_TABS = [
@@ -393,6 +394,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   const [refreshing, setRefreshing] = useState(false);
   const [fileModal, setFileModal] = useState(null); // "CLAUDE.md" | "PROGRESS.md" | null
+  const [showBrowser, setShowBrowser] = useState(false);
   const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
 
   // Track which agents are actively streaming via WebSocket
@@ -875,6 +877,16 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 })}
                 <button
                   type="button"
+                  onClick={() => setShowBrowser(true)}
+                  title="Browse files"
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-md bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 hover:text-heading transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v1M2 6v10a2 2 0 002 2h12a2 2 0 002-2V9" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
                   onClick={handleRefresh}
                   title="Refresh"
                   className="ml-auto w-8 h-8 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
@@ -1331,6 +1343,13 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               setFileExists({ "CLAUDE.md": c.exists, "PROGRESS.md": p.exists });
             });
           }}
+        />
+      )}
+
+      {showBrowser && (
+        <ProjectBrowserModal
+          project={name}
+          onClose={() => setShowBrowser(false)}
         />
       )}
     </div>

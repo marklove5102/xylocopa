@@ -1613,6 +1613,83 @@ async def update_project_file(name: str, body: ProjectFileUpdate, db: Session = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---- Project directory browser (read-only) ----
+
+_BROWSE_IGNORED = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", ".pycache",
+    "backups", "logs", ".next", ".nuxt", "dist", "build", ".tox",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "egg-info",
+}
+
+_BROWSE_MAX_FILE_SIZE = 512 * 1024  # 512 KB
+
+
+@app.get("/api/projects/{name}/tree")
+async def get_project_tree(name: str, depth: int = 3, db: Session = Depends(get_db)):
+    """Return directory tree for a project (top N levels, ignoring common junk dirs)."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+    if not os.path.isdir(proj.path):
+        raise HTTPException(status_code=400, detail=f"Project directory does not exist: {proj.path}")
+
+    def _walk(dirpath: str, current_depth: int):
+        if current_depth >= depth:
+            return []
+        try:
+            entries = sorted(os.listdir(dirpath))
+        except PermissionError:
+            return []
+        items = []
+        for entry in entries:
+            if entry.startswith(".") and entry not in (".env.example",):
+                # skip dotfiles except .env.example
+                if entry not in (".env",):
+                    continue
+            full = os.path.join(dirpath, entry)
+            rel = os.path.relpath(full, proj.path)
+            if os.path.isdir(full):
+                if entry.lower() in _BROWSE_IGNORED or entry.endswith(".egg-info"):
+                    continue
+                children = _walk(full, current_depth + 1)
+                items.append({"name": entry, "path": rel, "type": "dir", "children": children})
+            else:
+                items.append({"name": entry, "path": rel, "type": "file"})
+        return items
+
+    tree = _walk(proj.path, 0)
+    return {"tree": tree, "root": proj.path}
+
+
+@app.get("/api/projects/{name}/browse")
+async def browse_project_file(name: str, path: str, db: Session = Depends(get_db)):
+    """Read a single file from a project directory (read-only, with size limit)."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    # Resolve and validate path is within project
+    filepath = os.path.normpath(os.path.join(proj.path, path))
+    if not filepath.startswith(proj.path + os.sep) and filepath != proj.path:
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    size = os.path.getsize(filepath)
+    if size > _BROWSE_MAX_FILE_SIZE:
+        return {"path": path, "content": None, "truncated": True, "size": size,
+                "message": f"File too large ({size // 1024} KB). Max {_BROWSE_MAX_FILE_SIZE // 1024} KB."}
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return {"path": path, "content": content, "truncated": False, "size": size}
+    except (OSError, UnicodeDecodeError) as e:
+        return {"path": path, "content": None, "truncated": False, "size": size,
+                "message": f"Cannot read file: {e}"}
+
+
 # ---- Tasks (agent-sourced: each USER message = one task) ----
 
 @app.get("/api/tasks", response_model=list[AgentTaskBrief])
