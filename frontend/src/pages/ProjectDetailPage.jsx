@@ -367,7 +367,21 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const clearAllDrafts = () => { clearPrompt(); clearModel(); clearEffort(); };
   const [submitting, setSubmitting] = useState(false);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
-  const [attachments, setAttachments] = useState([]);
+  const attachmentCacheKey = `draft:project-agent:${name}:attachments`;
+  const [attachments, setAttachments] = useState(() => {
+    try {
+      const cached = localStorage.getItem(attachmentCacheKey);
+      if (cached) {
+        return JSON.parse(cached).map((a) => ({
+          ...a,
+          uploading: false,
+          file: null,
+          previewUrl: a.thumbnailUrl || null,
+        }));
+      }
+    } catch { /* ignore */ }
+    return [];
+  });
   const [dragOver, setDragOver] = useState(false);
   const dragCountRef = useRef(0);
   const fileInputRef = useRef(null);
@@ -572,12 +586,34 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     sessions: sessions != null ? sessions.length : 0,
   };
 
-  // Cleanup blob URLs on unmount
+  // Cleanup blob URLs on unmount (only revoke actual blob: URLs, not server URLs)
   useEffect(() => {
     return () => {
-      attachments.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+      attachments.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); });
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync completed attachments to localStorage cache
+  useEffect(() => {
+    const completed = attachments.filter((a) => !a.uploading && a.uploadedPath);
+    if (completed.length > 0) {
+      const toCache = completed.map((a) => ({
+        id: a.id,
+        uploadedPath: a.uploadedPath,
+        originalName: a.originalName,
+        size: a.size,
+        mimeType: a.mimeType || a.file?.type || null,
+        thumbnailUrl: a.thumbnailUrl || (
+          (a.mimeType || a.file?.type || "").startsWith("image/")
+            ? `/api/uploads/${a.uploadedPath.split("/").pop()}`
+            : null
+        ),
+      }));
+      try { localStorage.setItem(attachmentCacheKey, JSON.stringify(toCache)); } catch { /* ignore */ }
+    } else {
+      try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
+    }
+  }, [attachments, attachmentCacheKey]);
 
   const addFiles = (files) => {
     for (const file of files) {
@@ -590,7 +626,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       const previewUrl = isImage ? URL.createObjectURL(file) : null;
       setAttachments((prev) => [...prev, {
         id, file, previewUrl, uploading: true, uploadedPath: null,
-        originalName: file.name, size: file.size,
+        originalName: file.name, size: file.size, mimeType: file.type,
       }]);
       uploadFile(file).then((result) => {
         setAttachments((prev) => prev.map((a) =>
@@ -619,16 +655,17 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const removeAttachment = (id) => {
     setAttachments((prev) => {
       const att = prev.find((a) => a.id === id);
-      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      if (att?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(att.previewUrl);
       return prev.filter((a) => a.id !== id);
     });
   };
 
   const clearAttachments = () => {
     setAttachments((prev) => {
-      prev.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+      prev.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); });
       return [];
     });
+    try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
   };
 
   const buildPromptText = (baseText, atts) => {
