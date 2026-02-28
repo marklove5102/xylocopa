@@ -215,6 +215,33 @@ export async function transcribeVoice(audioBlob, mimeType) {
   return res.json();
 }
 
+export async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const headers = {};
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/api/upload`, {
+    method: "POST",
+    body: formData,
+    headers,
+  });
+  if (res.status === 401) {
+    clearAuthToken();
+    if (window.location.pathname !== "/login") {
+      window.dispatchEvent(new Event("auth-expired"));
+    }
+    throw new Error("Not authenticated");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function generateWorktreeName(prompt) {
   const res = await authedFetch("/api/worktree-name", {
     method: "POST",

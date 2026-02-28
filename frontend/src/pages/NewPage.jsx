@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { createAgent, launchTmuxAgent, createProject, sendMessage, generateWorktreeName } from "../lib/api";
+import { createAgent, launchTmuxAgent, createProject, sendMessage, generateWorktreeName, uploadFile } from "../lib/api";
 import { MODEL_OPTIONS } from "../lib/constants";
 import ProjectSelector from "../components/ProjectSelector";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 import SendLaterPicker from "../components/SendLaterPicker";
+import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import PageHeader from "../components/PageHeader";
 
@@ -117,16 +118,19 @@ export default function NewPage({ theme, onToggleTheme }) {
 // ---------- New Agent Form ----------
 
 function NewAgentForm({ showToast, navigate }) {
-  const [project, setProject] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState(MODEL_OPTIONS[0].value);
-  const [effort, setEffort] = useState("high");
+  const [project, setProject, clearProject] = useDraft("create-agent:project", "");
+  const [prompt, setPrompt, clearPrompt] = useDraft("create-agent:prompt", "");
+  const [model, setModel, clearModel] = useDraft("create-agent:model", MODEL_OPTIONS[0].value);
+  const [effort, setEffort, clearEffort] = useDraft("create-agent:effort", "high");
   const [worktree, setWorktree] = useState(null);
   const [syncMode, setSyncMode] = useState(true);
   const [skipPermissions, setSkipPermissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const clearAllDrafts = () => { clearProject(); clearPrompt(); clearModel(); clearEffort(); };
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const voice = useVoiceRecorder({
     onTranscript: (text) => setPrompt((prev) => (prev ? prev + " " + text : text)),
@@ -140,17 +144,87 @@ function NewAgentForm({ showToast, navigate }) {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [prompt]);
 
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      attachments.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const buildPromptText = (baseText, atts) => {
+    let msg = baseText;
+    for (const a of atts) {
+      if (a.uploadedPath) msg += `\n[Attached file: ${a.uploadedPath}]`;
+    }
+    return msg;
+  };
+
+  const clearAttachments = () => {
+    setAttachments((prev) => {
+      prev.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+      return [];
+    });
+  };
+
+  const handleFileSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024) {
+        showToast(`${file.name} exceeds 50 MB limit`, "error");
+        continue;
+      }
+      const id = Math.random().toString(36).slice(2, 10);
+      const isImage = file.type.startsWith("image/");
+      const previewUrl = isImage ? URL.createObjectURL(file) : null;
+
+      setAttachments((prev) => [...prev, {
+        id, file, previewUrl, uploading: true, uploadedPath: null,
+        originalName: file.name, size: file.size,
+      }]);
+
+      uploadFile(file).then((result) => {
+        setAttachments((prev) => prev.map((a) =>
+          a.id === id ? { ...a, uploading: false, uploadedPath: result.path } : a
+        ));
+      }).catch((err) => {
+        setAttachments((prev) => prev.filter((a) => a.id !== id));
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        showToast(`Upload failed: ${err.message}`, "error");
+      });
+    }
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => {
+      const att = prev.find((a) => a.id === id);
+      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  const anyUploading = attachments.some((a) => a.uploading);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!project) { showToast("Select a project.", "error"); return; }
-    if (!prompt.trim()) { showToast("Enter a description.", "error"); return; }
+    if (!prompt.trim() && attachments.length === 0) { showToast("Enter a description.", "error"); return; }
+    if (anyUploading) { showToast("Uploads still in progress...", "error"); return; }
+    const uploaded = attachments.filter((a) => a.uploadedPath);
+    const fullPrompt = buildPromptText(prompt.trim(), uploaded);
     setSubmitting(true);
     try {
       if (syncMode) {
-        const agent = await launchTmuxAgent({ project, prompt: prompt.trim(), model, effort, worktree, skip_permissions: skipPermissions });
+        const agent = await launchTmuxAgent({ project, prompt: fullPrompt, model, effort, worktree, skip_permissions: skipPermissions });
+        clearAllDrafts();
+        clearAttachments();
         navigate(`/agents/${agent.id}`);
       } else {
-        const agent = await createAgent({ project, prompt: prompt.trim(), mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
+        const agent = await createAgent({ project, prompt: fullPrompt, mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
+        clearAllDrafts();
+        clearAttachments();
         showToast("Agent created!");
         setTimeout(() => navigate(`/agents/${agent.id}`), 400);
       }
@@ -163,12 +237,17 @@ function NewAgentForm({ showToast, navigate }) {
 
   const handleSchedule = async (scheduledAt) => {
     if (!project) { showToast("Select a project.", "error"); return; }
-    if (!prompt.trim()) { showToast("Enter a description.", "error"); return; }
+    if (!prompt.trim() && attachments.length === 0) { showToast("Enter a description.", "error"); return; }
+    if (anyUploading) { showToast("Uploads still in progress...", "error"); return; }
+    const uploaded = attachments.filter((a) => a.uploadedPath);
+    const fullPrompt = buildPromptText(prompt.trim(), uploaded);
     setShowSchedulePicker(false);
     setSubmitting(true);
     try {
-      const agent = await createAgent({ project, prompt: prompt.trim(), mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
-      await sendMessage(agent.id, prompt.trim(), { queue: true, scheduled_at: scheduledAt });
+      const agent = await createAgent({ project, prompt: fullPrompt, mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
+      await sendMessage(agent.id, fullPrompt, { queue: true, scheduled_at: scheduledAt });
+      clearAllDrafts();
+      clearAttachments();
       const when = new Date(scheduledAt);
       showToast(`Scheduled for ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       setTimeout(() => navigate(`/agents/${agent.id}`), 400);
@@ -178,6 +257,8 @@ function NewAgentForm({ showToast, navigate }) {
       setSubmitting(false);
     }
   };
+
+  const hasContent = prompt.trim() || attachments.some((a) => a.uploadedPath);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -204,7 +285,48 @@ function NewAgentForm({ showToast, navigate }) {
             rows={3}
             className="w-full min-h-[72px] max-h-[180px] rounded-xl bg-transparent px-3 py-2 text-sm text-heading placeholder-hint resize-none focus:outline-none transition-colors"
           />
-          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1.5 items-center px-1">
+          {/* Attachment preview chips */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {attachments.map((att) => (
+                <div key={att.id} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-elevated text-xs max-w-[140px]">
+                  {att.previewUrl ? (
+                    <img src={att.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                  ) : (
+                    <svg className="w-4 h-4 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                  )}
+                  <span className="truncate text-label flex-1 min-w-0">{att.originalName}</span>
+                  {att.uploading ? (
+                    <svg className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <button type="button" onClick={() => removeAttachment(att.id)} className="text-dim hover:text-heading shrink-0">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={handleFileSelect} />
+          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-1.5 items-center px-1">
+            {/* Attach button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach files"
+              className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors bg-elevated hover:bg-hover text-label"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
             <div className="min-w-0">
               {voice.recording && voice.analyserNode && (
                 <WaveformVisualizer analyserNode={voice.analyserNode} remainingSeconds={voice.remainingSeconds} onTap={voice.toggleRecording} className="h-8" />
@@ -220,9 +342,9 @@ function NewAgentForm({ showToast, navigate }) {
               <button
                 type="button"
                 onClick={() => setShowSchedulePicker((v) => !v)}
-                disabled={submitting || !project || !prompt.trim()}
+                disabled={submitting || !project || !hasContent || anyUploading}
                 className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                  submitting || !project || !prompt.trim()
+                  submitting || !project || !hasContent || anyUploading
                     ? "bg-elevated text-dim cursor-not-allowed"
                     : "bg-amber-500 hover:bg-amber-400 text-white"
                 }`}
@@ -241,9 +363,9 @@ function NewAgentForm({ showToast, navigate }) {
             </div>
             <button
               type="submit"
-              disabled={submitting || !project || !prompt.trim()}
+              disabled={submitting || !project || !hasContent || anyUploading}
               className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                submitting || !project || !prompt.trim()
+                submitting || !project || !hasContent || anyUploading
                   ? "bg-elevated text-dim cursor-not-allowed"
                   : "bg-cyan-500 hover:bg-cyan-400 text-white"
               }`}
@@ -352,10 +474,11 @@ function NewAgentForm({ showToast, navigate }) {
 // ---------- New Project Form ----------
 
 function NewProjectForm({ showToast, navigate }) {
-  const [name, setName] = useState("");
-  const [gitUrl, setGitUrl] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName, clearName] = useDraft("create-project:name", "");
+  const [gitUrl, setGitUrl, clearGitUrl] = useDraft("create-project:gitUrl", "");
+  const [description, setDescription, clearDesc] = useDraft("create-project:description", "");
   const [submitting, setSubmitting] = useState(false);
+  const clearAllDrafts = () => { clearName(); clearGitUrl(); clearDesc(); };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -366,6 +489,7 @@ function NewProjectForm({ showToast, navigate }) {
       if (gitUrl.trim()) body.git_url = gitUrl.trim();
       if (description.trim()) body.description = description.trim();
       await createProject(body);
+      clearAllDrafts();
       showToast("Project created!");
       setTimeout(() => navigate("/projects"), 600);
     } catch (err) {

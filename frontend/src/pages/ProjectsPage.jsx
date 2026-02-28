@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { fetchAllFolders, fetchTrashFolders, createProject, archiveProject, scanProjects } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import BotIcon from "../components/BotIcon";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
+import useDraft from "../hooks/useDraft";
 
 function botState(folder) {
   if (!folder.active) return "idle";
@@ -13,7 +17,39 @@ function botState(folder) {
   return "idle";
 }
 
-function FolderCard({ folder, onClick, onActivate, onArchive, busy }) {
+function DragHandle({ listeners, attributes }) {
+  return (
+    <button
+      type="button"
+      {...listeners}
+      {...attributes}
+      className="touch-none p-1 -ml-2 mr-1 rounded text-faint hover:text-label transition-colors cursor-grab active:cursor-grabbing"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+        <circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" />
+        <circle cx="5" cy="8" r="1.5" /><circle cx="11" cy="8" r="1.5" />
+        <circle cx="5" cy="13" r="1.5" /><circle cx="11" cy="13" r="1.5" />
+      </svg>
+    </button>
+  );
+}
+
+function SortableFolderCard(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.folder.name });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <FolderCard {...props} dragHandleProps={{ listeners, attributes }} />
+    </div>
+  );
+}
+
+function FolderCard({ folder, onClick, onActivate, onArchive, busy, dragHandleProps }) {
   const state = botState(folder);
 
   return (
@@ -23,6 +59,7 @@ function FolderCard({ folder, onClick, onActivate, onArchive, busy }) {
       className="w-full text-left rounded-xl bg-surface shadow-card p-5 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
     >
       <div className="flex items-start gap-4">
+        {dragHandleProps && <DragHandle {...dragHandleProps} />}
         <BotIcon state={state} className="w-10 h-10 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -99,6 +136,14 @@ function FolderCard({ folder, onClick, onActivate, onArchive, busy }) {
   );
 }
 
+const SORT_OPTIONS = [
+  { value: "custom", label: "Custom" },
+  { value: "name-asc", label: "Name A-Z" },
+  { value: "name-desc", label: "Name Z-A" },
+  { value: "updated-new", label: "Newest" },
+  { value: "updated-old", label: "Oldest" },
+];
+
 export default function ProjectsPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const [folders, setFolders] = useState([]);
@@ -107,8 +152,14 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   const [busy, setBusy] = useState(null); // folder name currently being toggled
   const [refreshing, setRefreshing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useDraft("ui:projects:filter", "ALL");
   const [trashCount, setTrashCount] = useState(0);
+  const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
+  const [customOrder, setCustomOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("projects-custom-order")) || []; }
+    catch { return []; }
+  });
+  const [activeDragId, setActiveDragId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -156,15 +207,82 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     return () => clearInterval(interval);
   }, [load]);
 
+  // Sync customOrder when folders load — append any new projects
+  useEffect(() => {
+    if (folders.length === 0) return;
+    setCustomOrder((prev) => {
+      const names = folders.map((f) => f.name);
+      const existing = prev.filter((n) => names.includes(n));
+      const newNames = names.filter((n) => !prev.includes(n)).sort();
+      if (newNames.length === 0 && existing.length === prev.length) return prev;
+      const updated = [...existing, ...newNames];
+      localStorage.setItem("projects-custom-order", JSON.stringify(updated));
+      return updated;
+    });
+  }, [folders]);
+
+  const handleSortChange = useCallback((value) => {
+    setSortMode(value);
+    localStorage.setItem("projects-sort-mode", value);
+  }, []);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  );
+
+  const handleDragStart = useCallback((event) => setActiveDragId(event.active.id), []);
+  const handleDragEnd = useCallback((event) => {
+    setActiveDragId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setCustomOrder((prev) => {
+      const oldIdx = prev.indexOf(active.id);
+      const newIdx = prev.indexOf(over.id);
+      if (oldIdx === -1 || newIdx === -1) return prev;
+      const updated = arrayMove(prev, oldIdx, newIdx);
+      localStorage.setItem("projects-custom-order", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+  const handleDragCancel = useCallback(() => setActiveDragId(null), []);
+
   const activeCount = folders.filter((f) => f.active).length;
   const inactiveCount = folders.filter((f) => !f.active).length;
 
-  const filtered = folders
-    .filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active))
-    .sort((a, b) => {
-      if (a.active !== b.active) return a.active ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  const filtered = useMemo(() => {
+    const base = folders.filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active));
+    switch (sortMode) {
+      case "name-asc":
+        return [...base].sort((a, b) => (a.display_name || a.name).localeCompare(b.display_name || b.name));
+      case "name-desc":
+        return [...base].sort((a, b) => (b.display_name || b.name).localeCompare(a.display_name || a.name));
+      case "updated-new":
+        return [...base].sort((a, b) => {
+          if (!a.last_activity && !b.last_activity) return 0;
+          if (!a.last_activity) return 1;
+          if (!b.last_activity) return -1;
+          return new Date(b.last_activity) - new Date(a.last_activity);
+        });
+      case "updated-old":
+        return [...base].sort((a, b) => {
+          if (!a.last_activity && !b.last_activity) return 0;
+          if (!a.last_activity) return 1;
+          if (!b.last_activity) return -1;
+          return new Date(a.last_activity) - new Date(b.last_activity);
+        });
+      case "custom":
+      default:
+        return [...base].sort((a, b) => {
+          const ai = customOrder.indexOf(a.name);
+          const bi = customOrder.indexOf(b.name);
+          if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        });
+    }
+  }, [folders, filter, sortMode, customOrder]);
 
   const FILTER_TABS = [
     { key: "ALL", label: "All" },
@@ -203,15 +321,50 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     </button>
   );
 
+  const sortDropdown = (
+    <select
+      value={sortMode}
+      onChange={(e) => handleSortChange(e.target.value)}
+      className="w-full h-[36px] pl-3 pr-7 text-sm font-medium leading-[36px] rounded-full bg-surface text-label border-none outline-none appearance-none text-center"
+      style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
+    >
+      {SORT_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} actions={headerButtons}>
-        <FilterTabs
-          tabs={FILTER_TABS}
-          active={filter}
-          onChange={setFilter}
-          counts={{ ALL: folders.length, ACTIVE: activeCount, INACTIVE: inactiveCount }}
-        />
+        <div className="flex items-center px-4 pb-3 gap-1.5">
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0">
+            {FILTER_TABS.map((tab) => {
+              const isActive = filter === tab.key;
+              const count = { ALL: folders.length, ACTIVE: activeCount, INACTIVE: inactiveCount }[tab.key];
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setFilter(tab.key)}
+                  className={`shrink-0 min-h-[36px] px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
+                    isActive
+                      ? "bg-cyan-600 text-white"
+                      : "bg-surface text-label hover:bg-input hover:text-body"
+                  }`}
+                >
+                  {tab.label}
+                  {count != null && (
+                    <span className={`ml-1.5 text-xs ${isActive ? "text-cyan-200" : "text-faint"}`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="ml-auto flex-1 max-w-[8rem]">{sortDropdown}</div>
+        </div>
       </PageHeader>
       {/* Scan result toast */}
       {scanResult && (
@@ -253,18 +406,56 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {filtered.map((folder) => (
-          <FolderCard
-            key={folder.name}
-            folder={folder}
-            onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
-            onActivate={handleActivate}
-            onArchive={handleArchive}
-            busy={busy === folder.name}
-          />
-        ))}
-      </div>
+      {sortMode === "custom" ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
+          <SortableContext items={filtered.map((f) => f.name)} strategy={verticalListSortingStrategy}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {filtered.map((folder) => (
+                <SortableFolderCard
+                  key={folder.name}
+                  folder={folder}
+                  onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
+                  onActivate={handleActivate}
+                  onArchive={handleArchive}
+                  busy={busy === folder.name}
+                />
+              ))}
+            </div>
+          </SortableContext>
+          <DragOverlay>
+            {activeDragId ? (
+              <div className="opacity-90 scale-105 shadow-xl rounded-xl">
+                <FolderCard
+                  folder={filtered.find((f) => f.name === activeDragId)}
+                  onClick={() => {}}
+                  onActivate={() => {}}
+                  onArchive={() => {}}
+                  busy={false}
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {filtered.map((folder) => (
+            <FolderCard
+              key={folder.name}
+              folder={folder}
+              onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
+              onActivate={handleActivate}
+              onArchive={handleArchive}
+              busy={busy === folder.name}
+            />
+          ))}
+        </div>
+      )}
 
       {trashCount > 0 && (
         <button

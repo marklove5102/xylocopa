@@ -16,6 +16,7 @@ import {
   updateAgent,
   answerAgent,
   escapeAgent,
+  uploadFile,
 } from "../lib/api";
 import { relativeTime, renderMarkdown, extractFileAttachments } from "../lib/formatters";
 
@@ -43,6 +44,7 @@ import FileAttachments from "../components/FilePreview";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName } from "../lib/constants";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
+import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { isAgentMuted, setAgentMuted, clearAgentNotified } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
@@ -462,8 +464,8 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   };
 
   const attachments = useMemo(
-    () => (!isUser ? extractFileAttachments(message.content, project) : []),
-    [isUser, message.content, project],
+    () => extractFileAttachments(message.content, project),
+    [message.content, project],
   );
 
   const scheduledTime = isScheduled
@@ -711,23 +713,16 @@ import SendLaterPicker from "../components/SendLaterPicker";
 // --- Chat Input ---
 
 function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode, onEscape, escapeUrgent, escapeAvailable = true, escapeDisabled = false }) {
-  const draftKey = agentId ? `agenthive-draft-${agentId}` : null;
-  const [text, _setText] = useState(() => {
-    if (draftKey) {
-      try { return sessionStorage.getItem(draftKey) || ""; } catch { /* ignore */ }
-    }
-    return "";
-  });
-  const setText = (v) => {
-    const next = typeof v === "function" ? v(text) : v;
-    _setText(next);
-    if (draftKey) {
-      try { if (next) sessionStorage.setItem(draftKey, next); else sessionStorage.removeItem(draftKey); } catch { /* ignore */ }
-    }
-  };
+  const [text, setText] = useDraft(agentId ? `chat:${agentId}` : null, "");
   const [showPicker, setShowPicker] = useState(false);
   const [escCooldown, setEscCooldown] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploadError, setUploadError] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const dragCountRef = useRef(0);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const pendingSendRef = useRef(null);
 
   const voice = useVoiceRecorder({
     onTranscript: (t) => setText((prev) => (prev ? prev + " " + t : t)),
@@ -741,6 +736,13 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
     }
   }, [voiceError]);
 
+  useEffect(() => {
+    if (uploadError) {
+      const t = setTimeout(() => setUploadError(null), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [uploadError]);
+
   // Auto-grow textarea
   useEffect(() => {
     const el = textareaRef.current;
@@ -749,18 +751,110 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [text]);
 
-  const handleSend = () => {
-    if (!text.trim() || disabled) return;
-    onSend(text.trim());
-    setText("");
-  };
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      attachments.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSchedule = (scheduledAt) => {
-    if (!text.trim()) return;
-    onSendLater(text.trim(), scheduledAt);
+  const buildMessageText = useCallback((baseText, atts) => {
+    let msg = baseText;
+    for (const a of atts) {
+      if (a.uploadedPath) msg += `\n[Attached file: ${a.uploadedPath}]`;
+    }
+    return msg;
+  }, []);
+
+  const clearAttachments = useCallback(() => {
+    setAttachments((prev) => {
+      prev.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+      return [];
+    });
+  }, []);
+
+  const handleSend = useCallback(() => {
+    const uploading = attachments.some((a) => a.uploading);
+    if (uploading) {
+      pendingSendRef.current = "send";
+      return;
+    }
+    const uploaded = attachments.filter((a) => a.uploadedPath);
+    if (!text.trim() && uploaded.length === 0) return;
+    if (disabled && !isBusy) return;
+    const msg = buildMessageText(text.trim(), uploaded);
+    onSend(msg);
     setText("");
+    clearAttachments();
+    pendingSendRef.current = null;
+  }, [text, attachments, disabled, isBusy, onSend, setText, buildMessageText, clearAttachments]);
+
+  const handleSchedule = useCallback((scheduledAt) => {
+    const uploading = attachments.some((a) => a.uploading);
+    if (uploading) {
+      pendingSendRef.current = { type: "schedule", scheduledAt };
+      return;
+    }
+    const uploaded = attachments.filter((a) => a.uploadedPath);
+    if (!text.trim() && uploaded.length === 0) return;
+    const msg = buildMessageText(text.trim(), uploaded);
+    onSendLater(msg, scheduledAt);
+    setText("");
+    clearAttachments();
     setShowPicker(false);
-  };
+    pendingSendRef.current = null;
+  }, [text, attachments, onSendLater, setText, buildMessageText, clearAttachments]);
+
+  // Check pending send when attachments finish uploading
+  useEffect(() => {
+    if (!pendingSendRef.current) return;
+    if (attachments.some((a) => a.uploading)) return;
+    const pending = pendingSendRef.current;
+    if (pending === "send") {
+      handleSend();
+    } else if (pending?.type === "schedule") {
+      handleSchedule(pending.scheduledAt);
+    }
+  }, [attachments, handleSend, handleSchedule]);
+
+  const handleFileSelect = useCallback(async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024) {
+        setUploadError(`${file.name} exceeds 50 MB limit`);
+        continue;
+      }
+      const id = Math.random().toString(36).slice(2, 10);
+      const isImage = file.type.startsWith("image/");
+      const previewUrl = isImage ? URL.createObjectURL(file) : null;
+
+      setAttachments((prev) => [...prev, {
+        id, file, previewUrl, uploading: true, uploadedPath: null,
+        originalName: file.name, size: file.size,
+      }]);
+
+      uploadFile(file).then((result) => {
+        setAttachments((prev) => prev.map((a) =>
+          a.id === id ? { ...a, uploading: false, uploadedPath: result.path } : a
+        ));
+      }).catch((err) => {
+        setAttachments((prev) => prev.filter((a) => a.id !== id));
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setUploadError(`Upload failed: ${err.message}`);
+      });
+    }
+  }, []);
+
+  const removeAttachment = useCallback((id) => {
+    setAttachments((prev) => {
+      const att = prev.find((a) => a.id === id);
+      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -782,6 +876,9 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
   };
 
   const canType = !disabled || isBusy;
+  const anyUploading = attachments.some((a) => a.uploading);
+  const hasContent = text.trim() || attachments.some((a) => a.uploadedPath);
+  const sendDisabled = (disabled && !isBusy) || !hasContent || anyUploading;
 
   // No-op: keyboard dismiss handled by App-level focusout micro-scroll
   const handleBlur = useCallback(() => {}, []);
@@ -800,7 +897,51 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
           rows={2}
           className="w-full min-h-[48px] max-h-[180px] rounded-xl bg-transparent px-3 py-2 text-sm text-heading placeholder-hint resize-none focus:outline-none transition-colors disabled:opacity-50"
         />
+        {/* Attachment preview chips */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {attachments.map((att) => (
+              <div key={att.id} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-elevated text-xs max-w-[140px]">
+                {att.previewUrl ? (
+                  <img src={att.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                ) : (
+                  <svg className="w-4 h-4 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                  </svg>
+                )}
+                <span className="truncate text-label flex-1 min-w-0">{att.originalName}</span>
+                {att.uploading ? (
+                  <svg className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <button type="button" onClick={() => removeAttachment(att.id)} className="text-dim hover:text-heading shrink-0">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {(uploadError || voiceError) && (
+          <p className="text-xs text-red-400 px-1">{uploadError || voiceError}</p>
+        )}
+        <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={handleFileSelect} />
         <div className="flex items-center gap-1.5 px-1">
+          {/* Attach button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach files"
+            className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors bg-elevated hover:bg-hover text-label"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
           <div className="flex-1 min-w-0">
             {voice.recording && voice.analyserNode && (
               <WaveformVisualizer analyserNode={voice.analyserNode} remainingSeconds={voice.remainingSeconds} onTap={voice.toggleRecording} className="h-8" />
@@ -809,7 +950,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
           <VoiceRecorder
             recording={voice.recording}
             voiceLoading={voice.voiceLoading}
-            micError={voice.micError || voiceError}
+            micError={voice.micError}
             onToggle={voice.toggleRecording}
           />
           {/* Escape button — sends Esc to tmux (always visible for cli_sync agents, disabled when stopped/error) */}
@@ -836,11 +977,11 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
           <div className="relative">
             <button
               type="button"
-              onClick={() => text.trim() && setShowPicker(!showPicker)}
-              disabled={!text.trim()}
+              onClick={() => hasContent && setShowPicker(!showPicker)}
+              disabled={!hasContent}
               title="Schedule message for later"
               className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                !text.trim()
+                !hasContent
                   ? "bg-elevated text-dim cursor-not-allowed"
                   : "bg-amber-500 hover:bg-amber-400 text-white"
               }`}
@@ -860,9 +1001,9 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
           <button
             type="button"
             onClick={handleSend}
-            disabled={disabled || !text.trim()}
+            disabled={sendDisabled}
             className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-              disabled || !text.trim()
+              sendDisabled
                 ? "bg-elevated text-dim cursor-not-allowed"
                 : "bg-cyan-500 hover:bg-cyan-400 text-white"
             }`}
@@ -1012,20 +1153,78 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   // Auto-scroll to bottom on new messages or streaming content
   const scrollContainerRef = useRef(null);
   const userScrolledUp = useRef(false);
+  const scrollSaveTimer = useRef(null);
+  const prevMsgCount = useRef(null);
+  const scrollKey = `scroll:chat:${id}`;
+  const scrollCountKey = `scroll:chat:${id}:count`;
 
   // Detect if user has scrolled up (to avoid forcing scroll during streaming)
+  // and persist scroll position (debounced) for restore on navigate-back
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     userScrolledUp.current = distFromBottom > 100;
-  }, []);
+    clearTimeout(scrollSaveTimer.current);
+    scrollSaveTimer.current = setTimeout(() => {
+      try { sessionStorage.setItem(scrollKey, String(el.scrollTop)); } catch { /* ignore */ }
+    }, 200);
+  }, [scrollKey]);
+
+  // Save scroll position on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(scrollSaveTimer.current);
+      const el = scrollContainerRef.current;
+      if (el) {
+        try { sessionStorage.setItem(scrollKey, String(el.scrollTop)); } catch { /* ignore */ }
+      }
+    };
+  }, [scrollKey]);
 
   useEffect(() => {
+    if (loading) return;
+    const isFirstLoad = prevMsgCount.current === null;
+    const msgCountChanged = prevMsgCount.current !== null && prevMsgCount.current !== messages.length;
+    prevMsgCount.current = messages.length;
+
+    if (isFirstLoad) {
+      // Restore saved position if message count matches (no new messages since last visit)
+      try {
+        const savedCount = sessionStorage.getItem(scrollCountKey);
+        const savedPos = sessionStorage.getItem(scrollKey);
+        if (savedPos && savedCount && Number(savedCount) === messages.length) {
+          const el = scrollContainerRef.current;
+          if (el) {
+            el.scrollTop = Number(savedPos);
+            userScrolledUp.current = true;
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+      // No saved position or count mismatch — scroll to bottom
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      return;
+    }
+
+    // New messages arrived after initial load — clear saved position, auto-scroll
+    if (msgCountChanged) {
+      try {
+        sessionStorage.removeItem(scrollKey);
+        sessionStorage.setItem(scrollCountKey, String(messages.length));
+      } catch { /* ignore */ }
+    }
     if (!userScrolledUp.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length, streamingContent]);
+  }, [loading, messages.length, streamingContent, scrollKey, scrollCountKey]);
+
+  // Keep saved message count in sync for future visits
+  useEffect(() => {
+    if (!loading && messages.length > 0) {
+      try { sessionStorage.setItem(scrollCountKey, String(messages.length)); } catch { /* ignore */ }
+    }
+  }, [loading, messages.length, scrollCountKey]);
 
   // WebSocket: re-fetch on new_message events, handle streaming
   const { lastEvent, sendWsMessage } = useWebSocket();

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
+import useDraft from "../hooks/useDraft";
 import {
   fetchProjects as apiFetchProjects,
   fetchGitLog,
@@ -70,7 +71,7 @@ export default function GitPage({ theme, onToggleTheme }) {
 
   // --- State ---
   const [projects, setProjects] = useState([]);
-  const [selectedProject, setSelectedProject] = useState(null);
+  const [selectedProject, setSelectedProject] = useDraft("ui:git:project", null);
   const [commits, setCommits] = useState([]);
   const [branches, setBranches] = useState([]);
   const [status, setStatus] = useState(null);
@@ -105,9 +106,19 @@ export default function GitPage({ theme, onToggleTheme }) {
       try {
         const data = await apiFetchProjects();
         if (!cancelled) {
-          setProjects(data);
-          if (data.length > 0) {
-            setSelectedProject(data[0].name);
+          // Sort by latest agent activity (most recent first)
+          const sorted = [...data].sort((a, b) => {
+            const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
+            const tb = b.last_activity ? new Date(b.last_activity).getTime() : 0;
+            return tb - ta;
+          });
+          setProjects(sorted);
+          if (sorted.length > 0) {
+            // Keep saved selection if it still exists in the list
+            setSelectedProject((prev) => {
+              if (prev && sorted.some((p) => p.name === prev)) return prev;
+              return sorted[0].name;
+            });
           }
         }
       } catch (err) {

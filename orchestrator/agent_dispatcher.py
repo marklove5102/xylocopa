@@ -1499,6 +1499,10 @@ class AgentDispatcher:
             if not agent.muted and not self._is_agent_in_use(agent.id, agent.tmux_pane):
                 from push import send_push_notification
                 status_emoji = "\u274c" if is_error else "\u2705"
+                logger.info(
+                    "PUSH_DEBUG: harvest_completed sending for %s: %s",
+                    agent.id, preview[:50],
+                )
                 send_push_notification(
                     title=f"{status_emoji} {agent.name}",
                     body=preview[:100],
@@ -2990,6 +2994,8 @@ class AgentDispatcher:
         last_turn_count = 0
         last_tail_hash = ""  # Hash of last turn content to detect updates
         is_generating = False
+        pending_push_body = ""  # Deferred notification until response stabilizes
+        pending_push_idle = 0   # Consecutive idle polls since pending was set
 
         def _content_hash(content: str) -> str:
             """Fast hash of content for change detection."""
@@ -3200,6 +3206,33 @@ class AgentDispatcher:
 
             if current_size <= last_size:
                 idle_polls += 1
+                # Flush deferred push notification after response stabilized
+                # (require 3+ consecutive idle polls = ~9s of no file growth
+                # to avoid firing during brief pauses in JSONL writes)
+                if pending_push_body:
+                    pending_push_idle += 1
+                    if pending_push_idle >= 3:
+                        logger.info(
+                            "PUSH_DEBUG: flushing deferred notification for %s "
+                            "after %d idle polls: %s",
+                            agent_id, pending_push_idle, pending_push_body[:50],
+                        )
+                        db_push = SessionLocal()
+                        try:
+                            ag_push = db_push.get(Agent, agent_id)
+                            if ag_push and not ag_push.muted:
+                                self._refresh_pane_attached()
+                                if not self._is_agent_in_use(agent_id, ag_push.tmux_pane):
+                                    from push import send_push_notification
+                                    send_push_notification(
+                                        title=_sync_agent_name or f"Agent {agent_id[:8]}",
+                                        body=pending_push_body,
+                                        url=f"/agents/{agent_id}",
+                                    )
+                        finally:
+                            db_push.close()
+                        pending_push_body = ""
+                        pending_push_idle = 0
                 # Periodically check if we should still be syncing
                 if idle_polls % 10 == 0:
                     db = SessionLocal()
@@ -3333,6 +3366,7 @@ class AgentDispatcher:
                         return
                 continue
             idle_polls = 0
+            pending_push_idle = 0  # File grew — response may still be generating
             last_size = current_size
 
             # Parse full file for turns
@@ -3425,6 +3459,14 @@ class AgentDispatcher:
                         self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
                         last_tail_hash = tail_hash
                         is_generating = False
+                        # Update deferred push body with latest content
+                        if pending_push_body:
+                            pending_push_body = (_last_content or "")[:120]
+                            pending_push_idle = 0  # Reset — still generating
+                            logger.info(
+                                "PUSH_DEBUG: pending updated (turn grew) for %s: %s",
+                                agent_id, pending_push_body[:50],
+                            )
                         logger.info(
                             "Updated last turn content for agent %s (%s chars)",
                             agent_id, len(_last_content),
@@ -3519,34 +3561,26 @@ class AgentDispatcher:
                     ))
                     self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
 
-                    # Only notify for agent/system turns (not user messages)
-                    # Refresh pane attached state — the dispatcher tick cache
-                    # may be stale since the sync loop runs independently.
-                    self._refresh_pane_attached()
-                    _in_use = self._is_agent_in_use(agent_id, agent.tmux_pane)
-                    if not _in_use:
-                        logger.info(
-                            "Push notify %s: pane=%s, pane_attached=%s, ws_viewing=%s",
-                            agent_id, agent.tmux_pane,
-                            self._pane_attached.get(agent.tmux_pane) if agent.tmux_pane else None,
-                            any(v == agent_id for v in getattr(__import__('websocket', fromlist=['ws_manager']), 'ws_manager')._viewing.values()),
-                        )
-                    if not agent.muted and not _in_use:
-                        _push_body = ""
-                        for _r, _c, *_rest in reversed(new_turns):
-                            if _r == "assistant":
-                                _push_body = _c[:120]
-                                break
-                            if _r == "system":
-                                _push_body = _c[:120]
-                                break
-                        if _push_body:
-                            from push import send_push_notification
-                            send_push_notification(
-                                title=_sync_agent_name or f"Agent {agent_id[:8]}",
-                                body=_push_body,
-                                url=f"/agents/{agent_id}",
+                    # Defer push notification until response stabilizes
+                    # (file stops growing), so we notify with final content
+                    # instead of partial mid-generation text.
+                    for _r, _c, *_rest in reversed(new_turns):
+                        if _r == "assistant":
+                            pending_push_body = _c[:120]
+                            pending_push_idle = 0
+                            logger.info(
+                                "PUSH_DEBUG: pending set (new assistant turn) for %s: %s",
+                                agent_id, pending_push_body[:50],
                             )
+                            break
+                        if _r == "system":
+                            pending_push_body = _c[:120]
+                            pending_push_idle = 0
+                            logger.info(
+                                "PUSH_DEBUG: pending set (new system turn) for %s: %s",
+                                agent_id, pending_push_body[:50],
+                            )
+                            break
 
                     logger.info(
                         "Synced %d new turns for agent %s",
@@ -3629,6 +3663,28 @@ class AgentDispatcher:
                         agent_id,
                     )
                     continue
+
+                # Flush any deferred push notification before stopping
+                if pending_push_body:
+                    logger.info(
+                        "PUSH_DEBUG: flushing on session end for %s: %s",
+                        agent_id, pending_push_body[:50],
+                    )
+                    db_push = SessionLocal()
+                    try:
+                        ag_push = db_push.get(Agent, agent_id)
+                        if ag_push and not ag_push.muted:
+                            self._refresh_pane_attached()
+                            if not self._is_agent_in_use(agent_id, ag_push.tmux_pane):
+                                from push import send_push_notification
+                                send_push_notification(
+                                    title=_sync_agent_name or f"Agent {agent_id[:8]}",
+                                    body=pending_push_body,
+                                    url=f"/agents/{agent_id}",
+                                )
+                    finally:
+                        db_push.close()
+                    pending_push_body = ""
 
                 # Process is dead — transition to STOPPED
                 logger.info(
