@@ -19,6 +19,7 @@ import {
   fetchProjectFile,
   refreshClaudeMd,
   refreshClaudeMdStatus,
+  discardClaudeMd,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -1472,7 +1473,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         <ClaudeMdDiffModal
           data={diffData}
           project={name}
-          onClose={() => { setDiffData(null); setClaudeMdReady(false); }}
+          onClose={() => { setDiffData(null); setClaudeMdReady(false); discardClaudeMd(name).catch(() => {}); }}
           onApplied={(lines, error) => {
             setDiffData(null);
             setClaudeMdReady(false);
