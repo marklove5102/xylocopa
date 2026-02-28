@@ -1584,7 +1584,14 @@ async def get_project_file(name: str, path: str, db: Session = Depends(get_db)):
     project_path = _resolve_project_path(name, db)
     filepath = os.path.join(project_path, path)
     if not os.path.isfile(filepath):
-        return {"exists": False, "content": None, "path": path}
+        # Auto-scaffold on first access
+        try:
+            from project_scaffolder import scaffold_project
+            scaffold_project(name, project_path)
+        except Exception:
+            pass
+        if not os.path.isfile(filepath):
+            return {"exists": False, "content": None, "path": path}
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
