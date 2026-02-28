@@ -5,12 +5,13 @@ import TaskCard from "../components/TaskCard";
 import TaskDetail from "../components/TaskDetail";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
+import useDraft from "../hooks/useDraft";
 
 export default function TasksPage({ theme, onToggleTheme }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState("ALL");
+  const [activeTab, setActiveTab] = useDraft("ui:tasks:filter", "ALL");
   const [expandedId, setExpandedId] = useState(null);
   const pollRef = useRef(null);
 

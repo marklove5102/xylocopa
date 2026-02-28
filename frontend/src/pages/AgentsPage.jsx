@@ -6,6 +6,7 @@ import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisp
 import BotIcon from "../components/BotIcon";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
+import useDraft from "../hooks/useDraft";
 import useWebSocket from "../hooks/useWebSocket";
 
 const FILTER_TABS = [
@@ -123,8 +124,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filter, setFilter] = useState("ALL");
-  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useDraft("ui:agents:filter", "ALL");
+  const [search, setSearch] = useDraft("ui:agents:search", "");
   const pollRef = useRef(null);
 
   // Track which agents are actively streaming via WebSocket

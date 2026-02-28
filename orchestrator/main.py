@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from config import (
     AUTH_TIMEOUT_MINUTES, BACKUP_DIR, CC_MODEL, CLAUDE_HOME, DB_PATH,
-    LOG_DIR, OPENAI_API_KEY, PROJECT_CONFIGS_PATH,
+    LOG_DIR, OPENAI_API_KEY, PROJECT_CONFIGS_PATH, UPLOADS_DIR,
 )
 from database import SessionLocal, get_db, init_db
 from log_config import setup_logging
@@ -272,7 +272,7 @@ app.add_middleware(
 
 # ---- Auth middleware ----
 
-_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/api/health", "/api/test/", "/api/files/", "/docs", "/openapi.json")
+_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/api/health", "/api/test/", "/api/files/", "/api/uploads/", "/docs", "/openapi.json")
 
 
 @app.middleware("http")
@@ -637,6 +637,9 @@ async def system_storage():
             except OSError:
                 pass
         categories.append({"name": "Tmp Output", "size_bytes": tmp_total, "file_count": tmp_count, "color": "gray"})
+
+        sz, cnt = _walk_size(UPLOADS_DIR)
+        categories.append({"name": "Uploads", "size_bytes": sz, "file_count": cnt, "color": "rose"})
 
         total_bytes = sum(c["size_bytes"] for c in categories)
         return {"categories": categories, "total_bytes": total_bytes}
@@ -3271,6 +3274,59 @@ async def serve_project_file(project: str, path: str, db: Session = Depends(get_
         else:
             raise HTTPException(status_code=404, detail="File not found")
 
+    media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    return FileResponse(full_path, media_type=media_type)
+
+
+# ---- Uploads ----
+
+@app.post("/api/upload")
+async def upload_file(request: Request):
+    """Upload a file (multipart form data). Returns filename, original_name, path, size."""
+    from uuid import uuid4
+    from fastapi import UploadFile, File
+
+    form = await request.form()
+    file: UploadFile = form.get("file")
+    if not file:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File exceeds 50 MB limit")
+
+    # Sanitize original filename
+    original_name = os.path.basename(file.filename or "upload")
+    original_name = re.sub(r'[^\w.\- ]', '_', original_name)
+    unique_name = f"{uuid4().hex[:12]}_{original_name}"
+
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    dest = os.path.join(UPLOADS_DIR, unique_name)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, lambda: _write_bytes(dest, content))
+
+    return {
+        "filename": unique_name,
+        "original_name": original_name,
+        "path": dest,
+        "size": len(content),
+    }
+
+
+def _write_bytes(path: str, data: bytes):
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+@app.get("/api/uploads/{filename}")
+async def serve_upload(filename: str):
+    """Serve an uploaded file."""
+    import mimetypes
+    safe_name = os.path.basename(filename)
+    full_path = os.path.join(UPLOADS_DIR, safe_name)
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
     media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
     return FileResponse(full_path, media_type=media_type)
 

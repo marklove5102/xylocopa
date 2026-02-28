@@ -76,13 +76,14 @@ const STORAGE_COLORS = {
   amber: { ring: "stroke-amber-500", dot: "bg-amber-500", bar: "bg-amber-500" },
   emerald: { ring: "stroke-emerald-500", dot: "bg-emerald-500", bar: "bg-emerald-500" },
   orange: { ring: "stroke-orange-500", dot: "bg-orange-500", bar: "bg-orange-500" },
+  rose: { ring: "stroke-rose-500", dot: "bg-rose-500", bar: "bg-rose-500" },
   gray: { ring: "stroke-gray-400", dot: "bg-gray-400", bar: "bg-gray-400" },
 };
 
 // Hex values for SVG stroke (Tailwind classes don't work on SVG stroke directly)
 const STORAGE_HEX = {
   cyan: "#06b6d4", violet: "#8b5cf6", amber: "#f59e0b",
-  emerald: "#10b981", orange: "#f97316", gray: "#9ca3af",
+  emerald: "#10b981", orange: "#f97316", rose: "#f43f5e", gray: "#9ca3af",
 };
 
 function formatBytes(bytes) {

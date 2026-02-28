@@ -20,6 +20,7 @@ import BotIcon from "../components/BotIcon";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 import SendLaterPicker from "../components/SendLaterPicker";
+import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import { relativeTime } from "../lib/formatters";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName } from "../lib/constants";
@@ -346,7 +347,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [project, setProject] = useState(null);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [agentTab, setAgentTab] = useState("active");
+  const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
 
   // Sessions (lazy-loaded)
   const [sessions, setSessions] = useState(null);
@@ -355,13 +356,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Starred session IDs (eagerly loaded for agent rows)
   const [starredIds, setStarredIds] = useState(new Set());
 
-  // Agent creation
-  const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState(MODEL_OPTIONS[0].value);
-  const [effort, setEffort] = useState("high");
+  // Agent creation (draft persisted per project)
+  const [prompt, setPrompt, clearPrompt] = useDraft(`project-agent:${name}:prompt`, "");
+  const [model, setModel, clearModel] = useDraft(`project-agent:${name}:model`, MODEL_OPTIONS[0].value);
+  const [effort, setEffort, clearEffort] = useDraft(`project-agent:${name}:effort`, "high");
   const [worktree, setWorktree] = useState(null);
   const [syncMode, setSyncMode] = useState(true);
   const [skipPermissions, setSkipPermissions] = useState(true);
+  const clearAllDrafts = () => { clearPrompt(); clearModel(); clearEffort(); };
   const [submitting, setSubmitting] = useState(false);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [toast, setToast] = useState(null);
@@ -573,12 +575,12 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     try {
       if (syncMode) {
         const agent = await launchTmuxAgent({ project: name, prompt: prompt.trim(), model, effort, worktree, skip_permissions: skipPermissions });
+        clearAllDrafts();
         navigate(`/agents/${agent.id}`);
       } else {
         const agent = await createAgent({ project: name, prompt: prompt.trim(), mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
+        clearAllDrafts();
         showToast("Agent created!");
-        setPrompt("");
-        setModel(MODEL_OPTIONS[0].value);
         setWorktree(null);
         navigate(`/agents/${agent.id}`);
       }
@@ -597,9 +599,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     try {
       const agent = await createAgent({ project: name, prompt: prompt.trim(), mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
       await sendMessage(agent.id, prompt.trim(), { queue: true, scheduled_at: scheduledAt });
+      clearAllDrafts();
       const when = new Date(scheduledAt);
       showToast(`Scheduled for ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-      setPrompt("");
       navigate(`/agents/${agent.id}`);
     } catch (err) {
       showToast("Failed: " + err.message, "error");

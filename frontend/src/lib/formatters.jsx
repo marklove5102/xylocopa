@@ -328,6 +328,7 @@ const ALL_EXTS = /\.(png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv)$/i;
 const RE_MD_IMAGE = /!\[.*?\]\((\S+?\.(?:png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv))\)/gi;
 const RE_BACKTICK = /`([^`]*\/[^`]*\.(?:png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv))`/gi;
 const RE_BARE_PATH = /(?:^|[\s(])([^\s()\[\]!]*\/[^\s()\[\]]+\.(?:png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv))(?=[\s),\]]|$)/gim;
+const RE_ATTACHED_FILE = /\[Attached file: ([^\]]+)\]/gi;
 
 /**
  * Extract file attachments (images, videos, CSVs) from message text.
@@ -372,8 +373,27 @@ export function extractFileAttachments(text, project) {
     results.push({ path, resolvedUrl, type, ext });
   };
 
-  // Match all three patterns
+  const addUpload = (filePath) => {
+    if (!filePath) return;
+    const filename = filePath.split("/").pop();
+    if (seen.has(filename)) return;
+    seen.add(filename);
+
+    const resolvedUrl = `/api/uploads/${encodeURIComponent(filename)}`;
+    const ext = filename.match(/\.(\w+)$/)?.[1]?.toLowerCase() || "";
+
+    let type = "unknown";
+    if (IMAGE_EXTS.test(filename)) type = "image";
+    else if (VIDEO_EXTS.test(filename)) type = "video";
+    else if (CSV_EXT.test(filename)) type = "csv";
+
+    results.push({ path: filename, resolvedUrl, type, ext });
+  };
+
+  // Match all patterns
   let m;
+  RE_ATTACHED_FILE.lastIndex = 0;
+  while ((m = RE_ATTACHED_FILE.exec(text)) !== null) addUpload(m[1]);
   RE_MD_IMAGE.lastIndex = 0;
   while ((m = RE_MD_IMAGE.exec(text)) !== null) addPath(m[1]);
   RE_BACKTICK.lastIndex = 0;
