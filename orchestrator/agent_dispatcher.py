@@ -52,29 +52,72 @@ def _short_path(path: str) -> str:
 
 
 def _derive_selected_index(item: dict) -> None:
-    """Derive selected_index from an interactive item's answer text.
+    """Derive selected_index and selected_indices from an interactive item's answer text.
 
-    For ask_user_question, matches the ="label" pattern against options.
+    For ask_user_question, matches the ="label" pattern against each question's options.
+    Populates both selected_index (Q0, backward compat) and selected_indices (all Qs).
     For exit_plan_mode, uses keyword matching on the answer.
     """
     answer = item.get("answer")
     if not answer or not isinstance(answer, str):
         return
-    if item.get("selected_index") is not None:
-        return  # Already set
+    # Skip dismissed/rejected answers — no valid selection to derive
+    if (answer.startswith("The user doesn't want to proceed")
+            or answer.startswith("User declined")
+            or answer.startswith("Tool use rejected")):
+        return
     if item.get("type") == "ask_user_question":
         questions = item.get("questions", [])
-        if questions:
-            options = questions[0].get("options", [])
-            # Find all ="label" patterns, try last match first (most likely the answer)
-            matches = re.findall(r'="([^"]+)"', answer)
-            for label in reversed(matches):
+        if not questions:
+            return
+        # Find all ="label" patterns in order
+        matches = re.findall(r'="([^"]+)"', answer)
+        if not matches:
+            return
+        sel_indices = item.get("selected_indices", {})
+        # Positional matching: consume match indices so duplicate labels
+        # across questions don't cross-match.
+        used_match_indices: set[int] = set()
+        for qi, q in enumerate(questions):
+            if sel_indices.get(str(qi)) is not None:
+                continue  # Already set for this question
+            options = q.get("options", [])
+            for mi, label in enumerate(matches):
+                if mi in used_match_indices:
+                    continue
                 for oi, opt in enumerate(options):
                     if opt.get("label") == label:
-                        item["selected_index"] = oi
-                        return
+                        sel_indices[str(qi)] = oi
+                        used_match_indices.add(mi)
+                        break
+                if sel_indices.get(str(qi)) is not None:
+                    break
+        if sel_indices:
+            item["selected_indices"] = sel_indices
+        # Backward compat: set selected_index from Q0
+        if item.get("selected_index") is None and sel_indices.get("0") is not None:
+            item["selected_index"] = sel_indices["0"]
     elif item.get("type") == "exit_plan_mode":
+        if item.get("selected_index") is not None:
+            return  # Already set
         a = answer.lower().strip()
+        # Dismissal / rejection — don't assign any index
+        if (a.startswith("the user doesn't want to proceed")
+                or a.startswith("user declined")
+                or a.startswith("tool use rejected")):
+            return
+        # Exact label matching first (avoids keyword collision like "bypass manual")
+        _PLAN_LABELS_LOWER = [
+            "yes, clear context & bypass",
+            "yes, bypass permissions",
+            "yes, manual approval",
+            "give feedback",
+        ]
+        for i, lbl in enumerate(_PLAN_LABELS_LOWER):
+            if a == lbl:
+                item["selected_index"] = i
+                return
+        # Keyword fallback for answers from Claude's tool_result (may differ in wording)
         if "clear context" in a:
             item["selected_index"] = 0
         elif "bypass" in a and "clear" not in a and "manual" not in a:
@@ -135,11 +178,15 @@ def _merge_interactive_meta(db_meta_json: str | None, new_meta: dict | None) -> 
             item["answer"] = db_item["answer"]
             if db_item.get("selected_index") is not None:
                 item["selected_index"] = db_item["selected_index"]
+            if db_item.get("selected_indices"):
+                item["selected_indices"] = db_item["selected_indices"]
         # JSONL has a real answer → authoritative, but carry over selected_index
-        # if the JSONL version doesn't have one (keyword matching may fail)
+        # and selected_indices if the JSONL version doesn't have them
         elif item.get("answer") is not None:
             if item.get("selected_index") is None and db_item.get("selected_index") is not None:
                 item["selected_index"] = db_item["selected_index"]
+            if not item.get("selected_indices") and db_item.get("selected_indices"):
+                item["selected_indices"] = db_item["selected_indices"]
 
     return json.dumps(merged)
 
@@ -233,6 +280,7 @@ def _parse_stream_parts(
                                     "type": "exit_plan_mode",
                                     "tool_use_id": tool_use_id,
                                     "allowedPrompts": tool_input.get("allowedPrompts", []),
+                                    "plan": tool_input.get("plan", ""),
                                     "answer": None,
                                 }
                                 interactive_items.append(entry)
@@ -598,6 +646,7 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str, dict | None]]:
                     or stripped.startswith("<command-name>")
                     or stripped.startswith("<local-command-stdout>")
                     or stripped.startswith("<system-reminder>")
+                    or stripped.startswith("<task-notification>")
                 ):
                     continue
                 # Compact summary → system message instead of user
@@ -643,6 +692,7 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str, dict | None]]:
                                 "type": "exit_plan_mode",
                                 "tool_use_id": tool_use_id,
                                 "allowedPrompts": tool_input.get("allowedPrompts", []),
+                                "plan": tool_input.get("plan", ""),
                                 "answer": None,
                             }
                         pending_interactive.append(entry_data)
@@ -653,13 +703,18 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str, dict | None]]:
                         assistant_parts.append(("tool", summary))
 
         elif entry_type == "queue-operation":
-            # User messages sent while assistant is working (queued prompts)
+            # Queued prompts sent while assistant is working
             if entry.get("operation") == "enqueue":
                 queued_content = entry.get("content", "")
                 if isinstance(queued_content, str) and queued_content.strip():
-                    flush_assistant()
                     clean_q = _strip_agent_preamble(queued_content.strip())
-                    turns.append(("user", clean_q, None))
+                    # Sub-agent task results are system-generated, not user input
+                    if clean_q.lstrip().startswith("<task-notification>"):
+                        flush_assistant()
+                        turns.append(("assistant", clean_q, None))
+                    else:
+                        flush_assistant()
+                        turns.append(("user", clean_q, None))
 
         elif entry_type == "system":
             # Use structured fields from JSONL (subtype, content)
@@ -751,12 +806,25 @@ def _update_stale_interactive_metadata(
 
     # 3. Also backfill interactive metadata onto AGENT messages that were
     #    created before the parser produced metadata.  Match by content prefix.
+    #    GUARD: skip if another message already carries the same tool_use_id
+    #    to prevent duplicate interactive bubbles.
     turns_with_meta = [
         (content, meta)
         for _role, content, meta in turns
         if _role == "assistant" and meta and meta.get("interactive")
     ]
     if turns_with_meta:
+        # Collect tool_use_ids already present in existing DB messages
+        existing_tids: set[str] = set()
+        for msg in db_msgs:
+            try:
+                m = json.loads(msg.meta_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for it in m.get("interactive", []):
+                if it.get("tool_use_id"):
+                    existing_tids.add(it["tool_use_id"])
+
         agent_msgs = db.query(Message).filter(
             Message.agent_id == agent_id,
             Message.role == MessageRole.AGENT,
@@ -764,6 +832,14 @@ def _update_stale_interactive_metadata(
         ).all()
         for msg in agent_msgs:
             for turn_content, turn_meta in turns_with_meta:
+                # Skip if this interactive item already exists on another message
+                turn_tids = {
+                    it.get("tool_use_id")
+                    for it in turn_meta.get("interactive", [])
+                    if it.get("tool_use_id")
+                }
+                if turn_tids & existing_tids:
+                    continue
                 # Match by content prefix (DB msg may be truncated/shorter)
                 if (
                     msg.content
@@ -775,6 +851,7 @@ def _update_stale_interactive_metadata(
                     )
                 ):
                     msg.meta_json = json.dumps(turn_meta)
+                    existing_tids.update(turn_tids)
                     updated = True
                     break
         if updated:
@@ -1160,6 +1237,40 @@ def verify_tmux_pane(pane_id: str) -> bool:
     except (_sp.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.warning("verify_tmux_pane(%s) failed: %s", pane_id, e)
         return False
+
+
+def capture_tmux_pane(pane_id: str) -> str | None:
+    """Capture the visible content of a tmux pane for diagnostic logging."""
+    try:
+        result = _sp.run(
+            ["tmux", "capture-pane", "-t", pane_id, "-p"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout
+        return None
+    except (_sp.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def _detect_plan_prompt(pane_text: str) -> str:
+    """Detect what kind of prompt is showing for ExitPlanMode.
+
+    Returns:
+        "option_select" — vertical option list (Yes, and / clear context / etc.)
+        "permission"    — Allow/Deny permission prompt
+        "unknown"       — cannot determine
+    """
+    if not pane_text:
+        return "unknown"
+    lower = pane_text.lower()
+    # Check for option-select style (plan approval)
+    if "clear context" in lower or "bypass" in lower or "manual" in lower:
+        return "option_select"
+    # Check for permission prompt style
+    if "allow" in lower and "deny" in lower:
+        return "permission"
+    return "unknown"
 
 
 class AgentDispatcher:
@@ -3119,11 +3230,19 @@ class AgentDispatcher:
                 missing: list[tuple[str, str, dict | None]] = []
                 for r, c, mt in conv_turns:
                     role_char = "u" if r == "user" else "a"
-                    sig = (role_char, _dedup_sig(c))
+                    content_sig = _dedup_sig(c)
+                    sig = (role_char, content_sig)
                     if db_sig_counts.get(sig, 0) > 0:
                         db_sig_counts[sig] -= 1  # consume the match
                     else:
-                        missing.append((r, c, mt))
+                        # Role may have changed (e.g. task-notification fixed
+                        # from USER→AGENT); check the opposite role before
+                        # declaring the turn missing.
+                        alt = ("a" if role_char == "u" else "u", content_sig)
+                        if db_sig_counts.get(alt, 0) > 0:
+                            db_sig_counts[alt] -= 1
+                        else:
+                            missing.append((r, c, mt))
 
                 if missing and agent:
                     for role, content, meta in missing:
