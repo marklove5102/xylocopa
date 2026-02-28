@@ -3154,6 +3154,7 @@ class AnswerPayload(BaseModel):
     tool_use_id: str
     type: str  # "ask_user_question" or "exit_plan_mode"
     selected_index: int | None = None  # 0-based option index (AskUserQuestion)
+    question_index: int = 0  # which question in multi-Q AskUserQuestion
     approved: bool | None = None  # (ExitPlanMode only)
 
 
@@ -3168,12 +3169,16 @@ _PLAN_LABELS = [
 def _patch_interactive_answer(
     db: Session, agent_id: str, tool_use_id: str,
     selected_index: int, answer_type: str,
+    question_index: int = 0,
 ):
     """Immediately mark an interactive item as answered in the DB.
 
     Builds an answer string from the selected option so the frontend can
     render the selection without waiting for the sync loop to pick up the
     tool_result from the session JSONL.
+
+    For multi-question AskUserQuestion, each call patches one question at a
+    time via question_index, accumulating into selected_indices and answer.
     """
     msgs = db.query(Message).filter(
         Message.agent_id == agent_id,
@@ -3191,25 +3196,65 @@ def _patch_interactive_answer(
         for item in items:
             if item.get("tool_use_id") != tool_use_id:
                 continue
-            if item.get("answer") is not None:
-                return  # Already answered
-            # Store the numeric index for reliable frontend matching
-            item["selected_index"] = selected_index
-            # Build an answer string that matches what the sync loop produces
+            # Don't overwrite a dismissed/rejected answer
+            existing_answer = item.get("answer") or ""
+            if isinstance(existing_answer, str) and (
+                existing_answer.startswith("The user doesn't want to proceed")
+                or existing_answer.startswith("User declined")
+                or existing_answer.startswith("Tool use rejected")
+            ):
+                return
             if answer_type == "ask_user_question":
+                # Per-question check: skip if this specific question already answered
+                sel_indices = item.get("selected_indices", {})
+                if sel_indices.get(str(question_index)) is not None:
+                    return
+                # Store per-question index
+                sel_indices[str(question_index)] = selected_index
+                item["selected_indices"] = sel_indices
+                # Backward compat: also set selected_index for Q0
+                if question_index == 0:
+                    item["selected_index"] = selected_index
+                # Build answer string for this question
                 questions = item.get("questions", [])
-                if questions:
-                    q = questions[0]
+                if questions and question_index < len(questions):
+                    q = questions[question_index]
                     options = q.get("options", [])
                     label = options[selected_index]["label"] if selected_index < len(options) else str(selected_index)
-                    item["answer"] = f'"{q.get("question", "")}"="{label}"'
+                    part = f'"{q.get("question", "")}"="{label}"'
                 else:
-                    item["answer"] = str(selected_index)
+                    part = str(selected_index)
+                # Append to existing answer (multi-question accumulation)
+                existing = item.get("answer")
+                if existing and isinstance(existing, str):
+                    item["answer"] = existing + "\n" + part
+                else:
+                    item["answer"] = part
             elif answer_type == "exit_plan_mode":
+                if item.get("answer") is not None:
+                    return  # Already answered
+                item["selected_index"] = selected_index
                 item["answer"] = _PLAN_LABELS[selected_index] if selected_index < len(_PLAN_LABELS) else str(selected_index)
             msg.meta_json = json.dumps(meta)
             db.commit()
             return
+
+
+def _count_interactive_questions(db: Session, agent_id: str, tool_use_id: str) -> int:
+    """Return the total number of questions for an interactive item."""
+    msgs = db.query(Message).filter(
+        Message.agent_id == agent_id,
+        Message.meta_json.is_not(None),
+    ).order_by(Message.created_at.desc()).limit(50).all()
+    for msg in msgs:
+        try:
+            meta = json.loads(msg.meta_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in meta.get("interactive", []):
+            if item.get("tool_use_id") == tool_use_id:
+                return len(item.get("questions", []))
+    return 1
 
 
 @app.post("/api/agents/{agent_id}/answer")
@@ -3222,32 +3267,52 @@ async def answer_agent_interactive(
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if not agent.tmux_pane:
-        raise HTTPException(status_code=400, detail="Agent has no tmux pane")
     if agent.status not in (AgentStatus.SYNCING, AgentStatus.EXECUTING, AgentStatus.IDLE):
         raise HTTPException(status_code=400, detail=f"Agent is {agent.status}, not in interactive state")
 
-    from agent_dispatcher import send_tmux_keys, verify_tmux_pane
-    if not verify_tmux_pane(agent.tmux_pane):
-        raise HTTPException(status_code=400, detail="Tmux pane no longer exists")
+    # Non-tmux agents (e.g. skip_permissions agents without a pane): patch DB only.
+    # Claude auto-approves with --dangerously-skip-permissions, so the card is informational.
+    has_tmux = bool(agent.tmux_pane)
+    if has_tmux:
+        from agent_dispatcher import send_tmux_keys, verify_tmux_pane
+        if not verify_tmux_pane(agent.tmux_pane):
+            raise HTTPException(status_code=400, detail="Tmux pane no longer exists")
 
     pane_id = agent.tmux_pane
     MAX_INDEX = 20  # safety cap to prevent excessive keystrokes
 
-    # Immediately mark the answer in the DB FIRST so the UI updates right
-    # away.  The sync loop's _merge_interactive_meta() will preserve this
-    # answer until Claude's authoritative tool_result arrives.
     if body.type == "ask_user_question":
         if body.selected_index is None or body.selected_index < 0:
             raise HTTPException(status_code=400, detail="selected_index required for ask_user_question")
         if body.selected_index > MAX_INDEX:
             raise HTTPException(status_code=400, detail=f"selected_index too large (max {MAX_INDEX})")
-        _patch_interactive_answer(db, agent_id, body.tool_use_id, body.selected_index, body.type)
-        # Send Down keys to navigate to selected option, then Enter
-        keys = ["Down"] * body.selected_index + ["Enter"]
-        if not send_tmux_keys(pane_id, keys):
-            raise HTTPException(status_code=500, detail="Failed to send keys to tmux")
-        return {"detail": "ok", "keys_sent": len(keys)}
+
+        if has_tmux:
+            # Send tmux keys FIRST — only patch DB on success (Bug 6 race fix)
+            keys = ["Down"] * body.selected_index + ["Enter"]
+            if not send_tmux_keys(pane_id, keys):
+                raise HTTPException(status_code=500, detail="Failed to send keys to tmux")
+        else:
+            keys = []
+
+        # Patch DB after successful key delivery (or immediately for non-tmux)
+        _patch_interactive_answer(db, agent_id, body.tool_use_id, body.selected_index, body.type, body.question_index)
+
+        if has_tmux:
+            # Multi-question TUI: after the last question, Claude Code shows a
+            # "Review your answers → Submit" confirmation screen.  We need to
+            # detect when all questions have been answered and send an extra
+            # Enter to confirm submission.
+            total_questions = _count_interactive_questions(db, agent_id, body.tool_use_id)
+            if total_questions > 1 and body.question_index == total_questions - 1:
+                import asyncio
+                await asyncio.sleep(0.5)  # Wait for TUI to render submit screen
+                send_tmux_keys(pane_id, ["Enter"])
+                logger.info("Multi-Q submit: sent extra Enter for agent %s (Q%d/%d)",
+                            agent_id, body.question_index, total_questions)
+                return {"detail": "ok", "keys_sent": len(keys) + 1, "submitted": True}
+
+        return {"detail": "ok", "keys_sent": len(keys), "auto_approved": not has_tmux}
 
     elif body.type == "exit_plan_mode":
         # Claude Code TUI plan approval options (arrow-navigated):
@@ -3255,6 +3320,7 @@ async def answer_agent_interactive(
         # 1: "Yes, and bypass permissions"
         # 2: "Yes, manually approve edits"
         # 3: "Type here to tell Claude what to change"
+
         if body.selected_index is not None and body.selected_index >= 0:
             if body.selected_index > MAX_INDEX:
                 raise HTTPException(status_code=400, detail=f"selected_index too large (max {MAX_INDEX})")
@@ -3268,10 +3334,38 @@ async def answer_agent_interactive(
         effective_index = body.selected_index
         if effective_index is None:
             effective_index = 0 if body.approved else 2
+
+        if has_tmux:
+            # Capture pane content BEFORE sending keys for diagnostics
+            from agent_dispatcher import capture_tmux_pane, _detect_plan_prompt
+            pre_content = capture_tmux_pane(pane_id)
+            prompt_type = _detect_plan_prompt(pre_content) if pre_content else "unknown"
+            logger.info(
+                "ExitPlanMode answer for agent %s: prompt_type=%s, selected_index=%s, pre_pane:\n%s",
+                agent_id, prompt_type, body.selected_index,
+                (pre_content or "")[-2000:],  # last 2000 chars to avoid huge logs
+            )
+
+            # Send tmux keys FIRST — only patch DB on success (Bug 6 race fix)
+            if not send_tmux_keys(pane_id, keys):
+                raise HTTPException(status_code=500, detail="Failed to send keys to tmux")
+
+            # Capture pane content AFTER sending keys for diagnostics
+            import asyncio
+            await asyncio.sleep(0.5)
+            post_content = capture_tmux_pane(pane_id)
+            logger.info(
+                "ExitPlanMode post-keys for agent %s: post_pane:\n%s",
+                agent_id,
+                (post_content or "")[-2000:],
+            )
+        else:
+            prompt_type = "non-tmux"
+
+        # Patch DB after successful key delivery (or immediately for non-tmux)
         _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
-        if not send_tmux_keys(pane_id, keys):
-            raise HTTPException(status_code=500, detail="Failed to send keys to tmux")
-        return {"detail": "ok", "keys_sent": len(keys)}
+
+        return {"detail": "ok", "keys_sent": len(keys) if has_tmux else 0, "prompt_type": prompt_type, "auto_approved": not has_tmux}
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown type: {body.type}")
