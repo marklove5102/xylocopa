@@ -1865,6 +1865,13 @@ async def refresh_claudemd_status(name: str):
     return {"status": "complete", "data": job["data"]}
 
 
+@app.delete("/api/projects/{name}/refresh-claudemd")
+async def discard_claudemd(name: str):
+    """Clear a cached CLAUDE.md refresh result (user discarded)."""
+    _claudemd_job_clear(name)
+    return {"success": True}
+
+
 @app.get("/api/projects/claudemd-pending")
 async def claudemd_pending():
     """Return count and list of projects with completed CLAUDE.md refresh jobs."""
