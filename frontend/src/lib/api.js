@@ -99,6 +99,10 @@ export const fetchProjectFile = (project, path) =>
   request(`/api/projects/${e(project)}/file?path=${e(path)}`);
 export const updateProjectFile = (project, path, content) =>
   request(`/api/projects/${e(project)}/file`, { method: "PUT", body: JSON.stringify({ path, content }) });
+export const fetchProjectTree = (project, depth = 3) =>
+  request(`/api/projects/${e(project)}/tree?depth=${depth}`);
+export const browseProjectFile = (project, path) =>
+  request(`/api/projects/${e(project)}/browse?path=${e(path)}`);
 
 // --- Tasks (agent-sourced: each USER message = one task) ---
 export const fetchTasks = (params = "") =>
