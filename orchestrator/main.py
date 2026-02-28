@@ -22,7 +22,10 @@ from starlette.responses import JSONResponse
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from config import AUTH_TIMEOUT_MINUTES, CC_MODEL, OPENAI_API_KEY, PROJECT_CONFIGS_PATH
+from config import (
+    AUTH_TIMEOUT_MINUTES, BACKUP_DIR, CC_MODEL, CLAUDE_HOME, DB_PATH,
+    LOG_DIR, OPENAI_API_KEY, PROJECT_CONFIGS_PATH,
+)
 from database import SessionLocal, get_db, init_db
 from log_config import setup_logging
 from models import (
@@ -65,6 +68,9 @@ from auth import (
 
 setup_logging()
 logger = logging.getLogger("orchestrator")
+
+# Serialize tmux agent launches so only one proceeds at a time.
+_tmux_launch_sem = asyncio.Semaphore(1)
 
 
 def _utcnow():
@@ -573,6 +579,71 @@ async def system_stats():
     return stats
 
 
+@app.get("/api/system/storage")
+async def system_storage():
+    """Disk usage breakdown by storage category."""
+    import glob as globmod
+    import tempfile
+
+    def _collect():
+        """Synchronous work — run in a thread to avoid blocking the event loop."""
+        def _walk_size(path: str):
+            total = 0
+            count = 0
+            if not os.path.isdir(path):
+                return 0, 0
+            for dirpath, _dirs, files in os.walk(path):
+                for f in files:
+                    fp = os.path.join(dirpath, f)
+                    try:
+                        total += os.path.getsize(fp)
+                        count += 1
+                    except OSError:
+                        pass
+            return total, count
+
+        def _file_size(path: str):
+            try:
+                return os.path.getsize(path), 1
+            except OSError:
+                return 0, 0
+
+        categories = []
+
+        sessions_dir = os.path.join(CLAUDE_HOME, "projects")
+        sz, cnt = _walk_size(sessions_dir)
+        categories.append({"name": "Session Files", "size_bytes": sz, "file_count": cnt, "color": "cyan"})
+
+        cache_dir = os.path.join(BACKUP_DIR, "session-cache")
+        sz, cnt = _walk_size(cache_dir)
+        categories.append({"name": "Session Cache", "size_bytes": sz, "file_count": cnt, "color": "violet"})
+
+        sz, cnt = _walk_size(BACKUP_DIR)
+        cache_sz, cache_cnt = categories[1]["size_bytes"], categories[1]["file_count"]
+        categories.append({"name": "DB Backups", "size_bytes": max(sz - cache_sz, 0), "file_count": max(cnt - cache_cnt, 0), "color": "amber"})
+
+        sz, cnt = _file_size(DB_PATH)
+        categories.append({"name": "Database", "size_bytes": sz, "file_count": cnt, "color": "emerald"})
+
+        sz, cnt = _walk_size(LOG_DIR)
+        categories.append({"name": "Logs", "size_bytes": sz, "file_count": cnt, "color": "orange"})
+
+        tmp_total = 0
+        tmp_count = 0
+        for fp in globmod.glob(os.path.join(tempfile.gettempdir(), "claude-output-*.log")):
+            try:
+                tmp_total += os.path.getsize(fp)
+                tmp_count += 1
+            except OSError:
+                pass
+        categories.append({"name": "Tmp Output", "size_bytes": tmp_total, "file_count": tmp_count, "color": "gray"})
+
+        total_bytes = sum(c["size_bytes"] for c in categories)
+        return {"categories": categories, "total_bytes": total_bytes}
+
+    return await asyncio.get_event_loop().run_in_executor(None, _collect)
+
+
 @app.post("/api/system/restart")
 async def system_restart():
     """Restart the AgentHive server.
@@ -970,6 +1041,9 @@ async def scan_projects(request: Request, db: Session = Depends(get_db)):
 @app.post("/api/projects", response_model=ProjectOut, status_code=201)
 async def create_project(body: ProjectCreate, request: Request, db: Session = Depends(get_db)):
     """Create or re-activate a project. Un-archives if previously archived."""
+    from config import PROJECTS_DIR
+    projects_dir = PROJECTS_DIR or "/projects"
+
     existing = db.get(Project, body.name)
     if existing:
         if existing.archived:
@@ -986,8 +1060,6 @@ async def create_project(body: ProjectCreate, request: Request, db: Session = De
         else:
             raise HTTPException(status_code=409, detail=f"Project '{body.name}' already exists")
     else:
-        from config import PROJECTS_DIR
-        projects_dir = PROJECTS_DIR or "/projects"
         proj = Project(
             name=body.name,
             display_name=body.name,
@@ -1686,6 +1758,113 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
     return agent
 
 
+def _preflight_claude_project(project_path: str):
+    """Ensure all Claude Code prerequisites are met before launching.
+
+    Claude Code can show up to 8 blocking dialogs on startup.  This preflight
+    pre-accepts all of them so the TUI starts straight into the REPL.
+
+    Dialogs handled (in startup order):
+    1. Onboarding wizard (theme, login, security notes)
+    2. Custom API key approval
+    3. Workspace trust ("do you trust this folder?")
+    4. Hooks trust
+    5. CLAUDE.md external includes warning
+    6. Bypass-permissions mode warning
+    7. MCP server approval
+    8. Project onboarding
+
+    Config files:
+    - ~/.claude.json          — per-project trust + global onboarding state
+    - ~/.claude/settings.json — global settings (permissions, cleanup, MCP)
+
+    Trust cascades from parent directories: trusting PROJECTS_DIR root covers
+    all projects under it.
+    """
+    from config import CLAUDE_HOME, PROJECTS_DIR
+
+    # --- 1. ~/.claude.json (global state + per-project trust) ---
+    claude_json_path = os.path.join(os.path.expanduser("~"), ".claude.json")
+    for _ in range(3):
+        try:
+            data = {}
+            if os.path.isfile(claude_json_path):
+                with open(claude_json_path, "r") as f:
+                    data = json.load(f)
+
+            changed = False
+
+            # Global onboarding (dialog 1)
+            if data.get("hasCompletedOnboarding") is not True:
+                data["hasCompletedOnboarding"] = True
+                changed = True
+
+            projects = data.setdefault("projects", {})
+
+            # Trust the PROJECTS_DIR root — cascades to all child projects
+            # so we don't need per-project entries for trust alone.
+            projects_dir = PROJECTS_DIR or ""
+            if projects_dir:
+                root_cfg = projects.setdefault(projects_dir, {})
+                if root_cfg.get("hasTrustDialogAccepted") is not True:
+                    root_cfg["hasTrustDialogAccepted"] = True
+                    root_cfg["hasTrustDialogHooksAccepted"] = True
+                    changed = True
+
+            # Per-project flags (dialogs 3-5, 8)
+            proj_cfg = projects.setdefault(project_path, {})
+            _trust_fields = {
+                "hasTrustDialogAccepted": True,
+                "hasTrustDialogHooksAccepted": True,
+                "hasCompletedProjectOnboarding": True,
+                "hasClaudeMdExternalIncludesApproved": True,
+                "hasClaudeMdExternalIncludesWarningShown": True,
+            }
+            for field, value in _trust_fields.items():
+                if proj_cfg.get(field) is not value:
+                    proj_cfg[field] = value
+                    changed = True
+            if not proj_cfg.get("projectOnboardingSeenCount"):
+                proj_cfg["projectOnboardingSeenCount"] = 1
+                changed = True
+
+            if changed:
+                with open(claude_json_path, "w") as f:
+                    json.dump(data, f, indent=2)
+                logger.info("Preflight: updated ~/.claude.json for %s", project_path)
+            break
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Preflight: failed to update ~/.claude.json: %s", e)
+            import time
+            time.sleep(0.1)
+
+    # --- 2. ~/.claude/settings.json (global settings) ---
+    settings_path = os.path.join(CLAUDE_HOME, "settings.json")
+    try:
+        settings = {}
+        if os.path.isfile(settings_path):
+            with open(settings_path, "r") as f:
+                settings = json.load(f)
+
+        changed = False
+        _global_flags = {
+            "skipDangerousModePermissionPrompt": True,   # dialog 6
+            "cleanupPeriodDays": 36500,                  # prevent session cleanup
+            "enableAllProjectMcpServers": True,          # dialog 7
+        }
+        for flag, value in _global_flags.items():
+            if settings.get(flag) != value:
+                settings[flag] = value
+                changed = True
+
+        if changed:
+            with open(settings_path, "w") as f:
+                json.dump(settings, f, indent=2)
+            logger.info("Preflight: updated ~/.claude/settings.json")
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Preflight: failed to update settings.json: %s", e)
+
+
 @app.post("/api/agents/launch-tmux", status_code=201)
 async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     """Launch an interactive claude CLI session in a new tmux pane.
@@ -1709,6 +1888,16 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     worktree = body.get("worktree")
     skip_permissions = body.get("skip_permissions", True)
 
+    # Reject if too many agents are already queued for launch
+    starting_count = db.query(func.count(Agent.id)).filter(
+        Agent.status == AgentStatus.STARTING,
+    ).scalar() or 0
+    if starting_count >= 10:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many agents launching — please wait for current launches to finish",
+        )
+
     if not project_name:
         raise HTTPException(status_code=400, detail="Project is required")
 
@@ -1719,9 +1908,27 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Project directory not found on disk")
 
     # Each agent gets its own tmux session: "ah-{agent_id_prefix}"
-    # Pre-generate agent ID so we can use it in the session name
+    # Pre-generate agent ID, ensuring no DB or tmux session name collision
     import secrets
-    agent_hex = secrets.token_hex(6)
+    import subprocess as _sp
+
+    # Get existing tmux session names for collision check
+    try:
+        _tmux_ls = _sp.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        _existing_tmux = set(_tmux_ls.stdout.strip().splitlines()) if _tmux_ls.returncode == 0 else set()
+    except (OSError, _sp.TimeoutExpired):
+        _existing_tmux = set()
+
+    for _ in range(20):
+        agent_hex = secrets.token_hex(6)
+        tmux_session = f"ah-{agent_hex[:8]}"
+        if db.get(Agent, agent_hex) is None and tmux_session not in _existing_tmux:
+            break
+    else:
+        raise HTTPException(status_code=500, detail="Failed to generate unique agent ID")
 
     # Resolve worktree name: "auto" → GPT-generated branch name
     if worktree == "auto" and prompt:
@@ -1739,7 +1946,12 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     if worktree:
         cmd_parts += ["--worktree", worktree]
     claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
-    tmux_session = f"ah-{agent_hex[:8]}"
+
+    # Pre-accept the project trust dialog in ~/.claude.json so Claude
+    # doesn't show the "Is this a project you trust?" prompt that blocks
+    # the TUI from starting.  This dialog appears on first launch in any
+    # directory that hasn't been explicitly trusted yet.
+    _preflight_claude_project(proj.path)
 
     # Create a new detached tmux session for this agent
     subprocess.run(
@@ -1858,6 +2070,7 @@ async def _launch_tmux_background(
             db.close()
         logger.warning("tmux launch failed for agent %s: %s", agent_id, reason)
 
+    await _tmux_launch_sem.acquire()
     try:
         # Step 1: Wait for Claude's TUI to fully load (up to 30s).
         # Two phases:
@@ -1877,45 +2090,70 @@ async def _launch_tmux_background(
             )
             return
 
-        # Wait for the TUI input prompt to appear (up to 15s after process detected)
+        # Wait for the REPL to be fully mounted.
+        # IMPORTANT: The ❯ prompt character appears in the welcome box BEFORE
+        # the REPL input handler is mounted.  On first launch in a new project
+        # directory, showSetupScreens() takes ~4 seconds (vs ~200ms for
+        # established projects).  We use the status bar ("⏵⏵ bypass permissions"
+        # or "shift+tab to cycle") as the definitive REPL-mounted signal,
+        # since it only renders after the full TUI component tree is ready.
+        #
+        # Also handles the project trust dialog ("Is this a project you
+        # trust?") which can appear despite pre-acceptance if ~/.claude.json
+        # was regenerated.  If detected, we press Enter to accept it.
         tui_ready = False
-        for _ in range(15):
+        trust_dialog_handled = False
+        for _ in range(30):
             await asyncio.sleep(1)
             try:
                 capture = subprocess.run(
                     ["tmux", "capture-pane", "-t", pane_id, "-p"],
                     capture_output=True, text=True, timeout=5,
                 )
-                if capture.returncode == 0 and "\u276f" in capture.stdout:
-                    tui_ready = True
+                if capture.returncode != 0:
+                    continue
+                pane_text = capture.stdout
+
+                # Check for the REPL status bar (definitive ready signal)
+                for ln in pane_text.split("\n"):
+                    if "\u23f5" in ln and "shift+tab" in ln:
+                        tui_ready = True
+                        break
+                if tui_ready:
                     break
+
+                # Check for the project trust dialog and auto-accept it
+                if not trust_dialog_handled and "trust this folder" in pane_text.lower():
+                    subprocess.run(
+                        ["tmux", "send-keys", "-t", pane_id, "Enter"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    trust_dialog_handled = True
+                    logger.info(
+                        "Auto-accepted project trust dialog in pane %s for agent %s",
+                        pane_id, agent_id,
+                    )
             except (subprocess.TimeoutExpired, OSError):
                 continue
         if not tui_ready:
             _mark_error(
-                "Claude TUI input prompt did not appear in pane %s within 15s "
+                "Claude TUI did not fully initialize in pane %s within 30s "
                 "(project_path: %s)" % (pane_id, project_path)
             )
             return
 
-        # Extra settle time — Ink's input handler may not be wired up
-        # immediately when ❯ first renders.
-        await asyncio.sleep(2)
+        # Extra settle time after REPL mount.  On first-launch projects
+        # showSetupScreens() finishes ~200ms before REPL mount; add a buffer
+        # to ensure the input handler is fully wired up.
+        await asyncio.sleep(3)
 
-        # Step 2: Send the prompt
-        if not send_tmux_message(pane_id, prompt):
-            _mark_error(
-                "Failed to send prompt to tmux pane %s "
-                "(project_path: %s)" % (pane_id, project_path)
-            )
-            return
-        logger.info("Sent initial prompt to tmux pane %s for agent %s", pane_id, agent_id)
-
-        # Step 3: Wait for session JSONL to appear.
-        # IMPORTANT: When the agent uses --worktree, Claude runs in the
-        # worktree directory, so the session JSONL is stored under the
-        # worktree path, not the base project path.  Use the tmux pane's
-        # actual cwd to determine the correct session directory.
+        # Step 2: Send the prompt, then wait for session JSONL as the
+        # definitive acceptance signal.  If the JSONL doesn't appear within
+        # a reasonable time, clear the input and re-send.
+        #
+        # Using session JSONL creation as the acceptance signal is far more
+        # reliable than pane-capture heuristics, which are fragile against
+        # TUI layout variations and re-render timing.
         from session_cache import invalidate_path_cache
         from agent_dispatcher import _get_session_pid
 
@@ -1932,116 +2170,140 @@ async def _launch_tmux_background(
 
         session_dir = session_source_dir(actual_cwd)
         base_session_dir = session_source_dir(project_path)
-        dir_found = False
 
-        # Phase A: wait for session directory (5s)
-        for i in range(5):
-            await asyncio.sleep(1)
-            if os.path.isdir(session_dir) or os.path.isdir(base_session_dir):
-                dir_found = True
-                break
+        def _check_status_bar_processing() -> bool:
+            """Check if the status bar shows 'esc to interrupt' — definitive
+            indicator that Claude is actively processing."""
+            try:
+                cap = subprocess.run(
+                    ["tmux", "capture-pane", "-t", pane_id, "-p"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if cap.returncode == 0:
+                    for ln in cap.stdout.split("\n"):
+                        if "\u23f5" in ln and "esc to interrupt" in ln:
+                            return True
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            return False
 
-        # Retry: invalidate cache and re-resolve path
-        if not dir_found:
-            invalidate_path_cache(actual_cwd)
-            invalidate_path_cache(project_path)
-            session_dir = session_source_dir(actual_cwd)
-            base_session_dir = session_source_dir(project_path)
-            logger.info(
-                "tmux launch agent %s: session dir not found at first attempt, "
-                "retrying with re-resolved path: %s",
-                agent_id, session_dir,
-            )
-            for i in range(5):
-                await asyncio.sleep(1)
-                if os.path.isdir(session_dir) or os.path.isdir(base_session_dir):
-                    dir_found = True
-                    break
+        def _scan_for_session_jsonl(owned_sids: set, pane_pid: int | None) -> str | None:
+            """Scan session dirs for a PID-matched JSONL file."""
+            # Re-check dirs in case they just appeared
+            for sdir in dict.fromkeys([session_dir, base_session_dir]):
+                if not os.path.isdir(sdir):
+                    continue
+                for fname in os.listdir(sdir):
+                    if not fname.endswith(".jsonl"):
+                        continue
+                    sid = fname.replace(".jsonl", "")
+                    if sid in owned_sids:
+                        continue
+                    if pane_pid:
+                        session_pid = _get_session_pid(sid)
+                        if session_pid == pane_pid:
+                            return sid
+            return None
 
-        if not dir_found:
-            _mark_error(
-                "Session directory never appeared for agent %s "
-                "(expected: %s, project_path: %s)"
-                % (agent_id, session_dir, project_path)
-            )
-            return
+        # Collect session IDs already owned by other agents (once, reused)
+        db_check = SessionLocal()
+        try:
+            owned_sids = set()
+            for a in db_check.query(Agent).filter(
+                Agent.session_id.is_not(None),
+                Agent.id != agent_id,
+            ).all():
+                owned_sids.add(a.session_id)
+        finally:
+            db_check.close()
 
-        # Phase B: directory exists — poll for JSONL file.
-        # Use PID matching exclusively (no mtime fallback — too error-prone).
-        # Polls while the tmux pane/claude process is still alive, up to a
-        # hard cap of 120s so we don't wait forever.
-        session_id = None
-        dir_error_logged = False
         pane_pid = None
         pane_map = _build_tmux_claude_map()
         if pane_id in pane_map:
             pane_pid = pane_map[pane_id].get("pid")
 
-        _MAX_JSONL_WAIT = 120  # hard cap seconds
-        for i in range(_MAX_JSONL_WAIT):
-            await asyncio.sleep(1)
+        _MAX_SEND_ATTEMPTS = 5
+        _JSONL_POLL_PER_ATTEMPT = 15  # seconds to wait for JSONL per attempt
+        session_id = None
 
-            # Refresh pane PID each iteration (process may not exist yet)
-            if not pane_pid:
-                pane_map = _build_tmux_claude_map()
-                if pane_id in pane_map:
-                    pane_pid = pane_map[pane_id].get("pid")
-                elif i > 10:
-                    # Claude process disappeared from pane after 10s — give up
-                    break
+        for attempt in range(_MAX_SEND_ATTEMPTS):
+            # Clear any leftover text from a prior failed attempt
+            if attempt > 0:
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", pane_id, "C-u"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                # Increasing back-off between retries: 3s, 5s, 7s, 9s
+                await asyncio.sleep(1 + attempt * 2)
 
-            # Collect session IDs already owned by other agents
-            db_check = SessionLocal()
-            try:
-                owned_sids = set()
-                for a in db_check.query(Agent).filter(
-                    Agent.session_id.is_not(None),
-                    Agent.id != agent_id,
-                ).all():
-                    owned_sids.add(a.session_id)
-            finally:
-                db_check.close()
+            if not send_tmux_message(pane_id, prompt):
+                _mark_error(
+                    "Failed to send prompt to tmux pane %s "
+                    "(project_path: %s)" % (pane_id, project_path)
+                )
+                return
 
-            try:
-                # Scan both worktree and base project session dirs
-                seen_sids: set[str] = set()
-                for sdir in dict.fromkeys([session_dir, base_session_dir]):
-                    if not os.path.isdir(sdir):
-                        continue
-                    for fname in os.listdir(sdir):
-                        if not fname.endswith(".jsonl"):
-                            continue
-                        sid = fname.replace(".jsonl", "")
-                        if sid in owned_sids or sid in seen_sids:
-                            continue
-                        seen_sids.add(sid)
+            logger.info(
+                "tmux launch agent %s: prompt sent (attempt %d/%d)",
+                agent_id, attempt + 1, _MAX_SEND_ATTEMPTS,
+            )
 
-                        # PID-matched session only — deterministic and safe
-                        if pane_pid:
-                            session_pid = _get_session_pid(sid)
-                            if session_pid == pane_pid:
-                                session_id = sid
-                                break
-                    if session_id:
-                        break
+            # Poll for evidence that Claude accepted the prompt:
+            # 1. Status bar shows "esc to interrupt" (processing), or
+            # 2. Session JSONL file appears (definitive)
+            for i in range(_JSONL_POLL_PER_ATTEMPT):
+                await asyncio.sleep(1)
 
+                # Refresh PID if not yet known
+                if not pane_pid:
+                    pane_map = _build_tmux_claude_map()
+                    if pane_id in pane_map:
+                        pane_pid = pane_map[pane_id].get("pid")
+
+                # Quick check: is Claude processing?
+                if i < 5 and _check_status_bar_processing():
+                    logger.info(
+                        "tmux launch agent %s: status bar confirms processing",
+                        agent_id,
+                    )
+
+                # Invalidate path cache periodically to pick up new dirs
+                if i in (5, 10):
+                    invalidate_path_cache(actual_cwd)
+                    invalidate_path_cache(project_path)
+                    session_dir = session_source_dir(actual_cwd)
+                    base_session_dir = session_source_dir(project_path)
+
+                try:
+                    session_id = _scan_for_session_jsonl(owned_sids, pane_pid)
+                except OSError:
+                    continue
                 if session_id:
                     break
-            except OSError as e:
-                if not dir_error_logged:
-                    logger.warning(
-                        "tmux launch agent %s: OSError scanning session dir %s "
-                        "(iteration %d): %s",
-                        agent_id, session_dir, i, e,
-                    )
-                    dir_error_logged = True
-                continue
+
+            if session_id:
+                break
+
+            # No JSONL after polling — check if the pane still has Claude
+            pane_map = _build_tmux_claude_map()
+            if pane_id not in pane_map:
+                _mark_error(
+                    "Claude process disappeared from pane %s during launch "
+                    "(project_path: %s)" % (pane_id, project_path)
+                )
+                return
+
+            logger.info(
+                "tmux launch agent %s: no session JSONL after attempt %d/%d, "
+                "will retry",
+                agent_id, attempt + 1, _MAX_SEND_ATTEMPTS,
+            )
 
         if not session_id:
             _mark_error(
-                "No session JSONL appeared for agent %s in %s "
-                "(project_path: %s, waited %ds)"
-                % (agent_id, session_dir, project_path, _MAX_JSONL_WAIT)
+                "No session JSONL appeared for agent %s after %d send attempts "
+                "(session_dir: %s, project_path: %s)"
+                % (agent_id, _MAX_SEND_ATTEMPTS, session_dir, project_path)
             )
             return
 
@@ -2085,6 +2347,7 @@ async def _launch_tmux_background(
     except asyncio.CancelledError:
         logger.info("Launch task cancelled for agent %s", agent_id)
     finally:
+        _tmux_launch_sem.release()
         ad._launch_tasks.pop(agent_id, None)
 
 
@@ -2404,6 +2667,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
 
             tmux_session = f"ah-{agent.id[:8]}"
+            _preflight_claude_project(project.path)
 
             subprocess.run(
                 ["tmux", "new-session", "-d", "-s", tmux_session,

@@ -99,6 +99,12 @@ def _format_tool_summary(name: str, input_data: dict) -> str | None:
         return f"> `Bash` {desc}"
     if name in ("Read", "Edit", "Write"):
         path = input_data.get("file_path", "")
+        # Keep full path for media files so the frontend can preview them
+        if path.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+             ".mp4", ".webm", ".mov", ".csv")
+        ):
+            return f"> `{name}` {path}"
         return f"> `{name}` {_short_path(path)}"
     if name == "Grep":
         pat = input_data.get("pattern", "")
@@ -3271,26 +3277,28 @@ class AgentDispatcher:
                             return
                         continue  # tmux is dead, skip continuation check
 
-                    # Only look for successors if the current session has
-                    # actually ended (has a 'result' event).  This prevents
-                    # sub-agent sessions (from Claude's Task tool) from being
+                    # Look for a successor session.  The old JSONL may or
+                    # may not have a 'result' event — Claude Code sometimes
+                    # continues into a new session file (via --resume getting
+                    # a new ID) without writing 'result' to the old one.
+                    # The PID-match requirement in _detect_successor_session
+                    # already prevents sub-agent sessions from being
                     # misidentified as continuations.
-                    if self._session_has_ended(jsonl_path):
-                        new_sid = self._detect_successor_session(
-                            session_id, project_path, agent_id,
+                    new_sid = self._detect_successor_session(
+                        session_id, project_path, agent_id,
+                        worktree=_worktree,
+                    )
+                    if new_sid:
+                        logger.info(
+                            "Session continuation detected for agent %s: "
+                            "%s → %s — stopping old, creating new",
+                            agent_id, session_id[:12], new_sid[:12],
+                        )
+                        self._spawn_successor_agent(
+                            agent_id, new_sid, project_path,
                             worktree=_worktree,
                         )
-                        if new_sid:
-                            logger.info(
-                                "Session continuation detected for agent %s: "
-                                "%s → %s — stopping old, creating new",
-                                agent_id, session_id[:12], new_sid[:12],
-                            )
-                            self._spawn_successor_agent(
-                                agent_id, new_sid, project_path,
-                                worktree=_worktree,
-                            )
-                            return
+                        return
 
                     # If pane is alive but session hasn't grown for a very
                     # long time (600 polls ≈ 30 min), the pane is likely

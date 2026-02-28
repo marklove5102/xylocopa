@@ -7,6 +7,7 @@ import {
   fetchAgents as apiFetchAgents,
   fetchProcesses as apiFetchProcesses,
   fetchSystemStats,
+  fetchStorageStats,
   fetchTokenUsage,
 } from "../lib/api";
 
@@ -69,6 +70,99 @@ function HealthCard({ label, status }) {
   );
 }
 
+const STORAGE_COLORS = {
+  cyan: { ring: "stroke-cyan-500", dot: "bg-cyan-500", bar: "bg-cyan-500" },
+  violet: { ring: "stroke-violet-500", dot: "bg-violet-500", bar: "bg-violet-500" },
+  amber: { ring: "stroke-amber-500", dot: "bg-amber-500", bar: "bg-amber-500" },
+  emerald: { ring: "stroke-emerald-500", dot: "bg-emerald-500", bar: "bg-emerald-500" },
+  orange: { ring: "stroke-orange-500", dot: "bg-orange-500", bar: "bg-orange-500" },
+  gray: { ring: "stroke-gray-400", dot: "bg-gray-400", bar: "bg-gray-400" },
+};
+
+// Hex values for SVG stroke (Tailwind classes don't work on SVG stroke directly)
+const STORAGE_HEX = {
+  cyan: "#06b6d4", violet: "#8b5cf6", amber: "#f59e0b",
+  emerald: "#10b981", orange: "#f97316", gray: "#9ca3af",
+};
+
+function formatBytes(bytes) {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
+}
+
+function StorageChart({ data }) {
+  if (!data) return null;
+  const { categories, total_bytes } = data;
+  const visible = categories.filter((c) => c.size_bytes > 0);
+  if (visible.length === 0) return null;
+
+  const radius = 52;
+  const stroke = 14;
+  const size = 140;
+  const circumference = 2 * Math.PI * radius;
+
+  // Build segments
+  let offset = 0;
+  const segments = visible.map((cat) => {
+    const pct = total_bytes > 0 ? cat.size_bytes / total_bytes : 0;
+    const dash = pct * circumference;
+    const gap = circumference - dash;
+    const seg = { ...cat, pct, dash, gap, offset };
+    offset += dash;
+    return seg;
+  });
+
+  return (
+    <section>
+      <h2 className="text-xs font-semibold text-dim uppercase tracking-wider mb-2">Storage</h2>
+      <div className="rounded-xl bg-surface shadow-card p-4 flex items-center gap-4">
+        {/* Donut ring — left */}
+        <div className="relative shrink-0" style={{ width: size, height: size }}>
+          <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+            <circle
+              cx={size / 2} cy={size / 2} r={radius}
+              fill="none" strokeWidth={stroke}
+              className="stroke-elevated"
+            />
+            {segments.map((seg) => (
+              <circle
+                key={seg.name}
+                cx={size / 2} cy={size / 2} r={radius}
+                fill="none" strokeWidth={stroke}
+                stroke={STORAGE_HEX[seg.color] || STORAGE_HEX.gray}
+                strokeDasharray={`${seg.dash} ${seg.gap}`}
+                strokeDashoffset={-seg.offset}
+                strokeLinecap="butt"
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              />
+            ))}
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-sm font-bold text-heading">{formatBytes(total_bytes)}</span>
+            <span className="text-[10px] text-dim">total</span>
+          </div>
+        </div>
+        {/* Legend — right */}
+        <div className="flex-1 min-w-0 space-y-1">
+          {visible.map((cat) => {
+            const colors = STORAGE_COLORS[cat.color] || STORAGE_COLORS.gray;
+            return (
+              <div key={cat.name} className="flex items-center gap-2 text-xs">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
+                <span className="text-label truncate flex-1">{cat.name}</span>
+                <span className="text-dim font-mono shrink-0">{formatBytes(cat.size_bytes)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function MonitorPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const [health, setHealth] = useState(null);
@@ -78,6 +172,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
   const [processes, setProcesses] = useState([]);
   const [sysStats, setSysStats] = useState(null);
   const [tokenUsage, setTokenUsage] = useState(null);
+  const [storageStats, setStorageStats] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchHealth = useCallback(async () => {
@@ -118,11 +213,17 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     } catch { /* credentials not configured or API error — ignore */ }
   }, []);
 
+  const fetchStorage = useCallback(async () => {
+    try {
+      setStorageStats(await fetchStorageStats());
+    } catch { /* ignore */ }
+  }, []);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([fetchHealth(), fetchAgents(), fetchProcesses(), fetchSysStats(), fetchUsage()]);
+    await Promise.all([fetchHealth(), fetchAgents(), fetchProcesses(), fetchSysStats(), fetchUsage(), fetchStorage()]);
     setTimeout(() => setRefreshing(false), 400);
-  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage]);
+  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage, fetchStorage]);
 
   useEffect(() => {
     fetchHealth();
@@ -130,7 +231,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     fetchProcesses();
     fetchSysStats();
     fetchUsage();
-  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage]);
+    fetchStorage();
+  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage, fetchStorage]);
 
   useEffect(() => {
     const interval = setInterval(() => { fetchAgents(); fetchProcesses(); fetchSysStats(); }, 3000);
@@ -142,6 +244,12 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     const interval = setInterval(fetchUsage, 30000);
     return () => clearInterval(interval);
   }, [fetchUsage]);
+
+  // Storage stats poll every 30s (storage changes slowly)
+  useEffect(() => {
+    const interval = setInterval(fetchStorage, 30000);
+    return () => clearInterval(interval);
+  }, [fetchStorage]);
 
   useEffect(() => {
     const interval = setInterval(fetchHealth, 10000);
@@ -268,6 +376,9 @@ export default function MonitorPage({ theme, onToggleTheme }) {
             </div>
           </section>
         )}
+
+        {/* Storage */}
+        <StorageChart data={storageStats} />
 
         {/* Summary Stats */}
         <section className="grid grid-cols-2 gap-3">
