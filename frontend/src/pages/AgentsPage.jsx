@@ -211,7 +211,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
           setSearchResults(data);
           setSearchLoading(false);
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error('searchMessages failed:', err);
           setSearchResults(null);
           setSearchLoading(false);
         });
@@ -235,8 +236,9 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    try { await scanAgents(); } catch {}
+    scanAgents().catch((err) => console.error('scanAgents failed:', err));
     await load();
+    // Minimum 400ms spinner display to prevent jarring sub-frame flicker
     setTimeout(() => setRefreshing(false), 400);
   }, [load]);
 

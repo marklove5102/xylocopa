@@ -201,6 +201,32 @@ export const fetchTokenUsage = () => request("/api/system/token-usage");
 export const restartServer = () => request("/api/system/restart", { method: "POST" });
 export const fetchProcesses = () => request("/api/processes");
 
+// --- FormData helper (shared by voice + upload) ---
+async function formDataRequest(url, formData, errorLabel = "Request") {
+  const headers = {};
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}${url}`, {
+    method: "POST",
+    body: formData,
+    headers,
+  });
+  if (res.status === 401) {
+    clearAuthToken();
+    if (window.location.pathname !== "/login") {
+      window.dispatchEvent(new Event("auth-expired"));
+    }
+    throw new Error("Not authenticated");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `${errorLabel} (${res.status})`);
+  }
+  return res.json();
+}
+
 // --- Voice ---
 export async function transcribeVoice(audioBlob, mimeType) {
   // Pick file extension matching actual format (Safari = mp4, Chrome = webm)
@@ -209,55 +235,13 @@ export async function transcribeVoice(audioBlob, mimeType) {
     : "webm";
   const formData = new FormData();
   formData.append("file", audioBlob, `recording.${ext}`);
-  const headers = {};
-  const token = getAuthToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-  const res = await fetch(`${BASE}/api/voice`, {
-    method: "POST",
-    body: formData,
-    headers,
-  });
-  if (res.status === 401) {
-    clearAuthToken();
-    if (window.location.pathname !== "/login") {
-      window.dispatchEvent(new Event("auth-expired"));
-    }
-    throw new Error("Not authenticated");
-  }
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.detail || `Voice API error (${res.status})`);
-  }
-  return res.json();
+  return formDataRequest("/api/voice", formData, "Voice API error");
 }
 
 export async function uploadFile(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const headers = {};
-  const token = getAuthToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-  const res = await fetch(`${BASE}/api/upload`, {
-    method: "POST",
-    body: formData,
-    headers,
-  });
-  if (res.status === 401) {
-    clearAuthToken();
-    if (window.location.pathname !== "/login") {
-      window.dispatchEvent(new Event("auth-expired"));
-    }
-    throw new Error("Not authenticated");
-  }
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.detail || `Upload failed (${res.status})`);
-  }
-  return res.json();
+  return formDataRequest("/api/upload", formData, "Upload failed");
 }
 
 export async function generateWorktreeName(prompt) {

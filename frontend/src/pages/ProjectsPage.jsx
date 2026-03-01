@@ -157,7 +157,7 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
   const [customOrder, setCustomOrder] = useState(() => {
     try { return JSON.parse(localStorage.getItem("projects-custom-order")) || []; }
-    catch { return []; }
+    catch { return []; } // Expected: localStorage data may be corrupt or invalid JSON
   });
   const [activeDragId, setActiveDragId] = useState(null);
 
@@ -313,6 +313,7 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     } catch (err) {
       setError(err.message);
     } finally {
+      // Minimum 400ms spinner display to prevent jarring sub-frame flicker
       setTimeout(() => setRefreshing(false), 400);
     }
   }, [load]);

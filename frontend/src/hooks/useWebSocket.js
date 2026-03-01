@@ -8,7 +8,9 @@ function getMutedAgents() {
   try {
     const v = localStorage.getItem(MUTED_KEY);
     return v ? new Set(JSON.parse(v)) : new Set();
-  } catch {
+  } catch (err) {
+    // Expected: localStorage may be unavailable in private browsing, or value may not be valid JSON
+    console.warn("getMutedAgents: failed to read muted agents:", err);
     return new Set();
   }
 }
@@ -70,7 +72,10 @@ function showBrowserNotification(event) {
     const n = new Notification(title, { body, tag, renotify: true });
     n.onclick = () => { window.focus(); n.close(); };
     setTimeout(() => n.close(), 8000);
-  } catch { /* ignore */ }
+  } catch (err) {
+    // Expected: Notification constructor can throw if permissions change mid-session
+    console.warn("showBrowserNotification: failed to create notification:", err);
+  }
 }
 
 /**
@@ -114,7 +119,7 @@ export default function useWebSocket() {
             showBrowserNotification(event);
           }
         } catch {
-          // ignore non-JSON
+          // Expected: untrusted input may not be valid JSON
         }
       };
 
@@ -131,8 +136,9 @@ export default function useWebSocket() {
       ws.onerror = () => {
         ws.close();
       };
-    } catch {
+    } catch (err) {
       // WebSocket constructor can throw if URL is invalid
+      console.warn("useWebSocket: connection failed, will retry:", err);
       reconnectTimer.current = setTimeout(connect, reconnectDelay.current);
     }
   }, []);

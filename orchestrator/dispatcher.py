@@ -277,7 +277,7 @@ class TaskDispatcher:
                     logger.info("Disk usage back to %.1f%% — resuming", fraction * 100)
                     self._paused_disk = False
         except Exception:
-            logger.debug("Could not check disk usage")
+            logger.warning("Could not check disk usage", exc_info=True)
 
     def _cleanup_orphan_processes(self, db: Session):
         """Remove tracking entries for processes not tracked in task table."""
@@ -298,7 +298,7 @@ class TaskDispatcher:
                     logger.info("Removing orphan process tracking: PID %s", pid_str)
                     self.worker_mgr._processes.pop(pid_str, None)
         except Exception:
-            logger.debug("Orphan cleanup failed", exc_info=True)
+            logger.warning("Orphan cleanup failed", exc_info=True)
 
     # ---- Recovery ----
 

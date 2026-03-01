@@ -152,6 +152,7 @@ function QuestionBubble({ item, agentId, onAnswered }) {
   const [chosenIndices, setChosenIndices] = useState({});
   // Track which question is currently submitting (null = none)
   const [submittingQi, setSubmittingQi] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
 
   const questions = item.questions || [];
   // Detect dismissed/escaped answers (not a real selection)
@@ -163,6 +164,7 @@ function QuestionBubble({ item, agentId, onAnswered }) {
   const handleSubmit = async (qi, idx) => {
     setChosenIndices(prev => ({ ...prev, [qi]: idx }));
     setSubmittingQi(qi);
+    setSubmitError(null);
     try {
       await answerAgent(agentId, {
         tool_use_id: item.tool_use_id,
@@ -173,6 +175,7 @@ function QuestionBubble({ item, agentId, onAnswered }) {
       onAnswered?.();
     } catch (e) {
       console.error("Failed to answer:", e);
+      setSubmitError("Failed to send answer: " + (e.message || "Unknown error"));
       setChosenIndices(prev => { const next = { ...prev }; delete next[qi]; return next; });
     } finally {
       setSubmittingQi(null);
@@ -311,6 +314,9 @@ function QuestionBubble({ item, agentId, onAnswered }) {
           </div>
         );
       })}
+      {submitError && (
+        <p className="text-xs text-red-400 mt-2 px-1">{submitError}</p>
+      )}
     </div>
   );
 }
@@ -341,7 +347,7 @@ function _detectPlanIdx(answer) {
   if (/feedback|type here|tell claude/.test(a)) return 3;
   if (/^yes\b/.test(a) || a === "approve" || a === "approved") return 0;
   if (/^no\b/.test(a) || a === "reject") return 2;
-  return 0; // default to first option
+  return null; // unrecognized input — do not select any option
 }
 
 function _isPlanDismissed(item) {
@@ -353,6 +359,7 @@ function PlanBubble({ item, agentId, onAnswered }) {
   const [chosenIdx, setChosenIdx] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [planExpanded, setPlanExpanded] = useState(true);
+  const [planError, setPlanError] = useState(null);
 
   const isDismissed = _isPlanDismissed(item);
   // Determine the effective selected index: stored index > answer parse > local choice
@@ -367,6 +374,7 @@ function PlanBubble({ item, agentId, onAnswered }) {
   const handleSelect = async (idx) => {
     setChosenIdx(idx);
     setSubmitting(true);
+    setPlanError(null);
     try {
       await answerAgent(agentId, {
         tool_use_id: item.tool_use_id,
@@ -376,6 +384,7 @@ function PlanBubble({ item, agentId, onAnswered }) {
       onAnswered?.();
     } catch (e) {
       console.error("Failed to answer plan:", e);
+      setPlanError("Failed to send plan response: " + (e.message || "Unknown error"));
       setChosenIdx(null); // revert on failure
     } finally {
       setSubmitting(false);
@@ -482,6 +491,9 @@ function PlanBubble({ item, agentId, onAnswered }) {
           Sending response...
         </p>
       )}
+      {planError && (
+        <p className="text-xs text-red-400 mt-2 px-1">{planError}</p>
+      )}
     </div>
   );
 }
@@ -557,10 +569,10 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   }, [editing, message.scheduled_at]);
 
-  // Auto-focus textarea when editing starts
+  // Auto-focus textarea when editing starts (useEffect runs after DOM commit)
   useEffect(() => {
     if (editing) {
-      setTimeout(() => editTextareaRef.current?.focus(), 0);
+      editTextareaRef.current?.focus();
     }
   }, [editing]);
 
@@ -1126,11 +1138,10 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
     setEscCooldown(true);
     try {
       await onEscape();
-    } catch (e) {
-      console.error("Escape failed:", e);
+    } finally {
+      // 2.5s cooldown on the frontend to match backend rate limit
+      setTimeout(() => setEscCooldown(false), 2500);
     }
-    // 2.5s cooldown on the frontend to match backend rate limit
-    setTimeout(() => setEscCooldown(false), 2500);
   };
 
   const canType = !disabled || isBusy;
@@ -1351,11 +1362,12 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       if (controller.signal.aborted) return;
       if (!initialLoadDone.current) {
         console.error("AgentChatPage: initial load failed", err);
+        showToast("Failed to load agent: " + (err.message || "Unknown error"), "error");
       }
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [id]);
+  }, [id, showToast]);
 
   // Initial load + clear notification flag for this agent
   useEffect(() => {
@@ -1378,7 +1390,9 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   // Mark as read on mount and when new messages arrive
   useEffect(() => {
     if (agent && agent.unread_count > 0) {
-      markAgentRead(id).catch(() => {});
+      markAgentRead(id).catch((err) => {
+        console.warn("Failed to mark agent as read:", err);
+      });
     }
   }, [id, messages.length, agent?.unread_count]);
 
@@ -1391,7 +1405,9 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         const match = sessions.find((s) => s.session_id === sessionId);
         setStarred(match?.starred ?? false);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("Failed to fetch starred status:", err);
+      });
   }, [agent?.project, agent?.session_id, agent?.id]);
 
   const handleToggleStar = async () => {
@@ -1412,15 +1428,13 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
     }
   };
 
-  const handleToggleMute = async () => {
+  const handleToggleMute = () => {
     const nextMuted = !muted;
     setAgentMuted(id, nextMuted);
     setMuted(nextMuted);
-    try {
-      await updateAgent(id, { muted: nextMuted });
-    } catch {
-      // Backend update failed — local state still applies for browser notifs
-    }
+    updateAgent(id, { muted: nextMuted }).catch((err) => {
+      showToast("Failed to save mute setting: " + (err.message || "Unknown error"), "error");
+    });
     showToast(nextMuted ? "Notifications muted for this agent" : "Notifications enabled for this agent");
   };
 
@@ -1573,11 +1587,15 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
     };
   }, []);
 
+  // Auto-select name input when rename starts (useEffect runs after DOM commit)
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.select();
+  }, [editingName]);
+
   // Rename agent
   const startRename = () => {
     setNameDraft(agent?.name || "");
     setEditingName(true);
-    setTimeout(() => nameInputRef.current?.select(), 0);
   };
   const submitRename = async () => {
     const trimmed = nameDraft.trim();

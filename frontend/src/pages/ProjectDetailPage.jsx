@@ -58,7 +58,7 @@ function agentBotState(status) {
   return "idle";
 }
 
-function AgentRow({ agent, onClick, starred, onToggleStar, project, isStreaming }) {
+function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isStreaming }) {
   const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
   const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
   const [copied, setCopied] = useState(false);
@@ -84,6 +84,9 @@ function AgentRow({ agent, onClick, starred, onToggleStar, project, isStreaming 
         await starSession(project, sessionId);
       }
       if (onToggleStar) onToggleStar(sessionId, !starred);
+    } catch (err) {
+      console.error("Star toggle failed:", err);
+      if (onError) onError(err.message || "Failed to update star");
     } finally {
       setStarLoading(false);
     }
@@ -198,6 +201,9 @@ function SessionRow({ session, project, projectActive, onResume, onError, onTogg
         await starSession(project, session.session_id);
       }
       if (onToggleStar) onToggleStar(session.session_id, !session.starred);
+    } catch (err) {
+      console.error("Star toggle failed:", err);
+      if (onError) onError(err.message || "Failed to update star");
     } finally {
       setStarLoading(false);
     }
@@ -360,6 +366,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [project, setProject] = useState(null);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
 
   // Sessions (lazy-loaded)
@@ -472,11 +479,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // Auto-select name input when rename starts (useEffect runs after DOM commit)
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.select();
+  }, [editingName]);
+
   // Rename handlers
   const startRename = () => {
     setNameDraft(project?.display_name || project?.name || "");
     setEditingName(true);
-    setTimeout(() => nameInputRef.current?.select(), 0);
   };
 
   const requestRename = () => {
@@ -541,6 +552,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       }
       setProject(folder);
       setAgents(agentList);
+      setLoadError(null);
+    } catch (err) {
+      console.error("Failed to load project data:", err);
+      setLoadError(err.message || "Failed to load project data");
     } finally {
       setLoading(false);
     }
@@ -550,6 +565,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     setRefreshing(true);
     scanAgents().catch(() => {});
     await loadData();
+    // Minimum 400ms spinner display to prevent jarring sub-frame flicker
     setTimeout(() => setRefreshing(false), 400);
   }, [loadData]);
 
@@ -573,9 +589,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           setRefreshingClaudeMd(false);
           showToast(res.message || "Failed to analyze project — try again", "error");
         }
-      } catch {
+      } catch (err) {
+        console.error("CLAUDE.md refresh poll failed:", err);
         stopPolling();
         setRefreshingClaudeMd(false);
+        showToast("Failed to check refresh status", "error");
       }
     }, 2000);
   }, [name, stopPolling, showToast]);
@@ -868,6 +886,19 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     return (
       <div className="flex justify-center py-20">
         <span className="text-dim text-sm animate-pulse">Loading...</span>
+      </div>
+    );
+  }
+
+  if (!project && loadError) {
+    return (
+      <div className="px-4 py-10">
+        <div className="bg-red-950/40 border border-red-800 rounded-xl p-4">
+          <p className="text-red-400 text-sm">Failed to load project: {loadError}</p>
+          <button type="button" onClick={loadData} className="mt-2 text-xs text-red-300 underline hover:text-red-200">
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -1275,6 +1306,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 starred={starredIds.has(agent.session_id || agent.id)}
                 isStreaming={streamingAgents.has(agent.id)}
                 onClick={() => navigate(`/agents/${agent.id}`)}
+                onError={(msg) => showToast(msg, "error")}
                 onToggleStar={(sid, newStarred) => {
                   setStarredIds((prev) => {
                     const next = new Set(prev);
