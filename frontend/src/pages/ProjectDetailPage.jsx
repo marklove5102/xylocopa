@@ -354,7 +354,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Remember last-viewed project so ProjectsPage can auto-navigate back
   useEffect(() => {
-    if (name) localStorage.setItem("lastViewedProject", name);
+    if (name) localStorage.setItem("lastViewed:projects", name);
   }, [name]);
 
   const [project, setProject] = useState(null);
@@ -889,7 +889,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         <div className="max-w-2xl mx-auto">
           <button
             type="button"
-            onClick={() => { localStorage.removeItem("lastViewedProject"); navigate("/projects"); }}
+            onClick={() => { localStorage.removeItem("lastViewed:projects"); navigate("/projects"); }}
             className="flex items-center gap-1 text-sm text-label hover:text-heading mb-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
