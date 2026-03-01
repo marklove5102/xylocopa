@@ -1431,7 +1431,13 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
       if (!agentData || !agentData.id) return;
       setAgent(agentData);
       const current = messagesRef.current;
-      if (!current.length) return;
+      if (!current.length) {
+        // No messages yet — do a full fetch so the first message appears
+        const data = await fetchMessages(id, { limit: 50 });
+        const msgs = Array.isArray(data?.messages) ? data.messages : [];
+        if (msgs.length) setMessages(msgs);
+        return;
+      }
       const newest = current[current.length - 1];
       const data = await fetchMessages(id, { after: newest.created_at });
       const newer = Array.isArray(data?.messages) ? data.messages : [];
