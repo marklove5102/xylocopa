@@ -28,6 +28,7 @@ from session_cache import (
     repair_session_jsonl,
     restore_session,
 )
+from thumbnails import generate_thumbnails_for_message
 from worker_manager import WorkerManager
 
 logger = logging.getLogger("orchestrator.agent_dispatcher")
@@ -1400,6 +1401,10 @@ class AgentDispatcher:
 
         self._recover_agents()
 
+        # Generate thumbnails for existing videos in background
+        from thumbnails import backfill_thumbnails
+        asyncio.ensure_future(asyncio.to_thread(backfill_thumbnails))
+
         while self.running:
             try:
                 if not self.worker_mgr.ping():
@@ -1676,6 +1681,14 @@ class AgentDispatcher:
                     body=preview[:100],
                     url=f"/agents/{agent.id}",
                 )
+
+            # Generate video thumbnails in background thread
+            if result_text:
+                _proj = db.get(Project, agent.project)
+                if _proj:
+                    asyncio.ensure_future(asyncio.to_thread(
+                        generate_thumbnails_for_message, result_text, _proj.path,
+                    ))
 
             done_agents.append(agent_id)
 
@@ -3774,6 +3787,13 @@ class AgentDispatcher:
                         "Synced %d new turns for agent %s",
                         len(new_turns), agent_id,
                     )
+
+                    # Generate video thumbnails for new assistant turns
+                    for _r, _c, *_ in new_turns:
+                        if _r == "assistant" and _c:
+                            asyncio.ensure_future(asyncio.to_thread(
+                                generate_thumbnails_for_message, _c, project_path,
+                            ))
 
                 # Update stale interactive metadata on EARLIER messages
                 # (e.g. user answered an AskUserQuestion in terminal)

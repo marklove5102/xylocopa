@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { authedFetch } from "../lib/api";
 import ImageLightbox from "./ImageLightbox";
 
@@ -26,24 +26,25 @@ function ImagePreview({ src, filename, onOpen }) {
 // --- Video Preview (thumbnail, tappable to open in lightbox) ---
 
 function VideoPreview({ src, filename, onOpen }) {
-  const [error, setError] = useState(false);
-  const vidRef = useRef(null);
-
-  if (error) return null;
+  const [thumbError, setThumbError] = useState(false);
+  const thumbUrl = src + ".thumb.jpg";
 
   return (
     <div className="group cursor-pointer" onClick={onOpen}>
       <div className="relative inline-block">
-        <video
-          ref={vidRef}
-          src={src}
-          preload="metadata"
-          muted
-          onLoadedData={() => { if (vidRef.current) vidRef.current.currentTime = 0.1; }}
-          onError={() => setError(true)}
-          className="max-h-[120px] max-w-full rounded-lg border border-divider object-contain block"
-        />
-        {/* Play icon overlay — scoped to video area only */}
+        {thumbError ? (
+          /* Fallback: gray placeholder when no thumbnail available */
+          <div className="w-[160px] h-[90px] rounded-lg border border-divider bg-elevated flex items-center justify-center" />
+        ) : (
+          <img
+            src={thumbUrl}
+            alt={filename}
+            loading="lazy"
+            onError={() => setThumbError(true)}
+            className="max-h-[120px] max-w-full rounded-lg border border-divider object-contain block"
+          />
+        )}
+        {/* Play icon overlay */}
         <div className="absolute inset-0 flex items-center justify-center rounded-lg">
           <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
             <svg className="w-4 h-4 ml-0.5 text-white" fill="currentColor" viewBox="0 0 24 24">
