@@ -401,6 +401,7 @@ export function extractFileAttachments(text, project, role) {
   const addPath = (rawPath) => {
     if (!rawPath || !AGENT_EXTS.test(rawPath)) return;
     if (IGNORE_EXTS.test(rawPath)) return;
+    if (rawPath.endsWith(".thumb.jpg")) return;
     let path = cleanProjectPath(rawPath, project);
     if (seen.has(path) || inlineRendered.has(rawPath)) return;
     seen.add(path);
