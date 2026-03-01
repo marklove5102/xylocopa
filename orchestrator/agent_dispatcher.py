@@ -181,13 +181,40 @@ def _merge_interactive_meta(db_meta_json: str | None, new_meta: dict | None) -> 
                 item["selected_index"] = db_item["selected_index"]
             if db_item.get("selected_indices"):
                 item["selected_indices"] = db_item["selected_indices"]
-        # JSONL has a real answer → authoritative, but carry over selected_index
-        # and selected_indices if the JSONL version doesn't have them
+        # JSONL has a real answer → usually authoritative, but carry over
+        # selected_index/selected_indices if the JSONL version doesn't have them.
+        # Exception: if the JSONL answer is a dismiss/rejection artifact (e.g.
+        # from context-clear terminating the session) but the DB already has a
+        # valid non-dismissed answer, keep the DB answer — it reflects the
+        # user's actual selection via the web UI.
         elif item.get("answer") is not None:
-            if item.get("selected_index") is None and db_item.get("selected_index") is not None:
-                item["selected_index"] = db_item["selected_index"]
-            if not item.get("selected_indices") and db_item.get("selected_indices"):
-                item["selected_indices"] = db_item["selected_indices"]
+            jsonl_answer = item["answer"]
+            jsonl_is_dismiss = isinstance(jsonl_answer, str) and (
+                jsonl_answer.startswith("The user doesn't want to proceed")
+                or jsonl_answer.startswith("User declined")
+                or jsonl_answer.startswith("Tool use rejected")
+            )
+            db_answer = db_item.get("answer")
+            db_has_valid = (
+                db_answer is not None
+                and isinstance(db_answer, str)
+                and not db_answer.startswith("The user doesn't want to proceed")
+                and not db_answer.startswith("User declined")
+                and not db_answer.startswith("Tool use rejected")
+            )
+            if jsonl_is_dismiss and db_has_valid:
+                # DB answer is the user's real choice; JSONL dismiss is an
+                # artifact (e.g. context-clear killed the old session).
+                item["answer"] = db_item["answer"]
+                if db_item.get("selected_index") is not None:
+                    item["selected_index"] = db_item["selected_index"]
+                if db_item.get("selected_indices"):
+                    item["selected_indices"] = db_item["selected_indices"]
+            else:
+                if item.get("selected_index") is None and db_item.get("selected_index") is not None:
+                    item["selected_index"] = db_item["selected_index"]
+                if not item.get("selected_indices") and db_item.get("selected_indices"):
+                    item["selected_indices"] = db_item["selected_indices"]
 
     return json.dumps(merged)
 
