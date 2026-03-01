@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import uuid
@@ -38,7 +39,7 @@ class WorkerManager:
                 "Claude CLI '%s' not found — install it or set CLAUDE_BIN",
                 CLAUDE_BIN,
             )
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             logger.warning("Failed to verify claude CLI: %s", e)
 
     @staticmethod
@@ -84,11 +85,14 @@ class WorkerManager:
             )
             logger.info("Cloned project %s from %s", project_name, git_url)
         except subprocess.CalledProcessError as e:
-            logger.warning(
-                "Git clone failed for %s: %s — creating empty directory",
+            logger.error(
+                "Git clone failed for %s: %s",
                 project_name, e.stderr.strip(),
             )
-            os.makedirs(project_path, exist_ok=True)
+            # Clean up partial/empty directory left by failed clone
+            if os.path.isdir(project_path):
+                shutil.rmtree(project_path, ignore_errors=True)
+            raise
 
     def ensure_project_dir(self, project_name: str):
         """Ensure the project directory exists."""

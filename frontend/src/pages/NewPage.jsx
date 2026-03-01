@@ -138,7 +138,8 @@ function NewAgentForm({ showToast, navigate }) {
           previewUrl: a.thumbnailUrl || null,
         }));
       }
-    } catch { /* ignore */ }
+    } catch { // Expected: localStorage data may be corrupt or invalid JSON
+    }
     return [];
   });
   const [dragOver, setDragOver] = useState(false);
@@ -183,9 +184,9 @@ function NewAgentForm({ showToast, navigate }) {
             : null
         ),
       }));
-      try { localStorage.setItem(attachmentCacheKey, JSON.stringify(toCache)); } catch { /* ignore */ }
+      try { localStorage.setItem(attachmentCacheKey, JSON.stringify(toCache)); } catch { /* Expected: localStorage quota may be exceeded */ }
     } else {
-      try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
+      try { localStorage.removeItem(attachmentCacheKey); } catch { /* Expected: localStorage may be unavailable */ }
     }
   }, [attachments]);
 
@@ -202,7 +203,7 @@ function NewAgentForm({ showToast, navigate }) {
       prev.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); });
       return [];
     });
-    try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
+    try { localStorage.removeItem(attachmentCacheKey); } catch { /* Expected: localStorage may be unavailable */ }
   };
 
   const addFiles = (files) => {
@@ -310,8 +311,7 @@ function NewAgentForm({ showToast, navigate }) {
         const agent = await createAgent({ project, prompt: fullPrompt, mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
         clearAllDrafts();
         clearAttachments();
-        showToast("Agent created!");
-        setTimeout(() => navigate(`/agents/${agent.id}`), 400);
+        navigate(`/agents/${agent.id}`);
       }
     } catch (err) {
       showToast("Failed: " + err.message, "error");
@@ -334,8 +334,7 @@ function NewAgentForm({ showToast, navigate }) {
       clearAllDrafts();
       clearAttachments();
       const when = new Date(scheduledAt);
-      showToast(`Scheduled for ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-      setTimeout(() => navigate(`/agents/${agent.id}`), 400);
+      navigate(`/agents/${agent.id}`);
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
@@ -588,8 +587,7 @@ function NewProjectForm({ showToast, navigate }) {
       if (description.trim()) body.description = description.trim();
       await createProject(body);
       clearAllDrafts();
-      showToast("Project created!");
-      setTimeout(() => navigate("/projects"), 600);
+      navigate("/projects");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {

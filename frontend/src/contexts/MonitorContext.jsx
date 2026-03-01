@@ -30,7 +30,8 @@ export function MonitorProvider({ children }) {
       const data = await apiFetchHealth();
       setHealth(data);
       setHealthError(false);
-    } catch {
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch health:", err);
       setHealthError(true);
     }
   }, []);
@@ -42,31 +43,41 @@ export function MonitorProvider({ children }) {
       const counts = {};
       for (const a of data) counts[a.status] = (counts[a.status] || 0) + 1;
       setAgentCounts(counts);
-    } catch { /* retry next poll */ }
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch agents:", err);
+    }
   }, []);
 
   const fetchProcesses = useCallback(async () => {
     try {
       setProcesses(await apiFetchProcesses());
-    } catch { /* retry next poll */ }
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch processes:", err);
+    }
   }, []);
 
   const fetchSysStats = useCallback(async () => {
     try {
       setSysStats(await fetchSystemStats());
-    } catch { /* retry next poll */ }
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch system stats:", err);
+    }
   }, []);
 
   const fetchUsage = useCallback(async () => {
     try {
       setTokenUsage(await fetchTokenUsage());
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch token usage:", err);
+    }
   }, []);
 
   const fetchStorage = useCallback(async () => {
     try {
       setStorageStats(await fetchStorageStats());
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch storage stats:", err);
+    }
   }, []);
 
   const refreshAll = useCallback(async () => {

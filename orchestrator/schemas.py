@@ -1,11 +1,14 @@
 """Pydantic schemas for API request/response."""
 
 import json as _json
+import logging
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field, field_validator
 
 from models import AgentMode, AgentStatus, MessageRole, MessageStatus
+
+logger = logging.getLogger("orchestrator.schemas")
 
 
 # --- Task schemas (agent-sourced: each task = a user prompt → agent response cycle) ---
@@ -118,6 +121,7 @@ class MessageOut(BaseModel):
             try:
                 return _json.loads(v)
             except (_json.JSONDecodeError, ValueError):
+                logger.warning("Failed to parse metadata JSON: %s", v[:200] if len(v) > 200 else v)
                 return None
         return v
 

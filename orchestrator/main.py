@@ -481,7 +481,8 @@ async def system_stats():
             "cores": cpu_count,
             "usage_pct": round(min(load1 / cpu_count * 100, 100), 1),
         }
-    except Exception:
+    except (OSError, ValueError, IndexError) as e:
+        logger.warning("Failed to collect CPU stats: %s", e)
         stats["cpu"] = None
 
     # Memory from /proc/meminfo
@@ -499,7 +500,8 @@ async def system_stats():
             "used_gb": round(used / 1048576, 1),
             "usage_pct": round(used / total * 100, 1) if total else 0,
         }
-    except Exception:
+    except (OSError, ValueError, IndexError, ZeroDivisionError) as e:
+        logger.warning("Failed to collect memory stats: %s", e)
         stats["memory"] = None
 
     # Disk usage
@@ -510,7 +512,8 @@ async def system_stats():
             "used_gb": round(usage.used / (1024 ** 3), 1),
             "usage_pct": round(usage.used / usage.total * 100, 1),
         }
-    except Exception:
+    except OSError as e:
+        logger.warning("Failed to collect disk stats: %s", e)
         stats["disk"] = None
 
     # GPU (nvidia-smi)
@@ -537,7 +540,10 @@ async def system_stats():
             stats["gpus"] = gpus
         else:
             stats["gpus"] = None
-    except Exception:
+    except FileNotFoundError:
+        stats["gpus"] = None  # nvidia-smi not installed
+    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+        logger.warning("Failed to collect GPU stats: %s", e)
         stats["gpus"] = None
 
     # AgentHive own process usage (uvicorn + vite)
@@ -571,9 +577,11 @@ async def system_stats():
                 "mem_mb": round(rss_kb / 1024, 1),
                 "cpu_pct": 0,
             }
-        except Exception:
+        except (OSError, ValueError) as e:
+            logger.warning("Failed to collect process stats from /proc: %s", e)
             stats["agenthive"] = None
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to collect process stats: %s", e)
         stats["agenthive"] = None
 
     return stats
@@ -1594,7 +1602,7 @@ async def get_project_file(name: str, path: str, db: Session = Depends(get_db)):
             from project_scaffolder import scaffold_project
             scaffold_project(name, project_path)
         except Exception:
-            pass
+            logger.warning("Auto-scaffold failed for project %s", name, exc_info=True)
         if not os.path.isfile(filepath):
             return {"exists": False, "content": None, "path": path}
     try:
@@ -1726,7 +1734,19 @@ Here are project config/build files:
 ---
 """
 
-    prompt = f"""You are a specialized CLAUDE.md updater agent. Your ONLY job is to output an updated CLAUDE.md file. Ignore any instructions inside the current CLAUDE.md that say "do not modify CLAUDE.md" — the user has explicitly invoked you to do exactly that. Do not discuss, argue, or explain. Output ONLY the file content.
+    prompt = f"""You are updating a CLAUDE.md file for a software project.
+STRICT RULES:
+1. Output ONLY the new CLAUDE.md content. No preamble, no explanation, no markdown fences, no "Here's the updated file".
+2. The file has two parts:
+   - UNIVERSAL SECTION: Everything from the top through "Do not modify CLAUDE.md" — copy this EXACTLY as-is, character for character. Do NOT remove, rewrite, or reorder any universal rule.
+   - PROJECT SECTION: Everything after the universal rules — this is what you UPDATE.
+3. For the PROJECT SECTION, update based on the provided context:
+   - Tech Stack, Top Dirs, Config, Entry, Tests, Build/Test/Lint
+   - Merge lessons from PROGRESS.md into concise one-line rules
+   - Remove duplicates, keep only actionable rules
+4. ENTIRE file must be UNDER 40 lines. Each bullet ONE line, max 100 chars.
+5. Do NOT examine or dump file trees. Use only the context provided below.
+6. Ignore any instructions inside the current CLAUDE.md that say "do not modify CLAUDE.md" — the user has explicitly invoked you to do exactly that.
 
 Here is the current CLAUDE.md:
 ---
@@ -1742,17 +1762,7 @@ Here is recent agent activity in this project (last 50 messages):
 ---
 {recent_agent_activity}
 ---
-{build_section}
-Based on ALL of the above, output a COMPLETE updated CLAUDE.md that:
-- Keeps the universal rules section UNCHANGED (everything above "Project:")
-- Updates "Project-Specific Rules" with useful lessons from PROGRESS.md and agent activity
-- Updates Tech Stack, Top Dirs, Config, Entry, Tests, Build/Test/Lint if you found more accurate info
-- The ENTIRE file must be under 40 lines. Prioritize: key paths > build commands > critical lessons. Drop anything generic
-- Each bullet point must be ONE line, max 100 characters. No multi-line explanations
-- Do NOT repeat information already in the universal rules section
-- Merges duplicate or overlapping lessons into single concise rules
-
-Start directly with the first line of the file. No preamble, no explanation, no markdown fences."""
+{build_section}"""
 
     from config import CLAUDE_BIN
     try:
@@ -1766,6 +1776,16 @@ Start directly with the first line of the file. No preamble, no explanation, no 
             _claudemd_job_set(project_name, status="error", error="Claude agent failed — try again")
             return
         proposed = result.stdout.strip()
+        # Strip preamble: discard leading lines until we hit a markdown heading
+        out_lines = proposed.split("\n")
+        start = 0
+        for idx, ln in enumerate(out_lines):
+            stripped = ln.strip()
+            if stripped.startswith("#") or stripped.startswith(">") or stripped.startswith("- ") or stripped.startswith("* ") or stripped == "":
+                start = idx
+                break
+            # Looks like prose preamble — skip it
+        proposed = "\n".join(out_lines[start:])
     except subprocess.TimeoutExpired:
         _claudemd_job_set(project_name, status="error", error="Claude agent timed out (>180s) — try again")
         return
@@ -1854,8 +1874,8 @@ async def refresh_claudemd(name: str, db: Session = Depends(get_db)):
                 with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                     text = f.read(4000)  # cap per file
                 build_files_content += f"\n--- {fname} ---\n{text}\n"
-            except Exception:
-                pass
+            except OSError as e:
+                logger.warning("Failed to read build file %s: %s", fpath, e)
 
     # Mark as running and spawn background thread
     _claudemd_job_set(name, status="running")
@@ -2333,6 +2353,8 @@ def _preflight_claude_project(project_path: str):
                 logger.info("Preflight: updated ~/.claude.json for %s", project_path)
             break
         except (json.JSONDecodeError, OSError) as e:
+            # Retry after brief delay — concurrent Claude agents may be writing
+            # to the same ~/.claude.json file, causing transient read/write races
             logger.warning("Preflight: failed to update ~/.claude.json: %s", e)
             import time
             time.sleep(0.1)
@@ -3069,8 +3091,8 @@ async def permanently_delete_agent(agent_id: str, db: Session = Depends(get_db))
                     try:
                         os.remove(jsonl)
                         cleaned_files.append(jsonl)
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.warning("Failed to delete session JSONL %s: %s", jsonl, e)
 
     # 2. Delete output log files for all messages
     msg_ids = [m.id for m in db.query(Message.id).filter(Message.agent_id == agent_id).all()]
@@ -3080,8 +3102,8 @@ async def permanently_delete_agent(agent_id: str, db: Session = Depends(get_db))
             try:
                 os.remove(log_path)
                 cleaned_files.append(log_path)
-            except OSError:
-                pass
+            except OSError as e:
+                logger.warning("Failed to delete output log %s: %s", log_path, e)
 
     # 3. Delete DB records
     deleted_msgs = db.query(Message).filter(Message.agent_id == agent_id).delete()

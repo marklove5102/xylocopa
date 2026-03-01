@@ -104,7 +104,9 @@ function AuthGuard({ children }) {
               Notification.requestPermission().catch(() => {});
             }
             if (isPushSupported()) {
-              setupPushNotifications().catch(() => {});
+              setupPushNotifications().catch((err) => {
+                console.warn("Push notification setup failed:", err);
+              });
             }
           } else {
             clearAuthToken();
@@ -112,8 +114,15 @@ function AuthGuard({ children }) {
           }
           setChecked(true);
         })
-        .catch(() => {
-          setServerDown(true);
+        .catch((err) => {
+          // Network failures (TypeError from fetch) or 5xx → server is down
+          // 401 is handled inside request() via auth-expired event
+          if (err instanceof TypeError || (err.message && /^HTTP 5\d\d/.test(err.message))) {
+            setServerDown(true);
+          } else {
+            console.warn("Auth check failed with unexpected error:", err);
+            setServerDown(true);
+          }
           setChecked(true);
         });
     doCheck();
@@ -135,9 +144,10 @@ function AuthGuard({ children }) {
         // Server is back — do a full reload so all hooks reinitialize cleanly
         clearInterval(interval);
         window.location.reload();
-      } catch {
+      } catch (err) {
         if (attempts >= 30) {
           // 60s elapsed — stop auto-retry, keep manual button
+          console.warn("Server reconnect gave up after 60s, last error:", err);
           clearInterval(interval);
           setRetrying(false);
         }
@@ -189,7 +199,9 @@ export default function App() {
   useEffect(() => {
     // Only poll unread when not on login page and has a token
     if (!visible || location.pathname === "/login" || !getAuthToken()) return;
-    const poll = () => fetchUnreadCount().then((r) => setUnread(r.unread)).catch(() => {});
+    const poll = () => fetchUnreadCount().then((r) => setUnread(r.unread)).catch((err) => {
+      console.warn("Unread count poll failed:", err);
+    });
     poll();
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
@@ -197,7 +209,9 @@ export default function App() {
 
   useEffect(() => {
     if (!visible || location.pathname === "/login" || !getAuthToken()) return;
-    const poll = () => fetchClaudeMdPending().then((r) => setClaudeMdPending(r.count || 0)).catch(() => {});
+    const poll = () => fetchClaudeMdPending().then((r) => setClaudeMdPending(r.count || 0)).catch((err) => {
+      console.warn("Claude MD pending poll failed:", err);
+    });
     poll();
     const id = setInterval(poll, 30000);
     return () => clearInterval(id);
