@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -204,16 +204,26 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     return () => clearInterval(interval);
   }, [load]);
 
-  // Auto-navigate to last-viewed project on initial load
+  // Auto-navigate to last-viewed project on tab switch or initial load.
+  // Skip on browser back (POP) to avoid redirect loop after swipe-back.
+  const navType = useNavigationType();
   const didAutoNav = useRef(false);
   useEffect(() => {
     if (didAutoNav.current || loading || folders.length === 0) return;
     didAutoNav.current = true;
-    const last = localStorage.getItem("lastViewedProject");
-    if (last && folders.some((f) => f.name === last && f.active)) {
-      navigate(`/projects/${encodeURIComponent(last)}`, { replace: true });
+    // POP = browser back/forward OR initial load.
+    // If autoNavDone flag exists, this is a back-from-detail — skip.
+    // If no flag, this is initial load — allow auto-nav.
+    if (navType === "POP" && sessionStorage.getItem("autoNavDone:projects")) {
+      sessionStorage.removeItem("autoNavDone:projects");
+      return;
     }
-  }, [loading, folders, navigate]);
+    const last = localStorage.getItem("lastViewed:projects");
+    if (last && folders.some((f) => f.name === last && f.active)) {
+      sessionStorage.setItem("autoNavDone:projects", "1");
+      navigate(`/projects/${encodeURIComponent(last)}`);
+    }
+  }, [loading, folders, navigate, navType]);
 
   // Sync customOrder when folders load — append any new projects
   useEffect(() => {
