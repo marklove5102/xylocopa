@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { applyClaudeMd } from "../lib/api";
 
 /**
@@ -20,7 +20,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
           lineIdx: i,
           type: l.type,
           content: l.content,
-          checked: l.type !== "context", // only added/removed get checkboxes, default checked
+          checked: l.type !== "context",
           edited: false,
           editValue: l.content,
         });
@@ -30,6 +30,29 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
   });
   const [editingKey, setEditingKey] = useState(null);
   const editRef = useRef(null);
+
+  // Preamble detection: first added lines in first hunk that don't look like CLAUDE.md content
+  const [showPreamble, setShowPreamble] = useState(false);
+  const preambleKeys = useMemo(() => {
+    if (hunks.length === 0) return new Set();
+    const keys = new Set();
+    const firstHunk = hunks[0];
+    for (let i = 0; i < firstHunk.lines.length; i++) {
+      const l = firstHunk.lines[i];
+      if (l.type !== "added") {
+        if (l.type === "context") continue;
+        break;
+      }
+      const t = l.content.trimStart();
+      if (t.startsWith("#") || t.startsWith(">") || t.startsWith("- ") || t.startsWith("* ") || t === "---") break;
+      keys.add(`${firstHunk.id}-${i}`);
+    }
+    return keys;
+  }, [hunks]);
+
+  // Summary counts
+  const addCount = lines.filter((l) => l.type === "added").length;
+  const removeCount = lines.filter((l) => l.type === "removed").length;
 
   useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") { if (editingKey) setEditingKey(null); else onClose(); } };
@@ -67,23 +90,18 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
   // Assemble final content from line-level selections + edits
   const assembleFinalContent = useCallback(() => {
     const currentLines = current.split("\n");
-    // Walk through hunks, building result from current + accepted changes
     const result = [];
-    // Track position in current file
     let curIdx = 0;
 
     for (const hunk of hunks) {
-      // Parse hunk header for source start line: @@ -start,count ...
       const m = hunk.header.match(/@@ -(\d+)/);
-      const srcStart = m ? parseInt(m[1], 10) - 1 : 0; // 0-indexed
+      const srcStart = m ? parseInt(m[1], 10) - 1 : 0;
 
-      // Copy unchanged lines before this hunk
       while (curIdx < srcStart && curIdx < currentLines.length) {
         result.push(currentLines[curIdx]);
         curIdx++;
       }
 
-      // Process hunk lines
       for (const line of hunk.lines) {
         const fl = lines.find((l) => l.hunkId === hunk.id && l.lineIdx === hunk.lines.indexOf(line));
         if (!fl) continue;
@@ -93,24 +111,19 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
           curIdx++;
         } else if (fl.type === "removed") {
           if (fl.checked) {
-            // Accept removal: skip this current line
             curIdx++;
           } else {
-            // Reject removal: keep the current line
             result.push(fl.content);
             curIdx++;
           }
         } else if (fl.type === "added") {
           if (fl.checked) {
-            // Accept addition
             result.push(fl.edited ? fl.editValue : fl.content);
           }
-          // Unchecked added lines: skip (don't add them)
         }
       }
     }
 
-    // Copy remaining lines after last hunk
     while (curIdx < currentLines.length) {
       result.push(currentLines[curIdx]);
       curIdx++;
@@ -144,7 +157,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
     }
   }, [project, onApplied, assembleFinalContent]);
 
-  // No changes needed
+  // ── No changes needed ──
   if (message && hunks.length === 0 && !is_new) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col bg-page">
@@ -164,7 +177,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
     );
   }
 
-  // New file — show full preview
+  // ── New file — show full preview ──
   if (is_new) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col bg-page">
@@ -192,9 +205,10 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
     );
   }
 
-  // Diff review with per-line controls
+  // ── Diff review with per-line controls ──
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-page">
+      {/* Title bar */}
       <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-divider">
         <h2 className="text-base font-bold text-heading">Proposed CLAUDE.md Updates</h2>
         <button onClick={onClose} className="text-dim hover:text-heading text-xl leading-none">&times;</button>
@@ -204,49 +218,99 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
         <div className="px-4 py-2 bg-amber-600/20 text-amber-400 text-xs font-medium">Warning: {warning}</div>
       )}
 
-      <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-divider">
-        <button
-          disabled={applying}
-          onClick={handleAcceptAll}
-          className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-        >
-          {applying ? "Applying..." : "Accept All"}
-        </button>
-        <button
-          disabled={applying || checkedCount === 0}
-          onClick={handleApplySelected}
-          className="px-4 py-2 rounded-lg border border-divider text-body text-sm font-medium hover:bg-elevated transition-colors disabled:opacity-50"
-        >
-          Apply Selected ({checkedCount}/{totalCheckable})
-        </button>
-        <button onClick={onClose} className="px-4 py-2 text-dim hover:text-body text-sm transition-colors">
-          Discard All
-        </button>
+      {/* Sticky action bar */}
+      <div className="shrink-0 border-b border-divider bg-surface sticky top-0 z-10">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <button
+            disabled={applying}
+            onClick={handleAcceptAll}
+            className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+          >
+            {applying ? "Applying..." : "Accept All"}
+          </button>
+          <button
+            disabled={applying || checkedCount === 0}
+            onClick={handleApplySelected}
+            className="px-4 py-2 rounded-lg border border-divider text-body text-sm font-medium hover:bg-elevated transition-colors disabled:opacity-50"
+          >
+            Apply Selected ({checkedCount}/{totalCheckable})
+          </button>
+          <button onClick={onClose} className="px-4 py-2 text-dim hover:text-body text-sm transition-colors">
+            Discard All
+          </button>
+        </div>
+        {/* Summary line */}
+        <div className="px-4 pb-2 text-xs text-dim">
+          {addCount} addition{addCount !== 1 ? "s" : ""}, {removeCount} removal{removeCount !== 1 ? "s" : ""} across {hunks.length} hunk{hunks.length !== 1 ? "s" : ""}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      {/* Hunk list */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Preamble toggle */}
+        {preambleKeys.size > 0 && !showPreamble && (
+          <button
+            onClick={() => setShowPreamble(true)}
+            className="text-xs text-dim hover:text-body transition-colors underline"
+          >
+            Show raw output ({preambleKeys.size} line{preambleKeys.size !== 1 ? "s" : ""} of agent preamble hidden)
+          </button>
+        )}
+        {preambleKeys.size > 0 && showPreamble && (
+          <button
+            onClick={() => setShowPreamble(false)}
+            className="text-xs text-dim hover:text-body transition-colors underline"
+          >
+            Hide agent preamble
+          </button>
+        )}
+
         {hunks.map((hunk) => (
           <div key={hunk.id} className="rounded-lg bg-surface shadow-card overflow-hidden">
-            <div className="px-3 py-2 border-b border-divider">
-              <span className="text-xs font-bold text-heading font-mono truncate">{hunk.header}</span>
+            {/* Hunk header */}
+            <div className="px-3 py-1.5 border-b border-divider">
+              <span className="text-[11px] font-mono text-dim">{hunk.header}</span>
             </div>
-            <div className="text-xs font-mono leading-6 overflow-x-auto">
+            {/* Lines */}
+            <div className="text-sm font-mono leading-relaxed overflow-x-auto">
               {hunk.lines.map((_, i) => {
                 const fl = lines.find((l) => l.hunkId === hunk.id && l.lineIdx === i);
                 if (!fl) return null;
+
+                // Hide preamble lines unless toggled
+                if (preambleKeys.has(fl.key) && !showPreamble) return null;
+
                 const isEditing = editingKey === fl.key;
                 const canCheck = fl.type !== "context";
                 const canEdit = fl.type !== "removed";
-                const borderClass = fl.edited ? "border-l-2 border-blue-400" : "";
-                const bgClass = fl.type === "added"
-                  ? "bg-green-600/15 text-green-300"
-                  : fl.type === "removed"
-                  ? "bg-red-600/15 text-red-300"
-                  : "text-body";
                 const dimClass = canCheck && !fl.checked ? "opacity-40" : "";
 
+                // Per-type styling
+                let rowClass, prefixChar;
+                if (fl.type === "added") {
+                  rowClass = "bg-green-50 border-l-4 border-green-500 text-gray-900 dark:bg-green-900/20 dark:border-green-400 dark:text-green-300";
+                  prefixChar = "+";
+                } else if (fl.type === "removed") {
+                  rowClass = "bg-red-50 border-l-4 border-red-400 text-red-700 line-through dark:bg-red-900/20 dark:border-red-400 dark:text-red-400";
+                  prefixChar = "\u2212";
+                } else {
+                  rowClass = "bg-white text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+                  prefixChar = " ";
+                }
+
+                // Edited line override: blue left border
+                if (fl.edited) {
+                  rowClass = rowClass.replace(/border-l-4 border-\S+/, "border-l-4 border-blue-400");
+                  if (!rowClass.includes("border-l-4")) {
+                    rowClass += " border-l-4 border-blue-400";
+                  }
+                }
+
                 return (
-                  <div key={fl.key} className={`flex items-center gap-0 ${bgClass} ${borderClass} ${dimClass}`}>
+                  <div
+                    key={fl.key}
+                    className={`flex items-center gap-0 px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${rowClass} ${dimClass}`}
+                  >
                     {/* Checkbox column */}
                     <div className="w-7 shrink-0 flex items-center justify-center">
                       {canCheck ? (
@@ -259,8 +323,8 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
                       ) : null}
                     </div>
                     {/* Prefix */}
-                    <span className="select-none w-4 shrink-0 text-dim text-center">
-                      {fl.type === "added" ? "+" : fl.type === "removed" ? "−" : " "}
+                    <span className="select-none w-4 shrink-0 text-center opacity-50">
+                      {prefixChar}
                     </span>
                     {/* Content — editable on tap */}
                     {isEditing ? (
@@ -274,11 +338,11 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
                         }}
                         onBlur={() => commitEdit(fl.key, fl.editValue)}
                         onKeyDown={(e) => { if (e.key === "Enter") commitEdit(fl.key, fl.editValue); }}
-                        className="flex-1 min-w-0 bg-transparent outline-none text-xs font-mono py-0.5 px-1 border border-cyan-500/50 rounded"
+                        className="flex-1 min-w-0 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none text-sm font-mono py-0.5 px-2 border border-blue-400 dark:border-blue-400 rounded"
                       />
                     ) : (
                       <span
-                        className={`flex-1 min-w-0 py-0.5 px-1 truncate ${canEdit ? "cursor-pointer hover:bg-white/5 rounded" : ""}`}
+                        className={`flex-1 min-w-0 py-0.5 px-1 truncate ${canEdit ? "cursor-pointer" : ""} ${fl.type === "removed" ? "line-through" : ""}`}
                         onClick={canEdit ? () => startEdit(fl.key) : undefined}
                         title={canEdit ? "Click to edit" : undefined}
                       >
