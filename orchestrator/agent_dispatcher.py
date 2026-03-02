@@ -950,6 +950,30 @@ def _get_session_pid(session_id: str) -> int | None:
     return None
 
 
+def _pid_owns_session(pid: int, session_id: str) -> bool:
+    """Check if *pid* has open file handles referencing *session_id*.
+
+    Claude Code keeps ``~/.claude/tasks/{session_id}/`` open for the
+    life of the session.  When ``/clear`` reuses the same process, the
+    new session's debug log lacks the "Acquired PID lock" line, so
+    ``_get_session_pid`` returns None.  This fallback scans
+    ``/proc/{pid}/fd`` for symlinks pointing into the task directory.
+    """
+    tasks_fragment = f"/tasks/{session_id}"
+    try:
+        fd_dir = f"/proc/{pid}/fd"
+        for entry in os.listdir(fd_dir):
+            try:
+                target = os.readlink(os.path.join(fd_dir, entry))
+                if tasks_fragment in target:
+                    return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
 def _is_orchestrator_process(pid: int) -> bool:
     """Check if a PID is an orchestrator-spawned claude process.
 
@@ -3055,9 +3079,24 @@ class AgentDispatcher:
                     if mtime > best_mtime:
                         session_pid = _get_session_pid(sid)
                         if pane_pid is not None:
-                            # We know the pane PID — require exact match
+                            # We know the pane PID — require exact match.
+                            # Fallback: when /clear reuses the same process,
+                            # the new session's debug log may lack PID lock
+                            # lines.  Check /proc/{pane_pid}/fd for open
+                            # handles to ~/.claude/tasks/{sid}/ as proof of
+                            # ownership.
                             if session_pid != pane_pid:
-                                continue
+                                if session_pid is not None:
+                                    # PID known but mismatched — skip
+                                    continue
+                                # session_pid is None — try /proc fallback
+                                if not _pid_owns_session(pane_pid, sid):
+                                    continue
+                                logger.info(
+                                    "_detect_successor_session: fd-ownership fallback matched "
+                                    "agent=%s pane_pid=%d candidate_sid=%s reason=fallback_fd_ownership",
+                                    agent_id, pane_pid, sid[:12],
+                                )
                         else:
                             # No pane PID known — require session PID exists
                             # and is alive (don't accept unverifiable sessions)
@@ -3507,6 +3546,11 @@ class AgentDispatcher:
 
             if current_size <= last_size:
                 idle_polls += 1
+                # File stopped growing — clear generating state
+                if is_generating:
+                    is_generating = False
+                    self._stop_generating(agent_id)
+                    _sync_gen_id = None
                 # Flush deferred push notification after response stabilized
                 # (require 3+ consecutive idle polls = ~9s of no file growth
                 # to avoid firing during brief pauses in JSONL writes)
@@ -3743,10 +3787,11 @@ class AgentDispatcher:
                         self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
                         last_tail_hash = tail_hash
                         last_streamed_hash = _content_hash(_last_content) if _last_content else ""
-                        if is_generating:
-                            is_generating = False
-                            self._stop_generating(agent_id)
-                            _sync_gen_id = None
+                        # Turn is still growing — mark as generating so
+                        # the frontend knows the agent is active.
+                        if not is_generating:
+                            is_generating = True
+                            _sync_gen_id = self._start_generating(agent_id)
                         # Update deferred push body with latest content
                         if pending_push_body:
                             pending_push_body = (_last_content or "")[:120]
