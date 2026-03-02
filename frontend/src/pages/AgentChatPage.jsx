@@ -1481,9 +1481,13 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           });
           if (anyChanged) result = merged;
         }
-        // Append truly new messages from either source
-        const existingIds = new Set(result.map((m) => m.id));
-        const unique = [...newer, ...tail].filter((m) => !existingIds.has(m.id));
+        // Append truly new messages from either source (dedup across newer+tail)
+        const seenIds = new Set(result.map((m) => m.id));
+        const unique = [...newer, ...tail].filter((m) => {
+          if (seenIds.has(m.id)) return false;
+          seenIds.add(m.id);
+          return true;
+        });
         if (unique.length) return [...result, ...unique];
         return result !== prev ? result : prev;
       });
