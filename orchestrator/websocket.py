@@ -103,12 +103,18 @@ async def websocket_endpoint(ws: WebSocket):
 
 # ---- Event helpers (called from dispatcher/main) ----
 
-async def emit_task_update(task_id: str, status: str, project: str):
-    await ws_manager.broadcast("task_update", {
+async def emit_task_update(task_id: str, status: str, project: str,
+                           title: str | None = None, agent_id: str | None = None):
+    payload = {
         "task_id": task_id,
         "status": status,
         "project": project,
-    })
+    }
+    if title is not None:
+        payload["title"] = title
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    await ws_manager.broadcast("task_update", payload)
 
 
 async def emit_worker_update(action: str, process_name: str, project: str = ""):

@@ -37,6 +37,8 @@ from models import (
     MessageStatus,
     Project,
     StarredSession,
+    Task,
+    TaskStatus,
 )
 from schemas import (
     AgentBrief,
@@ -55,6 +57,11 @@ from schemas import (
     ProjectWithStats,
     SendMessage,
     SessionSummary,
+    TaskCreate,
+    TaskDetailOut,
+    TaskOut,
+    TaskRejectRequest,
+    TaskUpdate,
     UpdateMessage,
 )
 from auth import (
@@ -2161,6 +2168,233 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
     )
 
 
+# ---- Tasks v2 (first-class Task entity) ----
+
+from task_state_machine import can_transition, validate_transition
+from websocket import emit_task_update
+
+
+@app.post("/api/v2/tasks", response_model=TaskOut, status_code=201)
+async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
+    """Create a new task. Starts as INBOX unless project+description present."""
+    initial_status = TaskStatus.INBOX
+    task = Task(
+        title=body.title,
+        description=body.description,
+        project_name=body.project_name,
+        priority=body.priority,
+        model=body.model,
+        effort=body.effort,
+        status=initial_status,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
+@app.get("/api/v2/tasks", response_model=list[TaskOut])
+async def list_tasks_v2(
+    status: str | None = None,
+    project: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """List v2 tasks with optional filters."""
+    q = db.query(Task)
+    if status:
+        try:
+            q = q.filter(Task.status == TaskStatus(status))
+        except ValueError:
+            raise HTTPException(400, f"Invalid status: {status}")
+    if project:
+        q = q.filter(Task.project_name == project)
+    tasks = q.order_by(Task.created_at.desc()).limit(limit).all()
+    return [TaskOut.model_validate(t) for t in tasks]
+
+
+@app.get("/api/v2/tasks/{task_id}", response_model=TaskDetailOut)
+async def get_task_v2(task_id: str, db: Session = Depends(get_db)):
+    """Get task detail with agent conversation if assigned."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    conversation = []
+    if task.agent_id:
+        msgs = (
+            db.query(Message)
+            .filter(Message.agent_id == task.agent_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        conversation = [MessageOut.model_validate(m, from_attributes=True) for m in msgs]
+    return TaskDetailOut(
+        **TaskOut.model_validate(task).model_dump(),
+        retry_context=task.retry_context,
+        review_artifacts=task.review_artifacts,
+        conversation=conversation,
+    )
+
+
+@app.put("/api/v2/tasks/{task_id}", response_model=TaskOut)
+async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(get_db)):
+    """Update task fields. Only allowed for INBOX/PENDING tasks."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.status not in (TaskStatus.INBOX, TaskStatus.PENDING):
+        raise HTTPException(400, f"Cannot edit task in {task.status.value} status")
+    for field in ("title", "description", "project_name", "priority", "model", "effort"):
+        val = getattr(body, field, None)
+        if val is not None:
+            setattr(task, field, val)
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
+@app.post("/api/v2/tasks/{task_id}/dispatch", response_model=TaskOut)
+async def dispatch_task_v2(task_id: str, db: Session = Depends(get_db)):
+    """Move task to PENDING for auto-dispatch."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if not task.project_name:
+        raise HTTPException(400, "Task requires a project_name before dispatch")
+    if not task.title:
+        raise HTTPException(400, "Task requires a title before dispatch")
+    validate_transition(task.status, TaskStatus.PENDING)
+    task.status = TaskStatus.PENDING
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
+@app.post("/api/v2/tasks/{task_id}/approve", response_model=TaskOut)
+async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(get_db)):
+    """Approve a REVIEW task → MERGING."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    validate_transition(task.status, TaskStatus.MERGING)
+    task.status = TaskStatus.MERGING
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title, agent_id=task.agent_id,
+    ))
+    # Trigger merge in background (Step 9)
+    asyncio.ensure_future(_merge_task_branch(task.id, request))
+    return TaskOut.model_validate(task)
+
+
+@app.post("/api/v2/tasks/{task_id}/reject", response_model=TaskOut)
+async def reject_task_v2(
+    task_id: str,
+    body: TaskRejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Reject a task with a reason → REJECTED."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    validate_transition(task.status, TaskStatus.REJECTED)
+    task.status = TaskStatus.REJECTED
+    task.rejection_reason = body.reason
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
+@app.post("/api/v2/tasks/{task_id}/cancel", response_model=TaskOut)
+async def cancel_task_v2(task_id: str, request: Request, db: Session = Depends(get_db)):
+    """Cancel a task. Stops agent if running."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    validate_transition(task.status, TaskStatus.CANCELLED)
+    # Stop running agent if EXECUTING
+    if task.status == TaskStatus.EXECUTING and task.agent_id:
+        agent = db.get(Agent, task.agent_id)
+        if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
+            agent.status = AgentStatus.STOPPED
+            db.commit()
+            # Kill tmux session
+            if agent.tmux_pane:
+                import subprocess
+                sess_name = f"ah-{agent.id[:8]}"
+                subprocess.run(["tmux", "kill-session", "-t", sess_name],
+                               capture_output=True, timeout=5)
+    task.status = TaskStatus.CANCELLED
+    task.completed_at = _utcnow()
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
+async def _merge_task_branch(task_id: str, request: Request):
+    """Background: merge task branch into project main branch."""
+    import subprocess
+    db = SessionLocal()
+    try:
+        task = db.get(Task, task_id)
+        if not task or task.status != TaskStatus.MERGING:
+            return
+        proj = db.query(Project).filter(Project.name == task.project_name).first()
+        if not proj or not task.branch_name:
+            task.status = TaskStatus.FAILED
+            task.error_message = "Missing project or branch"
+            db.commit()
+            return
+        try:
+            result = subprocess.run(
+                ["git", "merge", task.branch_name, "--no-ff",
+                 "-m", f"Merge task/{task.id}: {task.title}"],
+                cwd=proj.path,
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                task.status = TaskStatus.COMPLETE
+                task.completed_at = _utcnow()
+            else:
+                # Conflict — abort merge
+                subprocess.run(["git", "merge", "--abort"],
+                               cwd=proj.path, capture_output=True, timeout=10)
+                task.status = TaskStatus.CONFLICT
+                task.error_message = result.stderr[:1000] if result.stderr else "Merge conflict"
+        except subprocess.TimeoutExpired:
+            task.status = TaskStatus.FAILED
+            task.error_message = "Merge timed out"
+        db.commit()
+        asyncio.ensure_future(emit_task_update(
+            task.id, task.status.value, task.project_name or "",
+            title=task.title,
+        ))
+    finally:
+        db.close()
+
+
 # ---- Agents ----
 
 def _generate_worktree_name_local(prompt: str) -> str:
@@ -3767,6 +4001,14 @@ async def answer_agent_interactive(
             if not send_tmux_keys(pane_id, keys):
                 raise HTTPException(status_code=500, detail="Failed to send keys to tmux")
 
+            # Patch DB immediately after keys succeed — BEFORE any await.
+            # The sync loop runs on the same event loop; an await here lets
+            # it parse the JSONL (which may already carry a context-clear
+            # dismiss answer) and overwrite the metadata while our patch
+            # hasn't landed yet.  With answer=null in the DB at that point,
+            # _merge_interactive_meta cannot protect the user's selection.
+            _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
+
             # Capture pane content AFTER sending keys for diagnostics
             import asyncio
             await asyncio.sleep(0.5)
@@ -3779,8 +4021,9 @@ async def answer_agent_interactive(
         else:
             prompt_type = "non-tmux"
 
-        # Patch DB after successful key delivery (or immediately for non-tmux)
-        _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
+        # Non-tmux: patch DB immediately (no keys to send)
+        if not has_tmux:
+            _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
 
         return {"detail": "ok", "keys_sent": len(keys) if has_tmux else 0, "prompt_type": prompt_type, "auto_approved": not has_tmux}
 
