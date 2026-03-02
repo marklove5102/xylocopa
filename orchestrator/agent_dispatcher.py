@@ -1339,6 +1339,10 @@ class AgentDispatcher:
         # CLI session sync tasks: agent_id -> asyncio.Task
         self._sync_tasks: dict[str, asyncio.Task] = {}
 
+        # Generation tracking: monotonic ID per agent + set of currently generating agents
+        self._generation_ids: dict[str, int] = {}
+        self._generating_agents: set[str] = set()
+
         # Tmux launch background tasks: agent_id -> asyncio.Task
         self._launch_tasks: dict[str, asyncio.Task] = {}
 
@@ -1485,6 +1489,25 @@ class AgentDispatcher:
         except Exception:
             logger.warning("Failed to schedule WebSocket emit", exc_info=True)
 
+    def _next_generation_id(self, agent_id: str) -> int:
+        """Return the next monotonic generation ID for an agent."""
+        gid = self._generation_ids.get(agent_id, 0) + 1
+        self._generation_ids[agent_id] = gid
+        return gid
+
+    def _start_generating(self, agent_id: str) -> int:
+        """Mark agent as generating and return a new generation_id."""
+        gid = self._next_generation_id(agent_id)
+        self._generating_agents.add(agent_id)
+        return gid
+
+    def _stop_generating(self, agent_id: str):
+        """Mark agent as no longer generating and emit stream_end."""
+        gid = self._generation_ids.get(agent_id)
+        self._generating_agents.discard(agent_id)
+        from websocket import emit_agent_stream_end
+        self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
+
     def _tick(self, db: Session):
         # Invalidate per-tick tmux map cache
         self._tmux_map_cache = None
@@ -1558,7 +1581,8 @@ class AgentDispatcher:
                     message.error_message = "Agent stopped by user"
                     message.completed_at = _utcnow()
                     from websocket import emit_message_update
-                    self._emit(emit_message_update(agent_id, message.id, "FAILED"))
+                    self._emit(emit_message_update(agent_id, message.id, "FAILED",
+                                                   error_message=message.error_message))
                 done_agents.append(agent_id)
                 continue
 
@@ -1895,8 +1919,9 @@ class AgentDispatcher:
                 )
                 db.add(msg)
 
-                from websocket import emit_agent_update
+                from websocket import emit_agent_update, emit_new_message
                 self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+                self._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
                 if not agent.muted and not self._is_agent_in_use(agent.id, agent.tmux_pane):
                     from push import send_push_notification
                     send_push_notification(
@@ -1932,8 +1957,9 @@ class AgentDispatcher:
                 )
                 db.add(msg)
 
-                from websocket import emit_agent_update
+                from websocket import emit_agent_update, emit_new_message
                 self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+                self._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
                 if not agent.muted and not self._is_agent_in_use(agent.id, agent.tmux_pane):
                     from push import send_push_notification
                     send_push_notification(
@@ -1980,7 +2006,8 @@ class AgentDispatcher:
             for m in pending:
                 m.status = MessageStatus.FAILED
                 m.error_message = "Agent tmux session no longer exists"
-                self._emit(emit_message_update(agent.id, m.id, "FAILED"))
+                self._emit(emit_message_update(agent.id, m.id, "FAILED",
+                                               error_message=m.error_message))
             # NOTE: removed db.commit() here — it was flushing ALL dirty
             # objects in the session (including harvest changes from step 1),
             # making re-queued messages visible to the dispatch query below
@@ -2075,7 +2102,8 @@ class AgentDispatcher:
                     # commit atomically at the end.
                     self._emit(emit_agent_update(agent.id, "ERROR", agent.project))
                     from websocket import emit_message_update
-                    self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED"))
+                    self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED",
+                                                   error_message=pending_msg.error_message))
                 continue
 
             # Use --resume with session_id if available.
@@ -2157,7 +2185,8 @@ class AgentDispatcher:
                 pending_msg.status = MessageStatus.FAILED
                 pending_msg.error_message = "Failed to start claude process"
                 from websocket import emit_message_update
-                self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED"))
+                self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED",
+                                               error_message=pending_msg.error_message))
 
     def _dispatch_tmux_pending(self, db: Session):
         """Send pending messages to SYNCING agents via tmux.
@@ -2215,7 +2244,8 @@ class AgentDispatcher:
                     due_msg.id, agent.id,
                 )
                 from websocket import emit_message_update
-                self._emit(emit_message_update(agent.id, due_msg.id, "FAILED"))
+                self._emit(emit_message_update(agent.id, due_msg.id, "FAILED",
+                                               error_message=due_msg.error_message))
 
     def _build_agent_prompt(
         self, agent: Agent, project: Project, user_message: str,
@@ -2796,6 +2826,7 @@ class AgentDispatcher:
         """
         from websocket import emit_agent_stream
 
+        gid = self._start_generating(agent_id)
         file_pos = 0
         last_content = ""
         try:
@@ -2832,7 +2863,7 @@ class AgentDispatcher:
 
                 if content and content != last_content:
                     last_content = content
-                    self._emit(emit_agent_stream(agent_id, content))
+                    self._emit(emit_agent_stream(agent_id, content, generation_id=gid))
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -2840,6 +2871,8 @@ class AgentDispatcher:
                 "Stream output loop crashed for agent %s (file: %s)",
                 agent_id, output_file,
             )
+        finally:
+            self._stop_generating(agent_id)
 
     def _start_stream_task(self, agent_id: str, output_file: str):
         """Start a streaming output task for an agent exec."""
@@ -3203,6 +3236,9 @@ class AgentDispatcher:
                 db.close()
         finally:
             self._sync_tasks.pop(agent_id, None)
+            # Ensure generating state is cleaned up on any exit path
+            if agent_id in self._generating_agents:
+                self._stop_generating(agent_id)
 
     async def _sync_session_loop_inner(
         self, agent_id: str, session_id: str, project_path: str
@@ -3238,6 +3274,7 @@ class AgentDispatcher:
         last_tail_hash = ""  # Hash of last turn content to detect updates
         last_streamed_hash = ""  # Hash of last agent_stream content (avoid re-emit)
         is_generating = False
+        _sync_gen_id: int | None = None  # current generation_id for sync streaming
         pending_push_body = ""  # Deferred notification until response stabilizes
         pending_push_idle = 0   # Consecutive idle polls since pending was set
 
@@ -3671,7 +3708,8 @@ class AgentDispatcher:
                     last_streamed_hash = p_hash
                     if not is_generating:
                         is_generating = True
-                    self._emit(emit_agent_stream(agent_id, partial))
+                        _sync_gen_id = self._start_generating(agent_id)
+                    self._emit(emit_agent_stream(agent_id, partial, generation_id=_sync_gen_id))
                 continue
 
             db = SessionLocal()
@@ -3700,12 +3738,15 @@ class AgentDispatcher:
                         db.commit()
                         # Stream the updated content to connected clients
                         self._emit(emit_agent_stream(
-                            agent_id, _last_content,
+                            agent_id, _last_content, generation_id=_sync_gen_id,
                         ))
                         self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
                         last_tail_hash = tail_hash
                         last_streamed_hash = _content_hash(_last_content) if _last_content else ""
-                        is_generating = False
+                        if is_generating:
+                            is_generating = False
+                            self._stop_generating(agent_id)
+                            _sync_gen_id = None
                         # Update deferred push body with latest content
                         if pending_push_body:
                             pending_push_body = (_last_content or "")[:120]
@@ -3818,7 +3859,10 @@ class AgentDispatcher:
                             _last_assistant = _c
                             break
                     last_streamed_hash = _content_hash(_last_assistant) if _last_assistant else ""
-                    is_generating = False
+                    if is_generating:
+                        is_generating = False
+                        self._stop_generating(agent_id)
+                        _sync_gen_id = None
                     self._emit(emit_agent_update(
                         agent.id, agent.status.value, agent.project
                     ))

@@ -782,13 +782,16 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               </span>
             )}
             {message.status === "FAILED" && (
-              <span className="text-red-400">Failed</span>
+              <span className="text-red-400" title={message.error_message || ""}>Failed</span>
             )}
             {message.status === "TIMEOUT" && (
               <span className="text-orange-400">Timed out</span>
             )}
           </div>
         </div>
+        {message.status === "FAILED" && message.error_message && (
+          <p className="text-xs text-red-400/70 mt-1 px-1">{message.error_message}</p>
+        )}
         {copied && (
           <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-[9999]">
             <div className="bg-black/80 text-white text-sm font-medium px-4 py-2 rounded-xl shadow-lg">
@@ -1347,7 +1350,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const [muted, setMuted] = useState(() => isAgentMuted(id));
   const [streamingContent, setStreamingContent] = useState(null);
   const streamTimeoutRef = useRef(null);
-  const streamLockedRef = useRef(false); // prevents late agent_stream after new_message
+  const generationIdRef = useRef(null); // tracks current backend generation_id
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const nameInputRef = useRef(null);
@@ -1654,53 +1657,48 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   }, [id, sendWsMessage]);
   useEffect(() => {
     if (!lastEvent) return;
-    const syncing = agent?.status === "SYNCING";
 
     if (lastEvent.type === "agent_stream" && lastEvent.data?.agent_id === id) {
-      // Reject late agent_stream that arrives after new_message already cleared streaming
-      if (streamLockedRef.current) return;
+      const gid = lastEvent.data.generation_id;
+      // Reject stream chunks from a stale generation
+      if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
+      // Track the current generation
+      if (gid != null) generationIdRef.current = gid;
       setStreamingContent(lastEvent.data.content);
       // Safety fallback: auto-clear after inactivity in case agent_stream_end
-      // is never received (e.g., WS disconnect).  Generous timeout since the
-      // deterministic agent_stream_end is the primary signal.
+      // is never received (e.g., WS disconnect).
       clearTimeout(streamTimeoutRef.current);
       streamTimeoutRef.current = setTimeout(() => {
         setStreamingContent(null);
-      }, syncing ? 8000 : 6000);
+      }, 6000);
       return;
     }
 
     if (lastEvent.type === "agent_stream_end" && lastEvent.data?.agent_id === id) {
-      // Deterministic signal from backend that generation finished.
-      // Lock streaming briefly, then auto-unlock for next message.
-      streamLockedRef.current = true;
+      const gid = lastEvent.data.generation_id;
+      // Ignore end for a stale generation
+      if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
       clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = setTimeout(() => {
-        setStreamingContent(null);
-        streamLockedRef.current = false;
-      }, 300);
+      setStreamingContent(null);
       return;
     }
 
     if (lastEvent.type === "new_message" && lastEvent.data?.agent_id === id) {
-      // New message arrived — clear streaming, briefly lock to reject late agent_stream.
-      // Auto-unlock after 1.5s so the NEXT message's streams can come through
-      // (SYNCING agents don't emit agent_update between messages to unlock).
-      streamLockedRef.current = true;
       clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = setTimeout(() => { streamLockedRef.current = false; }, 1500);
       setStreamingContent(null);
       refreshMessages({ syncHint: lastEvent.data?.message_id === "sync" });
       return;
     }
 
     if (lastEvent.type === "message_update" && lastEvent.data?.agent_id === id) {
-      const { message_id, status } = lastEvent.data;
+      const { message_id, status, error_message } = lastEvent.data;
       if (status === "CANCELLED") {
         setMessages((prev) => prev.filter((m) => m.id !== message_id));
       } else {
         setMessages((prev) =>
-          prev.map((m) => (m.id === message_id ? { ...m, status } : m))
+          prev.map((m) => (m.id === message_id
+            ? { ...m, status, ...(error_message ? { error_message } : {}) }
+            : m))
         );
       }
       return;
@@ -1708,18 +1706,15 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
 
     if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id === id) {
       const status = lastEvent.data.status;
-      if (status === "EXECUTING" || status === "SYNCING") {
-        // New execution starting — unlock streaming for fresh events
-        streamLockedRef.current = false;
-      } else {
-        // Agent no longer executing — lock and clear streaming
-        streamLockedRef.current = true;
+      if (status !== "EXECUTING" && status !== "SYNCING") {
+        // Agent no longer active — clear streaming
         clearTimeout(streamTimeoutRef.current);
         setStreamingContent(null);
+        generationIdRef.current = null;
       }
       refreshMessages();
     }
-  }, [lastEvent, id, refreshMessages, agent?.status]);
+  }, [lastEvent, id, refreshMessages]);
 
   // Cleanup
   useEffect(() => {
@@ -2180,7 +2175,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
                 );
                 if (!isDuplicate) return <StreamingBubble content={streamingContent} project={agent.project} />;
               }
-              return isExecuting ? <TypingIndicator /> : null;
+              return (isExecuting || agent?.is_generating) ? <TypingIndicator /> : null;
             })()}
 
             {/* Pending/scheduled messages always at the bottom */}
