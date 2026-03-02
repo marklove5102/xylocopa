@@ -381,7 +381,7 @@ export function extractFileAttachments(text, project, role) {
       const resolvedUrl = `/api/uploads/${encodeURIComponent(filename)}`;
       const ext = filename.match(/\.(\w+)$/)?.[1]?.toLowerCase() || "";
       const type = classifyExt(filename);
-      results.push({ path: filename, resolvedUrl, type, ext });
+      results.push({ path: filename, resolvedUrl, type, ext, originalPath: filePath });
     }
     return results;
   }
@@ -412,7 +412,7 @@ export function extractFileAttachments(text, project, role) {
 
     const ext = path.match(/\.(\w+)$/)?.[1]?.toLowerCase() || "";
     const type = classifyExt(path);
-    results.push({ path, resolvedUrl, type, ext });
+    results.push({ path, resolvedUrl, type, ext, originalPath: rawPath });
   };
 
   let m;

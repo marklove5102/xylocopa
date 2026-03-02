@@ -2213,7 +2213,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           try { await escapeAgent(id); loadData(); } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
         escapeDisabled={isStopped || isError}
-        escapeUrgent={isExecuting || hasPendingInteractive || (hasTmux && (streamingContent || (messages.length > 0 && messages[messages.length - 1].role === "USER")))}
+        escapeUrgent={isExecuting || hasPendingInteractive || agent.is_generating || (hasTmux && (streamingContent || (messages.length > 0 && messages[messages.length - 1].role === "USER")))}
         escapeAvailable={hasTmuxPane}
       />
 
