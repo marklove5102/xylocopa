@@ -69,6 +69,7 @@ class AgentOut(BaseModel):
     parent_id: str | None = None
     successor_id: str | None = None
     session_size_bytes: int | None = None
+    is_generating: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -93,6 +94,7 @@ class AgentBrief(BaseModel):
     skip_permissions: bool = True
     muted: bool = False
     parent_id: str | None = None
+    is_generating: bool = False
 
     model_config = {"from_attributes": True}
 

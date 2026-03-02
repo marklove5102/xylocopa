@@ -2911,6 +2911,7 @@ async def scan_agents(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/agents", response_model=list[AgentBrief])
 async def list_agents(
+    request: Request,
     project: str | None = None,
     status: AgentStatus | None = None,
     limit: int = 500,
@@ -2922,11 +2923,21 @@ async def list_agents(
         q = q.filter(Agent.project == project)
     if status:
         q = q.filter(Agent.status == status)
-    return (
+    rows = (
         q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())
         .limit(limit)
         .all()
     )
+    # Enrich with live generating state from dispatcher runtime
+    ad = getattr(request.app.state, "agent_dispatcher", None)
+    generating = ad._generating_agents if ad else set()
+    results = []
+    for row in rows:
+        brief = AgentBrief.model_validate(row)
+        if row.id in generating:
+            brief.is_generating = True
+        results.append(brief)
+    return results
 
 
 @app.get("/api/agents/unread")
@@ -3004,7 +3015,7 @@ async def search_messages(
 
 
 @app.get("/api/agents/{agent_id}", response_model=AgentOut)
-async def get_agent(agent_id: str, db: Session = Depends(get_db)):
+async def get_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
     """Get full agent details."""
     agent = db.get(Agent, agent_id)
     if not agent:
@@ -3024,6 +3035,10 @@ async def get_agent(agent_id: str, db: Session = Depends(get_db)):
                 result.session_size_bytes = os.path.getsize(jsonl_path)
             except OSError:
                 pass
+    # Enrich with live generating state from dispatcher runtime
+    ad = getattr(request.app.state, "agent_dispatcher", None)
+    if ad and agent.id in ad._generating_agents:
+        result.is_generating = True
     return result
 
 

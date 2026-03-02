@@ -130,10 +130,9 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const [search, setSearch] = useDraft("ui:agents:search", "");
   const pollRef = useRef(null);
 
-  // Track which agents are actively streaming via WebSocket
+  // Track which agents are actively streaming via WebSocket events + API is_generating
   const { lastEvent } = useWebSocket();
   const [streamingAgents, setStreamingAgents] = useState(new Set());
-  const streamTimers = useRef({});
 
   useEffect(() => {
     if (!lastEvent) return;
@@ -145,23 +144,22 @@ export default function AgentsPage({ theme, onToggleTheme }) {
         next.add(aid);
         return next;
       });
-      // Clear after 4s of no stream events for this agent
-      clearTimeout(streamTimers.current[aid]);
-      streamTimers.current[aid] = setTimeout(() => {
-        setStreamingAgents((prev) => {
-          if (!prev.has(aid)) return prev;
-          const next = new Set(prev);
-          next.delete(aid);
-          return next;
-        });
-      }, 4000);
+    }
+    // Deterministic end signal from backend
+    if (lastEvent.type === "agent_stream_end" && lastEvent.data?.agent_id) {
+      const aid = lastEvent.data.agent_id;
+      setStreamingAgents((prev) => {
+        if (!prev.has(aid)) return prev;
+        const next = new Set(prev);
+        next.delete(aid);
+        return next;
+      });
     }
     // Clear streaming on status change away from active states
     if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id) {
       const aid = lastEvent.data.agent_id;
       const s = lastEvent.data.status;
       if (s !== "EXECUTING" && s !== "SYNCING") {
-        clearTimeout(streamTimers.current[aid]);
         setStreamingAgents((prev) => {
           if (!prev.has(aid)) return prev;
           const next = new Set(prev);
@@ -172,9 +170,27 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     }
   }, [lastEvent]);
 
+  // Seed streaming state from API is_generating on poll
   useEffect(() => {
-    return () => Object.values(streamTimers.current).forEach(clearTimeout);
-  }, []);
+    if (!agents.length) return;
+    setStreamingAgents((prev) => {
+      const apiGenerating = new Set(agents.filter((a) => a.is_generating).map((a) => a.id));
+      // Merge: keep WS-derived streaming that API hasn't caught yet, add API-derived
+      const next = new Set([...prev, ...apiGenerating]);
+      // Remove agents API says are not generating AND no recent WS stream
+      for (const aid of prev) {
+        if (!apiGenerating.has(aid)) {
+          // Keep if agent is still EXECUTING/SYNCING (WS might be ahead of poll)
+          const ag = agents.find((a) => a.id === aid);
+          if (!ag || (ag.status !== "EXECUTING" && ag.status !== "SYNCING")) {
+            next.delete(aid);
+          }
+        }
+      }
+      if (next.size === prev.size && [...next].every((a) => prev.has(a))) return prev;
+      return next;
+    });
+  }, [agents]);
 
   // Multi-select state
   const [selecting, setSelecting] = useState(false);
