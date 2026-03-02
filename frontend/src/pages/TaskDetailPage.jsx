@@ -189,6 +189,17 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 </div>
               )}
 
+              {/* Task info summary */}
+              {!canEdit && !task.description && (
+                <div className="rounded-xl bg-surface shadow-card p-4">
+                  <div className="flex items-center gap-3 text-sm text-dim">
+                    {task.model && <span>Model: {task.model.replace(/^claude-/, "").replace(/-\d{8}$/, "")}</span>}
+                    {task.effort && <span>Effort: {task.effort}</span>}
+                    {task.priority === 1 && <span className="text-amber-400">High Priority</span>}
+                  </div>
+                </div>
+              )}
+
               {canEdit && (
                 <button
                   type="button"
@@ -222,18 +233,23 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
           {task.status === "REVIEW" && (
             <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
               <h3 className="text-sm font-medium text-amber-400">Ready for Review</h3>
-              {task.agent_summary && (
+              {task.agent_summary ? (
                 <div className="text-sm text-body bg-inset rounded-lg p-3 max-h-[400px] overflow-y-auto">
                   {renderMarkdown(task.agent_summary, task.project_name)}
                 </div>
+              ) : (
+                <p className="text-sm text-dim">Agent completed — review the conversation below.</p>
               )}
               {task.agent_id && (
                 <button
                   type="button"
                   onClick={() => navigate(`/agents/${task.agent_id}`)}
-                  className="text-xs text-cyan-400 hover:text-cyan-300 underline"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/10 text-sm text-cyan-400 hover:bg-cyan-500/20 transition-colors"
                 >
-                  View full conversation
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  View agent conversation
                 </button>
               )}
             </div>

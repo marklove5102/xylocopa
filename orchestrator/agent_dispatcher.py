@@ -1698,14 +1698,20 @@ class AgentDispatcher:
         db.add(msg)
         db.commit()
 
-        # Build claude command
+        # Build claude command — write prompt to file to avoid shell escaping issues
+        import tempfile
+        prompt_file = os.path.join(tempfile.gettempdir(), f"ah-task-{task.id}.txt")
+        with open(prompt_file, "w") as f:
+            f.write(prompt)
+
         cmd_parts = ["claude", "--dangerously-skip-permissions"]
         if wt_name:
             cmd_parts += ["--worktree", wt_name]
         cmd_parts += ["--model", model]
         if task.effort:
             cmd_parts += ["--effort", task.effort]
-        cmd_parts += ["-p", prompt]
+        # Use $(cat ...) to safely pass multi-line prompt
+        cmd_parts += ["-p", f'"$(cat {prompt_file})"']
 
         cmd_str = " ".join(cmd_parts)
 
@@ -1760,6 +1766,18 @@ class AgentDispatcher:
                 )
                 if last_msg:
                     task.agent_summary = last_msg.content[:2000] if last_msg.content else None
+                # If agent died without producing any output → FAILED, not REVIEW
+                if not last_msg:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = "Agent stopped without producing output"
+                    db.commit()
+                    from websocket import emit_task_update
+                    self._emit(emit_task_update(
+                        task.id, task.status.value, task.project_name or "",
+                        title=task.title,
+                    ))
+                    logger.info("Task %s FAILED (agent %s died without output)", task.id, agent.id)
+                    continue
                 task.status = TaskStatus.REVIEW
                 db.commit()
                 from websocket import emit_task_update
