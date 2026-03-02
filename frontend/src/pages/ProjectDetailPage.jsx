@@ -702,6 +702,20 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     return () => { cancelled = true; };
   }, [agentTab, name, sessions]);
 
+  // Poll sessions while sessions/starred tab is visible
+  useEffect(() => {
+    if (!visible || (agentTab !== "sessions" && agentTab !== "starred")) return;
+    const timer = setInterval(() => {
+      fetchProjectSessions(name)
+        .then((data) => {
+          setSessions(data);
+          setStarredIds(new Set(data.filter((s) => s.starred).map((s) => s.session_id)));
+        })
+        .catch(() => {});
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [visible, agentTab, name]);
+
   useEffect(() => {
     return () => { if (toastTimer.current) clearTimeout(toastTimer.current); };
   }, []);
