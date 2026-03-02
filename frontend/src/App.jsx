@@ -12,6 +12,7 @@ const TasksPage = lazy(() => import("./pages/TasksPage"));
 const NewPage = lazy(() => import("./pages/NewPage"));
 const MonitorPage = lazy(() => import("./pages/MonitorPage"));
 const GitPage = lazy(() => import("./pages/GitPage"));
+const TaskDetailPage = lazy(() => import("./pages/TaskDetailPage"));
 import useTheme from "./hooks/useTheme";
 import { authCheck, clearAuthToken, fetchUnreadCount, fetchClaudeMdPending, getAuthToken } from "./lib/api";
 import { isPushSupported, setupPushNotifications } from "./lib/pushNotifications";
@@ -191,7 +192,7 @@ export default function App() {
   const themeProps = { theme, onToggleTheme: toggle };
   const location = useLocation();
   const navigate = useNavigate();
-  const hideNav = location.pathname.match(/^\/agents\/[^/]+$/) || location.pathname === "/login";
+  const hideNav = location.pathname.match(/^\/agents\/[^/]+$/) || location.pathname.match(/^\/tasks\/[^/]+$/) || location.pathname === "/login";
   const [unread, setUnread] = useState(0);
   const [claudeMdPending, setClaudeMdPending] = useState(0);
   const visible = usePageVisible();
@@ -279,6 +280,7 @@ export default function App() {
                     <Route path="/agents" element={<AgentsPage {...themeProps} />} />
                     <Route path="/agents/:id" element={<AgentChatPage {...themeProps} />} />
                     <Route path="/tasks" element={<TasksPage {...themeProps} />} />
+                    <Route path="/tasks/:id" element={<TaskDetailPage {...themeProps} />} />
                     <Route path="/new" element={<NewPage {...themeProps} />} />
                     <Route path="/monitor" element={<MonitorPage {...themeProps} />} />
                     <Route path="/git" element={<GitPage {...themeProps} />} />

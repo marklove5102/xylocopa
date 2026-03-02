@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { createAgent, launchTmuxAgent, createProject, sendMessage, generateWorktreeName, uploadFile } from "../lib/api";
+import { createAgent, launchTmuxAgent, createProject, createTaskV2, sendMessage, generateWorktreeName, uploadFile } from "../lib/api";
 import { MODEL_OPTIONS } from "../lib/constants";
 import ProjectSelector from "../components/ProjectSelector";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -28,6 +28,16 @@ const CARDS = [
     icon: (
       <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+      </svg>
+    ),
+  },
+  {
+    key: "task",
+    title: "New Task",
+    desc: "Create a dispatch-and-review task",
+    icon: (
+      <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
       </svg>
     ),
   },
@@ -109,9 +119,184 @@ export default function NewPage({ theme, onToggleTheme }) {
         {activeCard === "project" && (
           <NewProjectForm showToast={showToast} navigate={navigate} />
         )}
+        {activeCard === "task" && (
+          <NewTaskForm showToast={showToast} navigate={navigate} />
+        )}
       </div>
       </div>
     </div>
+  );
+}
+
+// ---------- New Task Form ----------
+
+function NewTaskForm({ showToast, navigate }) {
+  const [project, setProject, clearProject] = useDraft("create-task:project", "");
+  const [title, setTitle, clearTitle] = useDraft("create-task:title", "");
+  const [description, setDescription, clearDesc] = useDraft("create-task:description", "");
+  const [priority, setPriority] = useState(0);
+  const [model, setModel] = useState(MODEL_OPTIONS[0].value);
+  const [effort, setEffort] = useState("high");
+  const [autoDispatch, setAutoDispatch] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const clearAllDrafts = () => { clearProject(); clearTitle(); clearDesc(); };
+
+  const voice = useVoiceRecorder({
+    onTranscript: (text) => setDescription((prev) => (prev ? prev + " " + text : text)),
+    onError: (msg) => showToast(msg, "error"),
+  });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) { showToast("Enter a title.", "error"); return; }
+    setSubmitting(true);
+    try {
+      const body = {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        project_name: project || undefined,
+        priority,
+        model: model || undefined,
+        effort: effort || undefined,
+      };
+      const task = await createTaskV2(body);
+      if (autoDispatch && project && task.id) {
+        try {
+          const { dispatchTask } = await import("../lib/api");
+          await dispatchTask(task.id);
+        } catch (err) {
+          showToast("Created but dispatch failed: " + err.message, "error");
+        }
+      }
+      clearAllDrafts();
+      navigate(`/tasks/${task.id}`);
+    } catch (err) {
+      showToast("Failed: " + err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <h2 className="text-xl font-bold text-heading">New Task</h2>
+
+      <div className="rounded-xl bg-surface shadow-card p-4 space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-label mb-2">
+            Title <span className="text-red-400">*</span>
+          </label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="What should be done?"
+            className="w-full min-h-[44px] rounded-lg bg-input border border-edge px-3 py-2 text-heading placeholder-hint focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-label mb-2">Project</label>
+          <ProjectSelector value={project} onChange={setProject} />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-label mb-2">Description</label>
+          <div className="flex items-end gap-2">
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Detailed requirements (optional)"
+              rows={4}
+              className="flex-1 rounded-lg bg-input border border-edge px-3 py-2 text-heading placeholder-hint resize-none focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors"
+            />
+            <VoiceRecorder
+              recording={voice.recording}
+              voiceLoading={voice.voiceLoading}
+              micError={voice.micError}
+              onToggle={voice.toggleRecording}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[auto_auto_1fr] gap-2 items-center">
+          <div className="flex rounded-lg bg-elevated p-0.5">
+            {MODEL_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setModel(opt.value)}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  model === opt.value
+                    ? "bg-cyan-600 text-white shadow-sm"
+                    : "text-body hover:text-heading"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex rounded-lg bg-elevated p-0.5">
+            {[["low", "L"], ["medium", "M"], ["high", "H"]].map(([lvl, label]) => (
+              <button
+                key={lvl}
+                type="button"
+                onClick={() => setEffort(lvl)}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  effort === lvl
+                    ? "bg-cyan-600 text-white shadow-sm"
+                    : "text-body hover:text-heading"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setPriority(priority === 1 ? 0 : 1)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                priority === 1
+                  ? "bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30"
+                  : "bg-elevated text-dim hover:text-label"
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+              </svg>
+              High Priority
+            </button>
+          </div>
+        </div>
+
+        {project && description.trim() && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <div
+              role="switch"
+              aria-checked={autoDispatch}
+              onClick={() => setAutoDispatch(!autoDispatch)}
+              className={`relative w-9 h-[20px] rounded-full transition-colors ${autoDispatch ? "bg-cyan-500" : "bg-elevated"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${autoDispatch ? "translate-x-[16px]" : ""}`} />
+            </div>
+            <span className="text-sm text-label">Auto-dispatch after creation</span>
+          </label>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={submitting || !title.trim()}
+        className={`w-full min-h-[48px] rounded-lg text-base font-semibold transition-colors ${
+          submitting || !title.trim()
+            ? "bg-elevated text-dim cursor-not-allowed"
+            : "bg-cyan-500 hover:bg-cyan-400 text-white shadow-md shadow-cyan-500/20"
+        }`}
+      >
+        {submitting ? "Creating Task..." : "Create Task"}
+      </button>
+    </form>
   );
 }
 

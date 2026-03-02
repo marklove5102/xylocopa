@@ -20,6 +20,8 @@ from models import (
     MessageRole,
     MessageStatus,
     Project,
+    Task,
+    TaskStatus,
 )
 from session_cache import (
     session_source_dir,
@@ -1570,12 +1572,234 @@ class AgentDispatcher:
         from websocket import emit_agent_stream_end
         self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
 
+    # ---- v2 Task dispatch/harvest ----
+
+    def _dispatch_pending_tasks(self, db: Session):
+        """Pick up PENDING v2 tasks and create tmux agents for them."""
+        import secrets
+        import subprocess
+
+        tasks = (
+            db.query(Task)
+            .filter(Task.status == TaskStatus.PENDING)
+            .order_by(Task.priority.desc(), Task.created_at.asc())
+            .limit(5)
+            .all()
+        )
+        if not tasks:
+            return
+
+        for task in tasks:
+            proj = db.query(Project).filter(Project.name == task.project_name).first()
+            if not proj:
+                logger.warning("Task %s: project %s not found, skipping", task.id, task.project_name)
+                continue
+
+            # Check project capacity
+            active = (
+                db.query(Agent)
+                .filter(Agent.project == proj.name)
+                .filter(Agent.status.in_([AgentStatus.EXECUTING, AgentStatus.STARTING, AgentStatus.IDLE]))
+                .count()
+            )
+            if active >= proj.max_concurrent:
+                continue
+
+            try:
+                agent_id = self._create_task_agent(db, task, proj)
+                if agent_id:
+                    task.status = TaskStatus.EXECUTING
+                    task.agent_id = agent_id
+                    task.started_at = _utcnow()
+                    db.commit()
+                    from websocket import emit_task_update
+                    self._emit(emit_task_update(
+                        task.id, task.status.value, task.project_name or "",
+                        title=task.title, agent_id=agent_id,
+                    ))
+                    logger.info("Task %s dispatched to agent %s", task.id, agent_id)
+            except Exception:
+                logger.exception("Failed to dispatch task %s", task.id)
+
+    def _create_task_agent(self, db: Session, task: Task, proj: Project) -> str | None:
+        """Create a tmux agent for a v2 task. Returns agent_id or None."""
+        import secrets
+        import subprocess
+
+        # Generate unique agent ID
+        for _ in range(20):
+            agent_hex = secrets.token_hex(6)
+            tmux_session = f"ah-{agent_hex[:8]}"
+            if db.get(Agent, agent_hex) is None:
+                break
+        else:
+            return None
+
+        # Worktree name from task title
+        wt_name = task.worktree_name or f"task-{task.id}"
+        task.worktree_name = wt_name
+        branch = f"task/{task.id}/{wt_name}"
+        task.branch_name = branch
+
+        model = task.model or proj.default_model
+
+        # Create tmux session
+        try:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", tmux_session, "-c", proj.path],
+                check=True, capture_output=True, timeout=10,
+            )
+        except Exception:
+            logger.exception("Failed to create tmux session for task %s", task.id)
+            return None
+
+        # Get pane ID
+        try:
+            result = subprocess.run(
+                ["tmux", "list-panes", "-t", tmux_session, "-F", "#{pane_id}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pane_id = result.stdout.strip().split("\n")[0] if result.returncode == 0 else None
+        except Exception:
+            pane_id = None
+
+        # Build prompt
+        prompt = self._build_task_prompt(task)
+
+        # Create agent record
+        agent = Agent(
+            id=agent_hex,
+            project=proj.name,
+            name=f"Task: {task.title[:80]}",
+            mode=AgentMode.AUTO,
+            status=AgentStatus.STARTING,
+            model=model,
+            cli_sync=True,
+            tmux_pane=pane_id,
+            effort=task.effort or "high",
+            worktree=wt_name,
+            skip_permissions=True,
+            task_id=task.id,
+            last_message_preview=f"Task: {task.title[:80]}",
+            last_message_at=_utcnow(),
+        )
+        db.add(agent)
+        db.flush()
+
+        # Save initial message
+        msg = Message(
+            agent_id=agent.id,
+            role=MessageRole.USER,
+            content=prompt,
+            status=MessageStatus.COMPLETED,
+            source="task",
+            completed_at=_utcnow(),
+        )
+        db.add(msg)
+        db.commit()
+
+        # Build claude command
+        cmd_parts = ["claude", "--dangerously-skip-permissions"]
+        if wt_name:
+            cmd_parts += ["--worktree", wt_name]
+        cmd_parts += ["--model", model]
+        if task.effort:
+            cmd_parts += ["--effort", task.effort]
+        cmd_parts += ["-p", prompt]
+
+        cmd_str = " ".join(cmd_parts)
+
+        try:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", tmux_session, cmd_str, "Enter"],
+                check=True, capture_output=True, timeout=10,
+            )
+        except Exception:
+            logger.exception("Failed to send claude command for task %s", task.id)
+
+        from websocket import emit_agent_update
+        self._emit(emit_agent_update(agent.id, agent.status.value, proj.name))
+
+        return agent.id
+
+    def _build_task_prompt(self, task: Task) -> str:
+        """Build the full prompt for a task agent."""
+        parts = [f"# Task: {task.title}"]
+        if task.description:
+            parts.append(f"\n{task.description}")
+        if task.attempt_number > 1 and task.retry_context:
+            parts.append(f"\n## Previous Attempt Context (attempt #{task.attempt_number})")
+            parts.append(task.retry_context)
+        if task.rejection_reason:
+            parts.append(f"\n## Rejection Reason from Previous Attempt")
+            parts.append(task.rejection_reason)
+        parts.append("\n## Output Requirements")
+        parts.append("- Commit all changes with descriptive messages")
+        parts.append("- Leave a summary of what was done as your final message")
+        return "\n".join(parts)
+
+    def _harvest_task_completions(self, db: Session):
+        """Check EXECUTING v2 tasks — if agent is done, move to REVIEW."""
+        tasks = (
+            db.query(Task)
+            .filter(Task.status == TaskStatus.EXECUTING)
+            .filter(Task.agent_id.isnot(None))
+            .all()
+        )
+        for task in tasks:
+            agent = db.get(Agent, task.agent_id)
+            if not agent:
+                continue
+            if agent.status in (AgentStatus.IDLE, AgentStatus.STOPPED):
+                # Agent finished — extract summary from last message
+                last_msg = (
+                    db.query(Message)
+                    .filter(Message.agent_id == agent.id, Message.role == MessageRole.AGENT)
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                if last_msg:
+                    task.agent_summary = last_msg.content[:2000] if last_msg.content else None
+                task.status = TaskStatus.REVIEW
+                db.commit()
+                from websocket import emit_task_update
+                self._emit(emit_task_update(
+                    task.id, task.status.value, task.project_name or "",
+                    title=task.title, agent_id=task.agent_id,
+                ))
+                # Send push notification
+                try:
+                    from push import send_push_notification
+                    send_push_notification(
+                        "Task Ready for Review",
+                        task.title[:60],
+                        f"/tasks/{task.id}",
+                    )
+                except Exception:
+                    logger.debug("Push notification failed for task %s", task.id)
+                logger.info("Task %s moved to REVIEW (agent %s done)", task.id, agent.id)
+            elif agent.status == AgentStatus.ERROR:
+                task.status = TaskStatus.FAILED
+                task.error_message = "Agent encountered an error"
+                db.commit()
+                from websocket import emit_task_update
+                self._emit(emit_task_update(
+                    task.id, task.status.value, task.project_name or "",
+                    title=task.title,
+                ))
+
     def _tick(self, db: Session):
         # Invalidate per-tick tmux map cache
         self._tmux_map_cache = None
 
         # Refresh tmux pane-attached cache for notification suppression
         self._refresh_pane_attached()
+
+        # 0a. Dispatch PENDING v2 tasks → create agents
+        self._dispatch_pending_tasks(db)
+
+        # 0b. Harvest v2 task completions (agent done → REVIEW)
+        self._harvest_task_completions(db)
 
         # 0. Early session_id assignment — grab session_id from output init
         #    event as soon as Claude starts, so auto-detect can see it.

@@ -123,6 +123,23 @@ export const fetchTasks = (params = "") =>
   request(`/api/tasks${params ? `?${params}` : ""}`);
 export const fetchTask = (id) => request(`/api/tasks/${id}`);
 
+// --- Tasks v2 (first-class Task entity) ---
+export const fetchTasksV2 = (params = "") =>
+  request(`/api/v2/tasks${params ? `?${params}` : ""}`);
+export const fetchTaskV2 = (id) => request(`/api/v2/tasks/${id}`);
+export const createTaskV2 = (data) =>
+  request("/api/v2/tasks", { method: "POST", body: JSON.stringify(data) });
+export const updateTaskV2 = (id, data) =>
+  request(`/api/v2/tasks/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const dispatchTask = (id) =>
+  request(`/api/v2/tasks/${id}/dispatch`, { method: "POST" });
+export const approveTask = (id) =>
+  request(`/api/v2/tasks/${id}/approve`, { method: "POST" });
+export const rejectTask = (id, reason) =>
+  request(`/api/v2/tasks/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+export const cancelTask = (id) =>
+  request(`/api/v2/tasks/${id}/cancel`, { method: "POST" });
+
 // --- Agents ---
 export const fetchAgents = (params = "") =>
   request(`/api/agents${params ? `?${params}` : ""}`);

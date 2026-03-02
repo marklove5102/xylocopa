@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field, field_validator
 
-from models import AgentMode, AgentStatus, MessageRole, MessageStatus
+from models import AgentMode, AgentStatus, MessageRole, MessageStatus, TaskStatus
 
 logger = logging.getLogger("orchestrator.schemas")
 
@@ -29,6 +29,65 @@ class AgentTaskBrief(BaseModel):
 class AgentTaskDetail(AgentTaskBrief):
     """Task detail with the conversation thread for this prompt."""
     conversation: list["MessageOut"] = []
+
+
+# --- Task v2 schemas (first-class Task entity) ---
+
+class TaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    description: str | None = None
+    project_name: str | None = None
+    priority: int = Field(0, ge=0, le=1)  # 0=normal, 1=high
+    model: str | None = None
+    effort: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=300)
+    description: str | None = None
+    project_name: str | None = None
+    priority: int | None = Field(None, ge=0, le=1)
+    model: str | None = None
+    effort: str | None = None
+
+
+class TaskOut(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    project_name: str | None = None
+    priority: int = 0
+    status: TaskStatus
+    agent_id: str | None = None
+    worktree_name: str | None = None
+    branch_name: str | None = None
+    attempt_number: int = 1
+    agent_summary: str | None = None
+    rejection_reason: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", "started_at", "completed_at", mode="before")
+    @classmethod
+    def ensure_utc_task(cls, v):
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class TaskDetailOut(TaskOut):
+    retry_context: str | None = None
+    review_artifacts: str | None = None
+    conversation: list["MessageOut"] = []
+
+
+class TaskRejectRequest(BaseModel):
+    reason: str = Field(..., min_length=1)
 
 
 # --- Agent schemas ---
@@ -67,6 +126,7 @@ class AgentOut(BaseModel):
     skip_permissions: bool = True
     muted: bool = False
     parent_id: str | None = None
+    task_id: str | None = None
     successor_id: str | None = None
     session_size_bytes: int | None = None
     is_generating: bool = False

@@ -1473,7 +1473,7 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
           let anyChanged = false;
           const merged = result.map((m) => {
             const fresh = tailById.get(m.id);
-            if (fresh && (fresh.content !== m.content || fresh.completed_at !== m.completed_at || fresh.status !== m.status)) {
+            if (fresh && (fresh.content !== m.content || fresh.completed_at !== m.completed_at || fresh.status !== m.status || JSON.stringify(fresh.metadata) !== JSON.stringify(m.metadata))) {
               anyChanged = true;
               return fresh;
             }
@@ -2080,6 +2080,22 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
               </button>
             </div>
           </div>
+
+          {/* Task banner */}
+          {agent.task_id && (
+            <div className="ml-9 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              <button
+                type="button"
+                onClick={() => navigate(`/tasks/${agent.task_id}`)}
+                className="text-xs text-amber-400 hover:text-amber-300 underline truncate"
+              >
+                Working on task
+              </button>
+            </div>
+          )}
 
           {/* Row 2: Status + model + branch | action buttons (ml-9 aligns with name after back btn) */}
           <div className="flex items-center gap-2 ml-9">

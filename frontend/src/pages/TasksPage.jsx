@@ -1,25 +1,37 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { fetchTasks } from "../lib/api";
-import { STATUS_TABS, POLL_INTERVAL } from "../lib/constants";
-import TaskCard from "../components/TaskCard";
-import TaskDetail from "../components/TaskDetail";
+import { fetchTasksV2 } from "../lib/api";
+import { TASK_STATUS_TABS, POLL_INTERVAL } from "../lib/constants";
+import TaskCardV2 from "../components/TaskCardV2";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
 
+const ACTIVE_STATUSES = ["EXECUTING"];
+const REVIEW_STATUSES = ["REVIEW", "MERGING", "CONFLICT"];
+const DONE_STATUSES = ["COMPLETE", "CANCELLED", "REJECTED", "FAILED", "TIMEOUT"];
+
+function filterTasks(tasks, tab) {
+  if (tab === "ALL") return tasks;
+  if (tab === "INBOX") return tasks.filter((t) => t.status === "INBOX");
+  if (tab === "PENDING") return tasks.filter((t) => t.status === "PENDING");
+  if (tab === "ACTIVE") return tasks.filter((t) => ACTIVE_STATUSES.includes(t.status));
+  if (tab === "REVIEW") return tasks.filter((t) => REVIEW_STATUSES.includes(t.status));
+  if (tab === "DONE") return tasks.filter((t) => DONE_STATUSES.includes(t.status));
+  return tasks;
+}
+
 export default function TasksPage({ theme, onToggleTheme }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useDraft("ui:tasks:filter", "ALL");
-  const [expandedId, setExpandedId] = useState(null);
+  const [activeTab, setActiveTab] = useDraft("ui:tasks-v2:filter", "ALL");
   const pollRef = useRef(null);
   const visible = usePageVisible();
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchTasks();
+      const data = await fetchTasksV2();
       setTasks(Array.isArray(data) ? data : []);
       setError(null);
     } catch (err) {
@@ -36,28 +48,18 @@ export default function TasksPage({ theme, onToggleTheme }) {
     return () => clearInterval(pollRef.current);
   }, [load, visible]);
 
-  // Compute counts per status
-  const counts = {};
-  counts.ALL = tasks.length;
-  for (const tab of STATUS_TABS) {
-    if (tab.key !== "ALL") {
-      counts[tab.key] = tasks.filter((t) => t.status === tab.key).length;
-    }
-  }
-  counts.FAILED = tasks.filter((t) =>
-    ["FAILED", "TIMEOUT", "CANCELLED"].includes(t.status)
-  ).length;
+  // Compute counts
+  const counts = useMemo(() => ({
+    ALL: tasks.length,
+    INBOX: tasks.filter((t) => t.status === "INBOX").length,
+    PENDING: tasks.filter((t) => t.status === "PENDING").length,
+    ACTIVE: tasks.filter((t) => ACTIVE_STATUSES.includes(t.status)).length,
+    REVIEW: tasks.filter((t) => REVIEW_STATUSES.includes(t.status)).length,
+    DONE: tasks.filter((t) => DONE_STATUSES.includes(t.status)).length,
+  }), [tasks]);
 
-  // Filtered list
-  const filtered = useMemo(() =>
-    activeTab === "ALL"
-      ? tasks
-      : activeTab === "FAILED"
-        ? tasks.filter((t) => ["FAILED", "TIMEOUT", "CANCELLED"].includes(t.status))
-        : tasks.filter((t) => t.status === activeTab),
-    [tasks, activeTab]);
+  const filtered = useMemo(() => filterTasks(tasks, activeTab), [tasks, activeTab]);
 
-  // Sort: newest first by created_at
   const sorted = useMemo(() =>
     [...filtered].sort((a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -67,12 +69,11 @@ export default function TasksPage({ theme, onToggleTheme }) {
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Tasks" theme={theme} onToggleTheme={onToggleTheme}>
-        <FilterTabs tabs={STATUS_TABS} active={activeTab} onChange={setActiveTab} counts={counts} />
+        <FilterTabs tabs={TASK_STATUS_TABS} active={activeTab} onChange={setActiveTab} counts={counts} />
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
       <div className="max-w-2xl mx-auto w-full">
-      {/* Task list */}
       <div className="pb-20 px-4 py-3 space-y-3">
         {loading && tasks.length === 0 && (
           <div className="flex justify-center py-12">
@@ -98,26 +99,9 @@ export default function TasksPage({ theme, onToggleTheme }) {
           </div>
         )}
 
-        {sorted.map((task) => {
-          const isExpanded = expandedId === task.id;
-          return (
-            <div key={task.id} className="space-y-2">
-              <TaskCard
-                task={task}
-                isExpanded={isExpanded}
-                onToggle={() => setExpandedId(isExpanded ? null : task.id)}
-              />
-              {isExpanded && (
-                <TaskDetail
-                  taskId={task.id}
-                  agentId={task.agent_id}
-                  project={task.project}
-                  status={task.status}
-                />
-              )}
-            </div>
-          );
-        })}
+        {sorted.map((task) => (
+          <TaskCardV2 key={task.id} task={task} />
+        ))}
 
         <div className="h-4" />
       </div>
