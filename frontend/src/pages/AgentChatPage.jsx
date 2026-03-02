@@ -17,7 +17,10 @@ import {
   answerAgent,
   escapeAgent,
   uploadFile,
+  fetchProjectFile,
 } from "../lib/api";
+import ProjectFileModal from "../components/ProjectFileModal";
+import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
 
 // Mini error boundary that wraps individual markdown renders so a single
@@ -1349,11 +1352,15 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
   const [starLoading, setStarLoading] = useState(false);
   const [muted, setMuted] = useState(() => isAgentMuted(id));
   const [streamingContent, setStreamingContent] = useState(null);
+  const [activeTool, setActiveTool] = useState(null);
   const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const nameInputRef = useRef(null);
+  const [fileModal, setFileModal] = useState(null); // "CLAUDE.md" | "PROGRESS.md" | null
+  const [showBrowser, setShowBrowser] = useState(false);
+  const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
   const messagesEndRef = useRef(null);
   const toastTimer = useRef(null);
   const health = useHealthStatus();
@@ -1521,6 +1528,17 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
         console.warn("Failed to fetch starred status:", err);
       });
   }, [agent?.project, agent?.session_id, agent?.id]);
+
+  // Check CLAUDE.md / PROGRESS.md existence once agent is loaded
+  useEffect(() => {
+    if (!agent?.project) return;
+    Promise.all([
+      fetchProjectFile(agent.project, "CLAUDE.md").catch(() => ({ exists: false })),
+      fetchProjectFile(agent.project, "PROGRESS.md").catch(() => ({ exists: false })),
+    ]).then(([c, p]) => {
+      setFileExists({ "CLAUDE.md": c.exists, "PROGRESS.md": p.exists });
+    });
+  }, [agent?.project]);
 
   const handleToggleStar = async () => {
     if (!agent || starLoading) return;
@@ -1968,6 +1986,36 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
 
             {/* Icon buttons */}
             <div className="shrink-0 flex items-center">
+              {["CLAUDE.md", "PROGRESS.md"].map((fn) => {
+                const letter = fn === "CLAUDE.md" ? "C" : "P";
+                const exists = fileExists[fn];
+                const color = exists === false ? "text-zinc-500 hover:text-zinc-400" : "text-cyan-400 hover:text-cyan-300";
+                return (
+                  <button
+                    key={fn}
+                    type="button"
+                    onClick={() => setFileModal(fn)}
+                    title={fn}
+                    className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors ${color}`}
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
+                      <text x="12" y="17" textAnchor="middle" fill="currentColor" stroke="none" fontSize="7" fontWeight="700" fontFamily="system-ui">{letter}</text>
+                    </svg>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setShowBrowser(true)}
+                title="Browse files"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={handleToggleMute}
@@ -2280,6 +2328,29 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
             </div>
           </div>
         </div>
+      )}
+
+      {fileModal && agent && (
+        <ProjectFileModal
+          project={agent.project}
+          filename={fileModal}
+          onClose={() => {
+            setFileModal(null);
+            Promise.all([
+              fetchProjectFile(agent.project, "CLAUDE.md").catch(() => ({ exists: false })),
+              fetchProjectFile(agent.project, "PROGRESS.md").catch(() => ({ exists: false })),
+            ]).then(([c, p]) => {
+              setFileExists({ "CLAUDE.md": c.exists, "PROGRESS.md": p.exists });
+            });
+          }}
+        />
+      )}
+
+      {showBrowser && agent && (
+        <ProjectBrowserModal
+          project={agent.project}
+          onClose={() => setShowBrowser(false)}
+        />
       )}
     </div>
   );
