@@ -322,6 +322,13 @@ def init_db():
         if result.rowcount:
             conn.commit()
 
+        task_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(tasks)")).fetchall()}
+        if "use_worktree" not in task_cols:
+            conn.execute(text(
+                "ALTER TABLE tasks ADD COLUMN use_worktree BOOLEAN NOT NULL DEFAULT 1"
+            ))
+            conn.commit()
+
     # Ensure jwt_secret exists in SystemConfig
     from auth import get_jwt_secret
     db = SessionLocal()

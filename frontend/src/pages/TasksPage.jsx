@@ -7,29 +7,29 @@ import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket from "../hooks/useWebSocket";
 import InboxView from "./tasks/InboxView";
-import QueueView from "./tasks/QueueView";
-import ActiveView from "./tasks/ActiveView";
+import ExecutingView from "./tasks/ExecutingView";
 import ReviewView from "./tasks/ReviewView";
 import DoneView from "./tasks/DoneView";
 
 const PERSPECTIVE_STATUSES = {
   INBOX: "INBOX",
-  QUEUE: "PENDING",
-  ACTIVE: "EXECUTING",
+  EXECUTING: "PENDING,EXECUTING",
   REVIEW: "REVIEW,MERGING,CONFLICT",
   DONE: "COMPLETE,CANCELLED,REJECTED,FAILED,TIMEOUT",
 };
 
 const POLL_INTERVALS = {
   INBOX: 5000,
-  QUEUE: 5000,
-  ACTIVE: 3000,
+  EXECUTING: 3000,
   REVIEW: 5000,
   DONE: 10000,
 };
 
 export default function TasksPage({ theme, onToggleTheme }) {
-  const [perspective, setPerspective] = useDraft("ui:tasks-v2:perspective", "INBOX");
+  const [rawPerspective, setRawPerspective] = useDraft("ui:tasks-v2:perspective", "INBOX");
+  // Migrate stale localStorage values from old QUEUE/ACTIVE tabs
+  const perspective = (rawPerspective === "QUEUE" || rawPerspective === "ACTIVE") ? "EXECUTING" : rawPerspective;
+  const setPerspective = setRawPerspective;
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({});
@@ -44,8 +44,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const data = await fetchTaskCounts();
       setCounts({
         INBOX: data.INBOX ?? 0,
-        QUEUE: data.QUEUE ?? 0,
-        ACTIVE: data.ACTIVE ?? 0,
+        EXECUTING: (data.QUEUE ?? 0) + (data.ACTIVE ?? 0),
         REVIEW: data.REVIEW ?? 0,
         DONE: data.DONE ?? 0,
         DONE_COMPLETED: data.DONE_COMPLETED ?? 0,
@@ -98,8 +97,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
 
   const ViewComponent = {
     INBOX: InboxView,
-    QUEUE: QueueView,
-    ACTIVE: ActiveView,
+    EXECUTING: ExecutingView,
     REVIEW: ReviewView,
     DONE: DoneView,
   }[perspective] || InboxView;

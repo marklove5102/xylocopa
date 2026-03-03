@@ -1767,11 +1767,14 @@ class AgentDispatcher:
         else:
             return None
 
-        # Worktree name from task title
-        wt_name = task.worktree_name or f"task-{task.id}"
-        task.worktree_name = wt_name
-        branch = f"task/{task.id}/{wt_name}"
-        task.branch_name = branch
+        # Worktree name from task title (only if use_worktree is enabled)
+        wt_name = None
+        branch = None
+        if getattr(task, 'use_worktree', True):
+            wt_name = task.worktree_name or f"task-{task.id}"
+            task.worktree_name = wt_name
+            branch = f"task/{task.id}/{wt_name}"
+            task.branch_name = branch
 
         model = task.model or proj.default_model or CC_MODEL
         prompt = self._build_task_prompt(task)
@@ -1785,7 +1788,7 @@ class AgentDispatcher:
             status=AgentStatus.IDLE,
             model=model,
             effort=task.effort or "high",
-            worktree=wt_name,
+            worktree=wt_name if wt_name else None,
             skip_permissions=getattr(task, 'skip_permissions', True),
             task_id=task.id,
             last_message_preview=f"Task: {task.title[:80]}",

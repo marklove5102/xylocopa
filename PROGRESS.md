@@ -119,3 +119,53 @@
 ### Still investigating
 - Notification suppression may have race condition: `_refresh_pane_attached()` is called at start of dispatcher loop, but notification decisions happen later — if tmux state changes between calls, stale data could cause false notifications
 - Streaming visibility may be intermittent due to sync loop timing or WebSocket connection state
+
+### 2026-03-03 | Task: Task System v2 + Subagent Tracking + Multi-bugfix | Status: success
+
+### What was done
+
+**Task system v2 improvements**
+- Added `GET /api/v2/tasks/counts` endpoint — perspective-based counts (queue/executing/review/done) + weekly completion stats
+- Added `_get_session_slug()` for detecting `/clear` transitions via slug matching (increased search depth from 5→20 lines)
+- Fixed `_get_session_pid()` to fall through on dead PIDs instead of early return
+- Integrated task stats into MonitorContext (30s polling) + wired into PageHeader
+- State machine: added `InvalidTransitionError`, expanded valid transitions (EXECUTING→COMPLETE, etc.)
+- WebSocket reconnect: seed `generating_agents` on reconnect
+- Legacy dispatcher: skip v2 tasks in legacy dispatcher loop
+- New UI components: EffortSelector, ModelSelector, PromptInputBar, DoneView DONE_COMPLETED count
+
+**Subagent detection and tracking (2a26146)**
+- Claude Code spawns subagents (Explore, Plan, etc.) — now detected and tracked
+- Scans `{session_dir}/subagents/agent-*.jsonl` for subagent metadata
+- Creates lightweight Agent records with `parent_id` and `is_subagent=True`
+- Imports subagent conversation turns into Messages
+- API: subagents filtered from main list, attached to parent detail view, cascade stop
+
+**Successor detection after ExitPlanMode /clear (56614ed)**
+- `_get_session_pid()` only matched `.claude.json.tmp.{PID}` pattern
+- After `/clear`, new sessions may only write source code tmp files (e.g. `main.py.tmp.{PID}.{ts}`)
+- Added broader fallback matching any `{file}.tmp.{PID}.{timestamp}` pattern
+- Fixed agents stuck in SYNCING forever after "clear context & bypass"
+
+**Invalid model name fix (90e7ec1)**
+- `registry.yaml` loader used hardcoded fallback `claude-sonnet-4-5-20250514` — not a valid model ID
+- Added `VALID_MODELS` set in config.py, validation in create_agent/launch/load_registry
+- Startup migration to fix 10 projects + 4 agents with invalid models in live DB
+
+**Other bug fixes (via worktree agents)**
+- Fix project task counts: use Task table instead of Message counts (ca303be)
+- Fix back button unclickable when toast overlaps (2104949) — z-index issue
+- Fix voice auto-start broken by React StrictMode double-mount (93cd06d)
+- Auto-stop agent after merge task completes (ae5b16e) — was left in IDLE state
+
+### Problems encountered
+1. Session slug search only scanned first 5 lines — insufficient for some sessions
+2. Dead PID in `_get_session_pid()` caused early return → successor never found
+3. Hardcoded invalid model name propagated to 10 projects silently
+4. Merge task completion left agents in IDLE without cleanup
+
+### Lessons learned
+- **Model validation at boundaries**: Always validate model names on input (create/launch/load), not just output. Add a `VALID_MODELS` set and check against it.
+- **Slug-based session matching**: After `/clear`, session IDs change but the slug (human-readable session name) persists. Slug matching is more robust than PID matching for detecting session continuity.
+- **Subagent lifecycle**: Claude Code subagents write to `{session_dir}/subagents/agent-{uuid}.jsonl`. They have their own session IDs and conversation turns. Must parse these separately from the parent session.
+- **Worktree agent delegation works**: 6 bug fixes were completed by worktree agents in parallel — the merge-and-stop lifecycle is now reliable enough for routine fixes.

@@ -201,6 +201,7 @@ export default function NewTaskPage() {
           effort: effort || undefined,
           skip_permissions: skipPermissions,
           sync_mode: syncMode,
+          use_worktree: !!worktree,
           auto_dispatch: false, // inbox only
         });
         clearAllDrafts();
@@ -238,6 +239,7 @@ export default function NewTaskPage() {
         effort: effort || undefined,
         skip_permissions: skipPermissions,
         sync_mode: syncMode,
+        use_worktree: !!worktree,
         scheduled_at: scheduledAt || undefined,
         auto_dispatch: !isTmuxDispatch && autoDispatch && !!project && !scheduledAt,
       };

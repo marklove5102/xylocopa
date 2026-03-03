@@ -42,6 +42,7 @@ class TaskCreate(BaseModel):
     effort: str | None = None
     skip_permissions: bool = True
     sync_mode: bool = False
+    use_worktree: bool = True
     scheduled_at: datetime | None = None
     auto_dispatch: bool = False
 
@@ -73,6 +74,7 @@ class TaskOut(BaseModel):
     effort: str | None = None
     skip_permissions: bool = True
     sync_mode: bool = False
+    use_worktree: bool = True
     scheduled_at: datetime | None = None
     created_at: datetime
     started_at: datetime | None = None
