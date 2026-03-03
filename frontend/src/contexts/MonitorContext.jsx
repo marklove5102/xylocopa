@@ -6,6 +6,7 @@ import {
   fetchSystemStats,
   fetchStorageStats,
   fetchTokenUsage,
+  fetchTaskCounts,
 } from "../lib/api";
 import usePageVisible from "../hooks/usePageVisible";
 
@@ -23,6 +24,7 @@ export function MonitorProvider({ children }) {
   const [sysStats, setSysStats] = useState(null);
   const [tokenUsage, setTokenUsage] = useState(null);
   const [storageStats, setStorageStats] = useState(null);
+  const [taskStats, setTaskStats] = useState(null);
   const [monitorActive, setMonitorActive] = useState(false);
 
   const fetchHealth = useCallback(async () => {
@@ -80,12 +82,20 @@ export function MonitorProvider({ children }) {
     }
   }, []);
 
+  const fetchTasks = useCallback(async () => {
+    try {
+      setTaskStats(await fetchTaskCounts());
+    } catch (err) {
+      console.error("MonitorContext: failed to fetch task counts:", err);
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     await Promise.all([
       fetchHealth(), fetchAgents(), fetchProcesses(),
-      fetchSysStats(), fetchUsage(), fetchStorage(),
+      fetchSysStats(), fetchUsage(), fetchStorage(), fetchTasks(),
     ]);
-  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage, fetchStorage]);
+  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchUsage, fetchStorage, fetchTasks]);
 
   // Initial fetch on mount
   useEffect(() => { refreshAll(); }, [refreshAll]);
@@ -106,23 +116,23 @@ export function MonitorProvider({ children }) {
     }, 5000);
     // Health: every 10s
     const healthId = setInterval(fetchHealth, 10000);
-    // Token usage, storage: every 30s
+    // Token usage, storage, task stats: every 30s
     const slowId = setInterval(() => {
-      fetchUsage(); fetchStorage();
+      fetchUsage(); fetchStorage(); fetchTasks();
     }, 30000);
     return () => {
       clearInterval(fastId);
       clearInterval(healthId);
       clearInterval(slowId);
     };
-  }, [visible, monitorActive, fetchAgents, fetchProcesses, fetchSysStats, fetchHealth, fetchUsage, fetchStorage]);
+  }, [visible, monitorActive, fetchAgents, fetchProcesses, fetchSysStats, fetchHealth, fetchUsage, fetchStorage, fetchTasks]);
 
   const activate = useCallback(() => setMonitorActive(true), []);
   const deactivate = useCallback(() => setMonitorActive(false), []);
 
   return (
     <MonitorContext.Provider value={{
-      health, healthError, agents, agentCounts, processes, sysStats, tokenUsage, storageStats,
+      health, healthError, agents, agentCounts, processes, sysStats, tokenUsage, storageStats, taskStats,
       refresh: refreshAll, activate, deactivate,
     }}>
       {children}

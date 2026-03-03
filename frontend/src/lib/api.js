@@ -126,6 +126,7 @@ export const fetchTask = (id) => request(`/api/tasks/${id}`);
 // --- Tasks v2 (first-class Task entity) ---
 export const fetchTasksV2 = (params = "") =>
   request(`/api/v2/tasks${params ? `?${params}` : ""}`);
+export const fetchTaskCounts = () => request("/api/v2/tasks/counts");
 export const fetchTaskV2 = (id) => request(`/api/v2/tasks/${id}`);
 export const createTaskV2 = (data) =>
   request("/api/v2/tasks", { method: "POST", body: JSON.stringify(data) });

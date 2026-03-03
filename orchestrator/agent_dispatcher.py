@@ -1062,7 +1062,10 @@ def _get_session_pid(session_id: str) -> int | None:
                         pid = int(m.group(1))
                         if os.path.exists(f"/proc/{pid}"):
                             return pid
-                        return None
+                        # PID is dead — fall through to fallback patterns
+                        # instead of returning None (the same PID may appear
+                        # in .tmp file writes which are equally valid)
+                        continue
                 elif ".tmp." in line and "Writing to temp file:" in line:
                     # Prefer .claude.json.tmp.{PID} (most specific)
                     if fallback_pid is None and ".claude.json.tmp." in line:
@@ -1081,6 +1084,32 @@ def _get_session_pid(session_id: str) -> int | None:
             return broad_fallback_pid
     except OSError as e:
         logger.debug("_get_session_pid: failed to read debug file for session %s: %s", session_id, e)
+    return None
+
+
+def _get_session_slug(jsonl_path: str) -> str | None:
+    """Extract the session slug from the first few lines of a JSONL file.
+
+    Claude Code writes the slug in SessionStart events at the top of every
+    JSONL.  A /clear transition reuses the same slug in the new session,
+    providing PID-independent proof of continuity.
+    """
+    try:
+        with open(jsonl_path, "r") as f:
+            for i, line in enumerate(f):
+                if i >= 5:
+                    break
+                if '"slug"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                slug = obj.get("slug")
+                if slug:
+                    return slug
+    except OSError:
+        pass
     return None
 
 
@@ -3625,6 +3654,11 @@ class AgentDispatcher:
         finally:
             db.close()
 
+        # Extract the current session's slug for /clear detection.
+        # A /clear transition reuses the same slug in the new session,
+        # providing PID-independent proof of continuity.
+        current_slug = _get_session_slug(current_jsonl)
+
         # Collect session dirs to scan: project root + worktree dir if set
         session_dirs = [session_source_dir(project_path)]
         if worktree:
@@ -3634,9 +3668,11 @@ class AgentDispatcher:
                 session_dirs.append(wt_sdir)
 
         # Look for a JSONL newer than the current one.
-        # STRICT MATCHING: only accept candidates whose PID matches the
-        # agent's tmux pane PID.  This prevents sub-agent sessions and
-        # unrelated sessions from being misidentified as continuations.
+        # Two matching strategies:
+        #   1. Slug match: if the candidate has the same slug as the current
+        #      session, it's a /clear continuation — accept WITHOUT PID check.
+        #   2. PID match (fallback): for auto-continuations without /clear,
+        #      require PID match or fd-ownership proof.
         best_sid, best_mtime = None, current_mtime
         for session_dir in session_dirs:
             try:
@@ -3649,6 +3685,19 @@ class AgentDispatcher:
                     fpath = os.path.join(session_dir, fname)
                     mtime = os.path.getmtime(fpath)
                     if mtime > best_mtime:
+                        # Strategy 1: slug-based match (/clear transition)
+                        if current_slug:
+                            candidate_slug = _get_session_slug(fpath)
+                            if candidate_slug == current_slug:
+                                logger.info(
+                                    "_detect_successor_session: slug match "
+                                    "agent=%s slug=%s candidate_sid=%s",
+                                    agent_id, current_slug, sid[:12],
+                                )
+                                best_sid, best_mtime = sid, mtime
+                                continue
+
+                        # Strategy 2: PID-based match (auto-continuation)
                         session_pid = _get_session_pid(sid)
                         if pane_pid is not None:
                             # We know the pane PID — require exact match.
@@ -4132,6 +4181,12 @@ class AgentDispatcher:
 
             if current_size <= last_size:
                 idle_polls += 1
+                # Heartbeat log every 30 idle polls (~90s) to confirm loop is alive
+                if idle_polls % 30 == 0 and idle_polls > 0:
+                    logger.info(
+                        "Sync loop heartbeat for agent %s: idle_polls=%d, session=%s",
+                        agent_id, idle_polls, session_id[:12],
+                    )
                 # File stopped growing — clear generating state
                 if is_generating:
                     is_generating = False
@@ -4264,6 +4319,12 @@ class AgentDispatcher:
                         )
                         return
 
+                    if idle_polls % 30 == 0:
+                        logger.debug(
+                            "Successor check: no match for agent %s (idle_polls=%d, pane_alive=%s)",
+                            agent_id, idle_polls, pane_alive,
+                        )
+
                     # Pane is alive — agent stays syncing even if
                     # the session file hasn't grown.  The user may
                     # simply be idle in the tmux session.
@@ -4347,6 +4408,10 @@ class AgentDispatcher:
             try:
                 agent = db.get(Agent, agent_id)
                 if not agent or agent.status != AgentStatus.SYNCING:
+                    logger.info(
+                        "Sync loop exiting for agent %s (status changed to %s during turn import)",
+                        agent_id, agent.status if agent else "DELETED",
+                    )
                     break
 
                 if last_turn_updated:
