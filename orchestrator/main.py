@@ -2223,6 +2223,52 @@ async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
     return TaskOut.model_validate(task)
 
 
+@app.get("/api/v2/tasks/counts")
+async def task_counts(db: Session = Depends(get_db)):
+    """Return perspective counts + weekly success stats."""
+    from datetime import timedelta
+
+    # Perspective counts (server-side)
+    rows = db.query(Task.status, func.count(Task.id)).group_by(Task.status).all()
+    by_status = {s.value: c for s, c in rows}
+
+    done_statuses = ["COMPLETE", "CANCELLED", "REJECTED", "FAILED", "TIMEOUT"]
+    review_statuses = ["REVIEW", "MERGING", "CONFLICT"]
+
+    counts = {
+        "INBOX": by_status.get("INBOX", 0),
+        "QUEUE": by_status.get("PENDING", 0),
+        "ACTIVE": by_status.get("EXECUTING", 0),
+        "REVIEW": sum(by_status.get(s, 0) for s in review_statuses),
+        "DONE": sum(by_status.get(s, 0) for s in done_statuses),
+        "DONE_COMPLETED": by_status.get("COMPLETE", 0),
+    }
+
+    # Weekly stats — tasks that reached a terminal state this week
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    terminal = [TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.TIMEOUT,
+                TaskStatus.REJECTED, TaskStatus.CANCELLED]
+    weekly_q = db.query(
+        Task.status, func.count(Task.id)
+    ).filter(
+        Task.status.in_(terminal),
+        Task.completed_at >= week_ago,
+    ).group_by(Task.status).all()
+
+    weekly_by = {s.value: c for s, c in weekly_q}
+    weekly_total = sum(weekly_by.values())
+    weekly_completed = weekly_by.get("COMPLETE", 0)
+    weekly_pct = round(weekly_completed / weekly_total * 100) if weekly_total else 0
+
+    return {
+        **counts,
+        "weekly_total": weekly_total,
+        "weekly_completed": weekly_completed,
+        "weekly_success_pct": weekly_pct,
+    }
+
+
 @app.get("/api/v2/tasks", response_model=list[TaskOut])
 async def list_tasks_v2(
     status: str | None = None,
