@@ -137,8 +137,7 @@ export const TASK_STATUS_TABS = [
 
 export const TASK_PERSPECTIVE_TABS = [
   { key: "INBOX", label: "Inbox" },
-  { key: "QUEUE", label: "Queue" },
-  { key: "ACTIVE", label: "Active" },
+  { key: "EXECUTING", label: "Executing" },
   { key: "REVIEW", label: "Review" },
   { key: "DONE", label: "Done" },
 ];

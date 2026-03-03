@@ -86,6 +86,7 @@ class Task(Base):
     effort: Mapped[str | None] = mapped_column(String(10), nullable=True)
     skip_permissions: Mapped[bool] = mapped_column(Boolean, default=True)
     sync_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    use_worktree: Mapped[bool] = mapped_column(Boolean, default=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

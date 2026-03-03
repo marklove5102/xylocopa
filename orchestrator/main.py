@@ -2214,6 +2214,7 @@ async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
         effort=body.effort,
         skip_permissions=body.skip_permissions,
         sync_mode=body.sync_mode,
+        use_worktree=body.use_worktree,
         scheduled_at=body.scheduled_at,
         status=initial_status,
     )
@@ -2439,6 +2440,17 @@ async def reject_task_v2(
         validate_transition(task.status, TaskStatus.REJECTED)
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e))
+    # Stop running agent if still active
+    if task.agent_id:
+        agent = db.get(Agent, task.agent_id)
+        if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
+            agent.status = AgentStatus.STOPPED
+            db.commit()
+            if agent.tmux_pane:
+                import subprocess
+                sess_name = f"ah-{agent.id[:8]}"
+                subprocess.run(["tmux", "kill-session", "-t", sess_name],
+                               capture_output=True, timeout=5)
     task.status = TaskStatus.REJECTED
     task.rejection_reason = body.reason
     db.commit()
