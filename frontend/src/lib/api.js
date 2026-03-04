@@ -117,6 +117,16 @@ export const applyClaudeMd = (project, payload) =>
   request(`/api/projects/${e(project)}/apply-claudemd`, { method: "POST", body: JSON.stringify(payload) });
 export const fetchClaudeMdPending = () =>
   request("/api/projects/claudemd-pending");
+export const summarizeProgress = (project) =>
+  request(`/api/projects/${e(project)}/summarize-progress`, { method: "POST" });
+export const summarizeProgressStatus = (project) =>
+  request(`/api/projects/${e(project)}/summarize-progress/status`);
+export const discardProgressSummary = (project) =>
+  request(`/api/projects/${e(project)}/summarize-progress`, { method: "DELETE" });
+export const applyProgressSummary = (project) =>
+  request(`/api/projects/${e(project)}/apply-progress`, { method: "POST" });
+export const updateProjectSettings = (project, settings) =>
+  request(`/api/projects/${e(project)}/settings`, { method: "PATCH", body: JSON.stringify(settings) });
 
 // --- Tasks (agent-sourced: each USER message = one task) ---
 export const fetchTasks = (params = "") =>

@@ -1640,6 +1640,9 @@ class AgentDispatcher:
         from thumbnails import backfill_thumbnails
         asyncio.ensure_future(asyncio.to_thread(backfill_thumbnails))
 
+        # Track last daily summary check (date string -> already triggered)
+        _last_summary_date: str | None = None
+
         while self.running:
             try:
                 if not self.worker_mgr.ping():
@@ -1649,6 +1652,13 @@ class AgentDispatcher:
                 db = SessionLocal()
                 try:
                     self._tick(db)
+
+                    # Daily PROGRESS.md summary auto-trigger (once per day)
+                    from datetime import date
+                    today_str = date.today().isoformat()
+                    if _last_summary_date != today_str:
+                        _last_summary_date = today_str
+                        self._trigger_daily_progress_summaries(db)
                 finally:
                     db.close()
                 _consecutive_failures = 0
@@ -1670,6 +1680,127 @@ class AgentDispatcher:
 
     def stop(self):
         self.running = False
+
+    def _trigger_daily_progress_summaries(self, db: Session):
+        """Auto-trigger PROGRESS.md summary for projects with the toggle enabled."""
+        projects = (
+            db.query(Project)
+            .filter(Project.auto_progress_summary == True, Project.archived == False)
+            .all()
+        )
+        if not projects:
+            return
+
+        import threading
+        from main import _progress_job_get, _summarize_progress_background, _progress_job_set
+
+        for proj in projects:
+            # Skip if already running or completed today
+            existing = _progress_job_get(proj.name)
+            if existing:
+                continue
+
+            # Gather today's completed tasks
+            from datetime import date
+            today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+            completed_tasks = (
+                db.query(Task)
+                .filter(
+                    Task.project_name == proj.name,
+                    Task.status == TaskStatus.COMPLETE,
+                    Task.completed_at >= today_start,
+                )
+                .order_by(Task.completed_at)
+                .all()
+            )
+
+            parts = []
+            for t in completed_tasks:
+                summary = t.agent_summary or t.title
+                parts.append(f"- {t.title}: {summary[:300]}")
+            task_summaries = "\n".join(parts) if parts else ""
+
+            progress_path = os.path.join(proj.path, "PROGRESS.md")
+            current_progress = ""
+            if os.path.isfile(progress_path):
+                with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
+                    current_progress = f.read()
+
+            # Auto-apply: run summary and write result directly (no review step)
+            _progress_job_set(proj.name, status="running")
+            thread = threading.Thread(
+                target=self._auto_apply_progress_summary,
+                args=(proj.name, proj.path, task_summaries, current_progress),
+                daemon=True,
+            )
+            thread.start()
+            logger.info("Auto-triggered daily PROGRESS.md summary for project %s", proj.name)
+
+    @staticmethod
+    def _auto_apply_progress_summary(project_name: str, project_path: str,
+                                     task_summaries: str, current_progress: str):
+        """Run summary and auto-write result to PROGRESS.md (no review step)."""
+        import subprocess
+        from datetime import date
+        from config import CLAUDE_BIN
+        from main import _progress_job_set, _progress_job_clear
+
+        today = date.today().isoformat()
+        prompt = f"""You are appending a daily summary entry to a project's PROGRESS.md file.
+
+STRICT RULES:
+1. Output ONLY the new PROGRESS.md content — no preamble, no explanation, no markdown fences.
+2. Keep ALL existing content exactly as-is.
+3. Append a new entry at the bottom in this format:
+
+## {today} — Daily Summary
+- [task title]: brief lesson or outcome (1 line each)
+
+4. Summarize each completed task in 1 line focusing on: what was done, any gotchas/lessons.
+5. If no tasks completed today, output the existing content unchanged (do NOT add an empty entry).
+6. Keep the entry concise — max 10 lines for the new section.
+7. Do NOT modify or reformat existing entries.
+8. If the file exceeds 200 lines, consolidate older entries (30+ days) into a single "## Archive" section at the top with only the most important lessons retained (max 20 lines). Keep recent entries intact.
+
+Here is the current PROGRESS.md:
+---
+{current_progress or "(empty — start fresh with a # PROGRESS heading)"}
+---
+
+Here are today's completed tasks:
+---
+{task_summaries or "(no tasks completed today)"}
+---"""
+
+        try:
+            result = subprocess.run(
+                [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
+                capture_output=True, text=True, timeout=300,
+                cwd=project_path,
+            )
+            if result.returncode != 0:
+                logger.warning("Auto progress summary failed for %s: %s", project_name, result.stderr[:500])
+                _progress_job_set(project_name, status="error", error="Auto-summary failed")
+                return
+            proposed = result.stdout.strip()
+        except Exception as e:
+            logger.warning("Auto progress summary error for %s: %s", project_name, e)
+            _progress_job_set(project_name, status="error", error=str(e))
+            return
+
+        if not proposed or (current_progress and proposed.strip() == current_progress.strip()):
+            _progress_job_clear(project_name)
+            return
+
+        # Write directly to PROGRESS.md
+        progress_path = os.path.join(project_path, "PROGRESS.md")
+        try:
+            with open(progress_path, "w", encoding="utf-8") as f:
+                f.write(proposed)
+            logger.info("Auto-applied daily PROGRESS.md summary for %s", project_name)
+        except OSError as e:
+            logger.warning("Failed to write PROGRESS.md for %s: %s", project_name, e)
+        _progress_job_clear(project_name)
 
     def _emit(self, coro):
         try:
@@ -1899,6 +2030,7 @@ class AgentDispatcher:
         )
         parts.append("- Avoid dangerous/destructive operations (force push, drop tables, rm -rf, etc.)")
         parts.append("- Commit all changes with descriptive messages")
+        parts.append("- Before your final message, append a short entry to PROGRESS.md with today's date, task title, and any lessons learned (gotchas, workarounds, or 'straightforward — no issues' if none)")
         parts.append("- Leave a summary of what was done as your final message")
         return "\n".join(parts)
 

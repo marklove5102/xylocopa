@@ -312,6 +312,14 @@ def init_db():
             ))
             conn.commit()
 
+        # Add auto_progress_summary column to projects if missing
+        proj_cols2 = _table_columns(conn, "projects")
+        if "auto_progress_summary" not in proj_cols2:
+            conn.execute(text(
+                "ALTER TABLE projects ADD COLUMN auto_progress_summary BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+
         if "use_worktree" not in task_cols:
             conn.execute(text(
                 "ALTER TABLE tasks ADD COLUMN use_worktree BOOLEAN NOT NULL DEFAULT 1"

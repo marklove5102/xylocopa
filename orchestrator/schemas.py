@@ -259,6 +259,7 @@ class ProjectOut(BaseModel):
     max_concurrent: int = 2
     default_model: str = "claude-opus-4-6"
     archived: bool = False
+    auto_progress_summary: bool = False
 
     model_config = {"from_attributes": True}
 

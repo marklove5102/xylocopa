@@ -10,10 +10,12 @@ import useWebSocket, { isTaskNotificationsEnabled, setTaskNotificationsEnabled }
 import InboxView from "./tasks/InboxView";
 import ExecutingView from "./tasks/ExecutingView";
 import ReviewView from "./tasks/ReviewView";
+import PlanningView from "./tasks/PlanningView";
 import DoneView from "./tasks/DoneView";
 
 const PERSPECTIVE_STATUSES = {
   INBOX: "INBOX",
+  PLANNING: "PLANNING",
   EXECUTING: "PENDING,EXECUTING",
   REVIEW: "REVIEW,MERGING,CONFLICT",
   DONE: "COMPLETE,CANCELLED,REJECTED,FAILED,TIMEOUT",
@@ -21,6 +23,7 @@ const PERSPECTIVE_STATUSES = {
 
 const POLL_INTERVALS = {
   INBOX: 5000,
+  PLANNING: 5000,
   EXECUTING: 3000,
   REVIEW: 5000,
   DONE: 10000,
@@ -45,6 +48,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const data = await fetchTaskCounts();
       setCounts({
         INBOX: data.INBOX ?? 0,
+        PLANNING: data.PLANNING ?? 0,
         EXECUTING: (data.QUEUE ?? 0) + (data.ACTIVE ?? 0),
         REVIEW: data.REVIEW ?? 0,
         DONE: data.DONE ?? 0,
@@ -150,6 +154,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
 
   const ViewComponent = {
     INBOX: InboxView,
+    PLANNING: PlanningView,
     EXECUTING: ExecutingView,
     REVIEW: ReviewView,
     DONE: DoneView,
