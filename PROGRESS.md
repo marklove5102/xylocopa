@@ -387,3 +387,9 @@ Priority-ranked architectural gaps:
 - **Plan Mode is highest leverage**: Reviewing a 30-second plan vs reviewing a 30-minute execution. Maps directly to the plan agent bug — system partially supports plan mode but lifecycle is broken for exec agents.
 - **Inject shared knowledge into task prompts**: `_build_task_prompt()` should include PROGRESS.md or equivalent cross-task context to prevent repeated mistakes.
 - **Async click handler pattern**: `preventDefault()` must happen synchronously before first `await`. Check condition synchronously, prevent immediately, then do async work.
+
+### 2026-03-04 | Task: Race test v2: double dispatch | Status: success
+- What: Fixed TOCTOU race in `dispatch_task_v2` and `_dispatch_pending_tasks` using atomic compare-and-swap (CAS) pattern. Added 5 race condition tests.
+- Fix: `db.query(Task).filter(Task.id == id, Task.status == expected).update(...)` instead of read-modify-write. Returns `rows == 0` when another thread already changed the status.
+- Also: `_create_task_agent` now flushes instead of committing, so the caller can rollback agent+message if the CAS fails.
+- Lesson: **Atomic CAS for SQLite concurrency**: `UPDATE ... WHERE status=:expected` is the correct pattern for SQLite (no row-level locks). The WHERE clause acts as a compare-and-swap — if another transaction changed the status, `rowcount == 0` and the caller knows to abort. Always flush (not commit) in sub-functions when the caller needs atomic multi-step operations.
