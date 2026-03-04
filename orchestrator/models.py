@@ -175,6 +175,7 @@ class Project(Base):
         String(100), default="claude-opus-4-6"
     )
     archived: Mapped[bool] = mapped_column(default=False)
+    auto_progress_summary: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class StarredSession(Base):

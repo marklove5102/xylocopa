@@ -1021,6 +1021,7 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
             "last_activity": last_activity,
             "git_remote": proj.git_remote if proj else None,
             "description": proj.description if proj else None,
+            "auto_progress_summary": proj.auto_progress_summary if proj else False,
         }
 
         # Richer stats for active projects
@@ -2104,6 +2105,209 @@ async def apply_claudemd(name: str, body: ApplyClaudeMdRequest, db: Session = De
         logger.warning("apply-claudemd %s: written CLAUDE.md is %d lines (>60)", name, line_count)
 
     return {"success": True, "content": final_content, "lines": line_count}
+
+
+# ---- PROGRESS.md daily summary ----
+
+_progress_jobs: dict[str, dict] = {}
+_progress_jobs_lock = threading.Lock()
+_PROGRESS_CACHE_TTL = 600  # 10 minutes
+
+
+def _progress_job_get(project_name: str) -> dict | None:
+    with _progress_jobs_lock:
+        entry = _progress_jobs.get(project_name)
+        if not entry:
+            return None
+        if entry["status"] != "running" and _time.monotonic() - entry["ts"] > _PROGRESS_CACHE_TTL:
+            del _progress_jobs[project_name]
+            return None
+        return entry
+
+
+def _progress_job_set(project_name: str, **kwargs):
+    with _progress_jobs_lock:
+        _progress_jobs[project_name] = {"ts": _time.monotonic(), **kwargs}
+
+
+def _progress_job_clear(project_name: str):
+    with _progress_jobs_lock:
+        _progress_jobs.pop(project_name, None)
+
+
+def _summarize_progress_background(project_name: str, project_path: str,
+                                   task_summaries: str, current_progress: str):
+    """Run claude -p in a thread to summarize today's completed tasks into PROGRESS.md."""
+    from datetime import date
+    today = date.today().isoformat()
+
+    prompt = f"""You are appending a daily summary entry to a project's PROGRESS.md file.
+
+STRICT RULES:
+1. Output ONLY the new PROGRESS.md content — no preamble, no explanation, no markdown fences.
+2. Keep ALL existing content exactly as-is.
+3. Append a new entry at the bottom in this format:
+
+## {today} — Daily Summary
+- [task title]: brief lesson or outcome (1 line each)
+- ...
+
+4. Summarize each completed task in 1 line focusing on: what was done, any gotchas/lessons.
+5. If no tasks completed today, append: "## {today} — No tasks completed today"
+6. Keep the entry concise — max 10 lines for the new section.
+7. Do NOT modify or reformat existing entries.
+8. If the file exceeds 200 lines, consolidate older entries (30+ days) into a single "## Archive" section at the top with only the most important lessons retained (max 20 lines). Keep recent entries intact.
+
+Here is the current PROGRESS.md:
+---
+{current_progress or "(empty — start fresh with a # PROGRESS heading)"}
+---
+
+Here are today's completed tasks:
+---
+{task_summaries or "(no tasks completed today)"}
+---"""
+
+    from config import CLAUDE_BIN
+    try:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
+            capture_output=True, text=True, timeout=300,
+            cwd=project_path,
+        )
+        if result.returncode != 0:
+            logger.warning("progress summary failed for %s: %s", project_name, result.stderr[:500])
+            _progress_job_set(project_name, status="error", error="Claude agent failed — try again")
+            return
+        proposed = result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        _progress_job_set(project_name, status="error", error="Summary timed out (>5min)")
+        return
+    except FileNotFoundError:
+        _progress_job_set(project_name, status="error", error="Claude CLI not found")
+        return
+    except Exception as e:
+        _progress_job_set(project_name, status="error", error=str(e))
+        return
+
+    if not proposed:
+        _progress_job_set(project_name, status="error", error="Claude agent returned empty output")
+        return
+
+    if not current_progress:
+        data = {"current": "", "proposed": proposed, "diff": "", "hunks": [], "is_new": True}
+    elif current_progress.strip() == proposed.strip():
+        data = {"hunks": [], "message": "No changes needed"}
+    else:
+        raw_diff, hunks = _compute_diff_hunks(current_progress, proposed)
+        data = {"current": current_progress, "proposed": proposed, "diff": raw_diff, "hunks": hunks}
+
+    _progress_job_set(project_name, status="complete", data=data)
+
+
+@app.post("/api/projects/{name}/summarize-progress")
+async def summarize_progress(name: str, db: Session = Depends(get_db)):
+    """Start a background Claude agent to summarize today's tasks into PROGRESS.md."""
+    project_path = _resolve_project_path(name, db)
+
+    existing = _progress_job_get(name)
+    if existing and existing["status"] == "running":
+        return {"status": "running"}
+
+    # Gather today's completed tasks
+    from datetime import date, timedelta
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    completed_tasks = (
+        db.query(Task)
+        .filter(
+            Task.project_name == name,
+            Task.status == TaskStatus.COMPLETE,
+            Task.completed_at >= today_start,
+        )
+        .order_by(Task.completed_at)
+        .all()
+    )
+
+    parts = []
+    for t in completed_tasks:
+        summary = t.agent_summary or t.title
+        parts.append(f"- {t.title}: {summary[:300]}")
+    task_summaries = "\n".join(parts) if parts else ""
+
+    progress_path = os.path.join(project_path, "PROGRESS.md")
+    current_progress = ""
+    if os.path.isfile(progress_path):
+        with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
+            current_progress = f.read()
+
+    _progress_job_set(name, status="running")
+    thread = threading.Thread(
+        target=_summarize_progress_background,
+        args=(name, project_path, task_summaries, current_progress),
+        daemon=True,
+    )
+    thread.start()
+    return {"status": "started"}
+
+
+@app.get("/api/projects/{name}/summarize-progress/status")
+async def summarize_progress_status(name: str):
+    """Poll the status of a background PROGRESS.md summary job."""
+    job = _progress_job_get(name)
+    if not job:
+        return {"status": "none"}
+    if job["status"] == "running":
+        return {"status": "running"}
+    if job["status"] == "error":
+        return {"status": "error", "message": job.get("error", "Unknown error")}
+    return {"status": "complete", "data": job["data"]}
+
+
+@app.delete("/api/projects/{name}/summarize-progress")
+async def discard_progress_summary(name: str):
+    """Clear a cached PROGRESS.md summary result."""
+    _progress_job_clear(name)
+    return {"success": True}
+
+
+@app.post("/api/projects/{name}/apply-progress")
+async def apply_progress(name: str, db: Session = Depends(get_db)):
+    """Apply proposed PROGRESS.md summary (always accept_all)."""
+    project_path = _resolve_project_path(name, db)
+    progress_path = os.path.join(project_path, "PROGRESS.md")
+
+    job = _progress_job_get(name)
+    if not job or job["status"] != "complete":
+        raise HTTPException(status_code=410, detail="Proposal expired — run summary again")
+
+    proposed = job["data"].get("proposed", "")
+    if not proposed:
+        raise HTTPException(status_code=400, detail="No proposed content")
+
+    try:
+        with open(progress_path, "w", encoding="utf-8") as f:
+            f.write(proposed)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    _progress_job_clear(name)
+    return {"success": True, "content": proposed, "lines": len(proposed.splitlines())}
+
+
+@app.patch("/api/projects/{name}/settings")
+async def update_project_settings(name: str, request: Request, db: Session = Depends(get_db)):
+    """Update project toggle settings (auto_progress_summary, etc.)."""
+    proj = db.get(Project, name)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    body = await request.json()
+    if "auto_progress_summary" in body:
+        proj.auto_progress_summary = bool(body["auto_progress_summary"])
+
+    db.commit()
+    db.refresh(proj)
+    return ProjectOut.model_validate(proj)
 
 
 # ---- Project directory browser (read-only) ----
