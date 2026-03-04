@@ -397,3 +397,10 @@ Priority-ranked architectural gaps:
 - What: Added one-line comment at top of RELEASE_PREP.md: "# This file was reviewed by pipeline test. Do NOT modify any other content."
 - Resolution: Edit tool appeared to work but file wasn't flushed to disk properly; used bash to rewrite with header, then committed
 - Lesson: When Edit tool doesn't show up in git status, use bash to verify filesystem changes before assuming success
+
+### 2026-03-04 | Task: Pipeline test: add LICENSE header (REDO, attempt #2) | Status: success
+
+- What: Fix incorrect LICENSE header comment in RELEASE_PREP.md
+- Attempts: Previous attempt #1 added wrong wording: `# This file was reviewed by pipeline test. Do NOT modify any other content.` instead of the required `# Reviewed by AgentHive pipeline test v2.`
+- Resolution: Changed comment to exact required wording: `# Reviewed by AgentHive pipeline test v2.` at top of RELEASE_PREP.md
+- Lesson: Follow exact rejection feedback for wording — minor variations break requirements
