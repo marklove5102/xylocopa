@@ -2150,6 +2150,16 @@ Here are today's completed tasks:
                 validate_transition(task.status, TaskStatus.FAILED)
             except Exception:
                 logger.warning("Task %s: invalid transition %s -> FAILED (stale merge)", task.id, task.status.value)
+            # Stop linked agent if still running/idle
+            if task.agent_id:
+                agent = db.get(Agent, task.agent_id)
+                if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
+                    agent.status = AgentStatus.STOPPED
+                    if agent.tmux_pane:
+                        import subprocess as _sp
+                        _sp.run(["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
+                                capture_output=True, timeout=5)
+                        agent.tmux_pane = None
             task.status = TaskStatus.FAILED
             task.completed_at = _utcnow()
             task.error_message = "Stale merge task — please re-approve"
