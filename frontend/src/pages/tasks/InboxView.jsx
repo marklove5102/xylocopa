@@ -1,9 +1,12 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import InboxCard from "../../components/cards/InboxCard";
 import { dispatchTask, cancelTask } from "../../lib/api";
 
 export default function InboxView({ tasks, loading, onRefresh }) {
+  const navigate = useNavigate();
   const [error, setError] = useState(null);
+  const [loadingIds, setLoadingIds] = useState(new Set());
 
   const sorted = [...tasks].sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
@@ -12,21 +15,27 @@ export default function InboxView({ tasks, loading, onRefresh }) {
 
   const handleDispatch = async (task) => {
     setError(null);
+    setLoadingIds((s) => new Set(s).add(task.id));
     try {
       await dispatchTask(task.id);
       onRefresh?.();
     } catch (err) {
       setError(err.message || "Dispatch failed");
+    } finally {
+      setLoadingIds((s) => { const n = new Set(s); n.delete(task.id); return n; });
     }
   };
 
   const handleDelete = async (task) => {
     setError(null);
+    setLoadingIds((s) => new Set(s).add(task.id));
     try {
       await cancelTask(task.id);
       onRefresh?.();
     } catch (err) {
       setError(err.message || "Delete failed");
+    } finally {
+      setLoadingIds((s) => { const n = new Set(s); n.delete(task.id); return n; });
     }
   };
 
@@ -56,7 +65,8 @@ export default function InboxView({ tasks, loading, onRefresh }) {
           task={task}
           onDispatch={handleDispatch}
           onDelete={handleDelete}
-          onEdit={(t) => window.location.assign(`/tasks/${t.id}`)}
+          loading={loadingIds.has(task.id)}
+          onEdit={(t) => navigate(`/tasks/${t.id}`)}
         />
       ))}
     </div>

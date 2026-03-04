@@ -29,13 +29,18 @@ export default function ReviewView({ tasks, loading, onRefresh }) {
     }
   };
 
+  const [rejectingIds, setRejectingIds] = useState(new Set());
+
   const handleReject = async (task, reason) => {
     setError(null);
+    setRejectingIds((s) => new Set(s).add(task.id));
     try {
       await rejectTask(task.id, reason);
       onRefresh?.();
     } catch (err) {
       setError(err.message || "Reject failed");
+    } finally {
+      setRejectingIds((s) => { const n = new Set(s); n.delete(task.id); return n; });
     }
   };
 
@@ -74,6 +79,7 @@ export default function ReviewView({ tasks, loading, onRefresh }) {
           key={task.id}
           task={task}
           merging={mergingIds.has(task.id)}
+          rejecting={rejectingIds.has(task.id)}
           onApprove={handleApprove}
           onReject={handleReject}
           onRetryMerge={handleApprove}

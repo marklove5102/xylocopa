@@ -49,8 +49,8 @@ export default function TasksPage({ theme, onToggleTheme }) {
         DONE: data.DONE ?? 0,
         DONE_COMPLETED: data.DONE_COMPLETED ?? 0,
       });
-    } catch {
-      // silently fail count refresh
+    } catch (err) {
+      console.warn("Failed to load task counts", err);
     }
   }, []);
 
@@ -61,8 +61,8 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const limit = perspective === "DONE" ? 50 : 100;
       const data = await fetchTasksV2(`statuses=${statuses}&limit=${limit}`);
       setTasks(Array.isArray(data) ? data : []);
-    } catch {
-      // keep stale data on error
+    } catch (err) {
+      console.warn("Failed to load tasks", err);
     } finally {
       setLoading(false);
     }
@@ -81,8 +81,11 @@ export default function TasksPage({ theme, onToggleTheme }) {
     setLoading(true);
     loadTasks();
     loadCounts();
-    const interval = POLL_INTERVALS[perspective] || 5000;
-    pollRef.current = setInterval(loadTasks, interval);
+    // DONE perspective contains terminal states — no need to poll repeatedly
+    if (perspective !== "DONE") {
+      const interval = POLL_INTERVALS[perspective] || 5000;
+      pollRef.current = setInterval(loadTasks, interval);
+    }
     countPollRef.current = setInterval(loadCounts, 10000);
     return () => {
       clearInterval(pollRef.current);
@@ -94,6 +97,34 @@ export default function TasksPage({ theme, onToggleTheme }) {
     loadTasks();
     loadCounts();
   }, [loadTasks, loadCounts]);
+
+  // Double-tap nav: switch to Review tab and scroll to first review task
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.tab !== "tasks") return;
+      if (perspective !== "REVIEW") {
+        setPerspective("REVIEW");
+        // Wait for re-render then scroll
+        setTimeout(() => {
+          const el = document.querySelector("[data-review-task]");
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("ring-2", "ring-cyan-400");
+            setTimeout(() => el.classList.remove("ring-2", "ring-cyan-400"), 1500);
+          }
+        }, 300);
+      } else {
+        const el = document.querySelector("[data-review-task]");
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("ring-2", "ring-cyan-400");
+          setTimeout(() => el.classList.remove("ring-2", "ring-cyan-400"), 1500);
+        }
+      }
+    };
+    window.addEventListener("nav-scroll-to-unread", handler);
+    return () => window.removeEventListener("nav-scroll-to-unread", handler);
+  }, [perspective, setPerspective]);
 
   // Notification toggle
   const [taskNotifsOn, setTaskNotifsOn] = useState(() => isTaskNotificationsEnabled());
@@ -151,7 +182,8 @@ export default function TasksPage({ theme, onToggleTheme }) {
                 </svg>
               ) : (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.143 17.082a24.248 24.248 0 003.718.17M3.1 9.05A6 6 0 0112 3c1.075 0 2.09.283 2.965.78M17.982 13.5A8.97 8.97 0 0018 9.75V9M3.53 3.53l16.97 16.97M6.268 6.268A5.973 5.973 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m.857 0a3 3 0 005.714 0" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17H5l1.405-1.405A2.032 2.032 0 007 14.158V11a5.002 5.002 0 014-4.9V6a1 1 0 112 0v.1a5 5 0 014 4.9v3.159c0 .538.214 1.055.595 1.436L19 17h-4m-4 0v1a2 2 0 004 0v-1" />
+                  <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" />
                 </svg>
               )}
             </button>

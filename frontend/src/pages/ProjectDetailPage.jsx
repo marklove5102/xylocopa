@@ -22,6 +22,7 @@ import {
   discardClaudeMd,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
+import FolderIcon from "../components/FolderIcon";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 import SendLaterPicker from "../components/SendLaterPicker";
@@ -739,15 +740,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     agentTab === "syncing"
       ? agents.filter((a) => a.status === "SYNCING")
       : agentTab === "active"
-        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
-        : agents.filter((a) => a.status === "STOPPED");
+        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING")
+        : agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE");
 
   // Tab counts
   const tabCounts = {
     starred: (sessions || []).filter((s) => s.starred).length,
     syncing: agents.filter((a) => a.status === "SYNCING").length,
-    active: agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING").length,
-    stopped: agents.filter((a) => a.status === "STOPPED").length,
+    active: agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING").length,
+    stopped: agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE").length,
     sessions: sessions != null ? sessions.length : 0,
   };
 
@@ -984,7 +985,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             Projects
           </button>
           <div className="flex items-center gap-3">
-            <BotIcon state={projectBotState(project)} className="w-10 h-10 shrink-0" />
+            <FolderIcon state={projectBotState(project)} className="w-10 h-10 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 {editingName ? (

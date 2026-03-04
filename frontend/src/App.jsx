@@ -1,26 +1,88 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
 import useLongPress from "./hooks/useLongPress";
 import LoginPage from "./pages/LoginPage";
 import ErrorBoundary from "./components/ErrorBoundary";
-
-const ProjectsPage = lazy(() => import("./pages/ProjectsPage"));
-const TrashPage = lazy(() => import("./pages/TrashPage"));
-const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
-const AgentsPage = lazy(() => import("./pages/AgentsPage"));
-const AgentChatPage = lazy(() => import("./pages/AgentChatPage"));
-const TasksPage = lazy(() => import("./pages/TasksPage"));
-const NewPage = lazy(() => import("./pages/NewPage"));
-const MonitorPage = lazy(() => import("./pages/MonitorPage"));
-const GitPage = lazy(() => import("./pages/GitPage"));
-const TaskDetailPage = lazy(() => import("./pages/TaskDetailPage"));
-const NewTaskPage = lazy(() => import("./pages/NewTaskPage"));
 import useTheme from "./hooks/useTheme";
-import { authCheck, clearAuthToken, fetchUnreadCount, fetchClaudeMdPending, getAuthToken } from "./lib/api";
+import { authCheck, clearAuthToken, fetchUnreadCount, fetchClaudeMdPending, fetchTaskCounts, getAuthToken } from "./lib/api";
 import { isPushSupported, setupPushNotifications } from "./lib/pushNotifications";
 import useIdleLock from "./hooks/useIdleLock";
 import usePageVisible from "./hooks/usePageVisible";
 import { MonitorProvider } from "./contexts/MonitorContext";
+
+const MODULE_IMPORT_ERROR_PATTERNS = [
+  "Importing a module script failed",
+  "Failed to fetch dynamically imported module",
+  "error loading dynamically imported module",
+  "Load failed for the module with source",
+];
+const MODULE_RELOAD_KEY = "ah:module-import-reload-attempted";
+
+function isModuleImportError(err) {
+  const msg = String(err?.message || err || "");
+  return MODULE_IMPORT_ERROR_PATTERNS.some((p) => msg.includes(p));
+}
+
+async function clearModuleCachesBestEffort() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch {
+    // Best-effort cleanup only.
+  }
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
+
+function lazyPage(importer) {
+  return lazy(async () => {
+    try {
+      const mod = await importer();
+      try {
+        sessionStorage.removeItem(MODULE_RELOAD_KEY);
+      } catch {
+        // Ignore storage errors.
+      }
+      return mod;
+    } catch (err) {
+      if (isModuleImportError(err)) {
+        let shouldReload = true;
+        try {
+          shouldReload = sessionStorage.getItem(MODULE_RELOAD_KEY) !== "1";
+          if (shouldReload) sessionStorage.setItem(MODULE_RELOAD_KEY, "1");
+        } catch {
+          // Keep shouldReload=true when storage is unavailable.
+        }
+        if (shouldReload) {
+          await clearModuleCachesBestEffort();
+          window.location.reload();
+          return new Promise(() => {});
+        }
+      }
+      throw err;
+    }
+  });
+}
+
+const ProjectsPage = lazyPage(() => import("./pages/ProjectsPage"));
+const TrashPage = lazyPage(() => import("./pages/TrashPage"));
+const ProjectDetailPage = lazyPage(() => import("./pages/ProjectDetailPage"));
+const AgentsPage = lazyPage(() => import("./pages/AgentsPage"));
+const AgentChatPage = lazyPage(() => import("./pages/AgentChatPage"));
+const TasksPage = lazyPage(() => import("./pages/TasksPage"));
+const NewPage = lazyPage(() => import("./pages/NewPage"));
+const MonitorPage = lazyPage(() => import("./pages/MonitorPage"));
+const GitPage = lazyPage(() => import("./pages/GitPage"));
+const TaskDetailPage = lazyPage(() => import("./pages/TaskDetailPage"));
+const NewTaskPage = lazyPage(() => import("./pages/NewTaskPage"));
 
 const tabs = [
   {
@@ -55,6 +117,7 @@ const tabs = [
   },
   {
     to: "/tasks",
+    key: "tasks",
     label: "Tasks",
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -264,7 +327,19 @@ export default function App() {
   const hideNav = location.pathname.match(/^\/agents\/[^/]+$/) || location.pathname.match(/^\/tasks\/[^/]+$/) || location.pathname === "/login";
   const [unread, setUnread] = useState(0);
   const [claudeMdPending, setClaudeMdPending] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
   const visible = usePageVisible();
+  const lastTapRef = useRef({});
+
+  const handleNavDoubleTap = useCallback((key, e) => {
+    const now = Date.now();
+    const prev = lastTapRef.current[key] || 0;
+    lastTapRef.current[key] = now;
+    if (now - prev > 350) return; // not a double-tap
+    lastTapRef.current[key] = 0;
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent("nav-scroll-to-unread", { detail: { tab: key } }));
+  }, []);
 
   useEffect(() => {
     // Only poll unread when not on login page and has a token
@@ -284,6 +359,14 @@ export default function App() {
     });
     poll();
     const id = setInterval(poll, 30000);
+    return () => clearInterval(id);
+  }, [location.pathname, visible]);
+
+  useEffect(() => {
+    if (!visible || location.pathname === "/login" || !getAuthToken()) return;
+    const poll = () => fetchTaskCounts().then((r) => setReviewCount(r.REVIEW ?? 0)).catch(() => {});
+    poll();
+    const id = setInterval(poll, 10000);
     return () => clearInterval(id);
   }, [location.pathname, visible]);
 
@@ -363,7 +446,9 @@ export default function App() {
                   key={tab.to}
                   to={tab.to}
                   replace
-                  onClick={tab.key === "projects" ? (e) => {
+                  onClick={(tab.key === "agents" || tab.key === "tasks") ? (e) => {
+                    handleNavDoubleTap(tab.key, e);
+                  } : tab.key === "projects" ? (e) => {
                     e.preventDefault();
                     // Already on a /projects route → go to list
                     if (location.pathname.startsWith("/projects")) {
@@ -399,6 +484,11 @@ export default function App() {
                   {tab.key === "agents" && unread > 0 && (
                     <span className="absolute top-1.5 left-[calc(50%+6px)] inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
                       {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                  {tab.key === "tasks" && reviewCount > 0 && (
+                    <span className="absolute top-1.5 left-[calc(50%+6px)] inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-none">
+                      {reviewCount > 99 ? "99+" : reviewCount}
                     </span>
                   )}
                   {tab.key === "projects" && claudeMdPending > 0 && (

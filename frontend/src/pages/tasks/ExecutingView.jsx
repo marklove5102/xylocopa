@@ -5,6 +5,7 @@ import { updateTaskV2, cancelTask } from "../../lib/api";
 
 export default function ExecutingView({ tasks, loading, onRefresh }) {
   const [error, setError] = useState(null);
+  const [loadingIds, setLoadingIds] = useState(new Set());
 
   const active = tasks
     .filter((t) => t.status === "EXECUTING")
@@ -19,21 +20,27 @@ export default function ExecutingView({ tasks, loading, onRefresh }) {
 
   const handleCancel = async (task) => {
     setError(null);
+    setLoadingIds((s) => new Set(s).add(task.id));
     try {
       await cancelTask(task.id);
       onRefresh?.();
     } catch (err) {
       setError(err.message || "Cancel failed");
+    } finally {
+      setLoadingIds((s) => { const n = new Set(s); n.delete(task.id); return n; });
     }
   };
 
   const handleDispatchNow = async (task) => {
     setError(null);
+    setLoadingIds((s) => new Set(s).add(task.id));
     try {
       await updateTaskV2(task.id, { priority: 1 });
       onRefresh?.();
     } catch (err) {
       setError(err.message || "Priority update failed");
+    } finally {
+      setLoadingIds((s) => { const n = new Set(s); n.delete(task.id); return n; });
     }
   };
 

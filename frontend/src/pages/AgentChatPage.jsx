@@ -2041,7 +2041,8 @@ export default function AgentChatPage({ theme, onToggleTheme }) {
               >
                 {muted ? (
                   <svg className="w-3.5 h-3.5 text-dim hover:text-cyan-400 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.143 17.082a24.248 24.248 0 003.718.918m-3.718-.918A23.848 23.848 0 013.69 15.772 8.966 8.966 0 016 9.75V9a6 6 0 0112 0v.75m-9.857 7.332a3 3 0 005.714 0M3 3l18 18" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17H5l1.405-1.405A2.032 2.032 0 007 14.158V11a5.002 5.002 0 014-4.9V6a1 1 0 112 0v.1a5 5 0 014 4.9v3.159c0 .538.214 1.055.595 1.436L19 17h-4m-4 0v1a2 2 0 004 0v-1" />
+                    <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" />
                   </svg>
                 ) : (
                   <svg className="w-3.5 h-3.5 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
