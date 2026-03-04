@@ -702,6 +702,32 @@ async def system_storage():
     return await asyncio.get_event_loop().run_in_executor(None, _collect)
 
 
+@app.get("/api/system/orphans/scan")
+async def system_orphan_scan():
+    """Scan for orphaned session JSONL files and output logs."""
+    from orphan_cleanup import scan_orphans
+
+    def _scan():
+        result = scan_orphans()
+        # Strip file lists from response (only return counts/sizes)
+        return {k: v for k, v in result.items()
+                if k not in ("orphan_sessions", "orphan_logs", "empty_dirs")}
+
+    return await asyncio.get_event_loop().run_in_executor(None, _scan)
+
+
+@app.post("/api/system/orphans/clean")
+async def system_orphan_clean():
+    """Scan and delete orphaned files atomically."""
+    from orphan_cleanup import scan_orphans, delete_orphans
+
+    def _clean():
+        scan = scan_orphans()
+        return delete_orphans(scan)
+
+    return await asyncio.get_event_loop().run_in_executor(None, _clean)
+
+
 @app.post("/api/system/restart")
 async def system_restart():
     """Restart the AgentHive server.
@@ -3064,7 +3090,8 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
 
     # Build the claude command in INTERACTIVE mode (no -p, so the user
     # gets the full TUI and can attach via tmux).
-    cmd_parts = [CLAUDE_BIN]
+    cmd_parts = [CLAUDE_BIN,
+                  "--output-format", "stream-json", "--verbose"]
     if skip_permissions:
         cmd_parts.append("--dangerously-skip-permissions")
     if model:
@@ -3836,7 +3863,8 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             import subprocess
             from config import CLAUDE_BIN
 
-            cmd_parts = [CLAUDE_BIN]
+            cmd_parts = [CLAUDE_BIN,
+                          "--output-format", "stream-json", "--verbose"]
             if agent.skip_permissions:
                 cmd_parts.append("--dangerously-skip-permissions")
             if agent.model:
