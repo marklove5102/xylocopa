@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { createAgent, launchTmuxAgent, createProject, createTaskV2, sendMessage, generateWorktreeName, uploadFile } from "../lib/api";
+import { createAgent, launchTmuxAgent, createProject, createTaskV2, sendMessage, generateWorktreeName, uploadFile, dispatchTask } from "../lib/api";
 import { MODEL_OPTIONS } from "../lib/constants";
 import ProjectSelector from "../components/ProjectSelector";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -166,7 +166,6 @@ function NewTaskForm({ showToast, navigate }) {
       const task = await createTaskV2(body);
       if (autoDispatch && project && task.id) {
         try {
-          const { dispatchTask } = await import("../lib/api");
           await dispatchTask(task.id);
         } catch (err) {
           showToast("Created but dispatch failed: " + err.message, "error");

@@ -183,15 +183,17 @@ export default function NewTaskPage() {
 
   // ---- Dismiss (swipe down / backdrop tap) → save to inbox ----
   const dismissClosingRef = useRef(false);
+  const submittingRef = useRef(false);
   const dismiss = async () => {
-    if (dismissClosingRef.current) return;
+    if (dismissClosingRef.current || submittingRef.current) return;
     dismissClosingRef.current = true;
     const hasContent = description.trim() || title.trim() || attachments.some((a) => a.uploadedPath);
     if (hasContent) {
       try {
         const uploaded = attachments.filter((a) => a.uploadedPath);
         const fullDescription = buildDescriptionText(description.trim(), uploaded);
-        const finalTitle = title.trim() || deriveTitle(description);
+        let finalTitle = title.trim() || deriveTitle(description);
+        if (!finalTitle && uploaded.length > 0) finalTitle = "Untitled task";
         await createTaskV2({
           title: finalTitle,
           description: fullDescription || undefined,
@@ -224,8 +226,10 @@ export default function NewTaskPage() {
     const uploaded = attachments.filter((a) => a.uploadedPath);
     const fullDescription = buildDescriptionText(description.trim(), uploaded);
     setSubmitting(true);
+    submittingRef.current = true;
     try {
-      const finalTitle = title.trim() || deriveTitle(description);
+      let finalTitle = title.trim() || deriveTitle(description);
+      if (!finalTitle && uploaded.length > 0) finalTitle = "Untitled task";
       const wtName = worktree === "auto" && description.trim()
         ? await generateWorktreeName(description).catch(() => null) || "auto"
         : worktree;
@@ -274,6 +278,7 @@ export default function NewTaskPage() {
       showToast("Failed: " + err.message, "error");
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 

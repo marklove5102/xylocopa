@@ -36,12 +36,16 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     }
   }, [id]);
 
+  const TERMINAL_STATUSES = new Set(["COMPLETE", "CANCELLED", "FAILED", "TIMEOUT", "REJECTED"]);
+
   useEffect(() => {
     if (!visible) return;
     load();
+    // Don't poll terminal-status tasks — they won't change
+    if (task && TERMINAL_STATUSES.has(task.status)) return;
     pollRef.current = setInterval(load, POLL_INTERVAL);
     return () => clearInterval(pollRef.current);
-  }, [load, visible]);
+  }, [load, visible, task?.status]);
 
   // Suppress notifications for the agent executing this task
   const agentId = task?.agent_id;
@@ -122,7 +126,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
   const dotColor = TASK_STATUS_COLORS[task.status] || "bg-gray-500";
   const textColor = TASK_STATUS_TEXT_COLORS[task.status] || "text-dim";
   const projColor = task.project_name ? projectBadgeColor(task.project_name) : "";
-  const canEdit = task.status === "INBOX" || task.status === "PENDING";
+  const canEdit = task.status === "INBOX";
 
   return (
     <div className="h-full flex flex-col">

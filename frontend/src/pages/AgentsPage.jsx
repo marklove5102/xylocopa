@@ -51,6 +51,8 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
   return (
     <button
       type="button"
+      data-agent-id={agent.id}
+      data-unread={agent.unread_count > 0 ? "1" : undefined}
       onClick={handleClick}
       className={`w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
         selecting && selected ? "ring-1 ring-cyan-500" : ""
@@ -281,14 +283,28 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     return () => clearInterval(pollRef.current);
   }, [load, visible]);
 
+  // Double-tap nav: scroll to first unread agent
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.tab !== "agents") return;
+      const el = document.querySelector("[data-unread='1']");
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-cyan-400");
+      setTimeout(() => el.classList.remove("ring-2", "ring-cyan-400"), 1500);
+    };
+    window.addEventListener("nav-scroll-to-unread", handler);
+    return () => window.removeEventListener("nav-scroll-to-unread", handler);
+  }, []);
+
   const statusFiltered = useMemo(() =>
     filter === "ALL"
       ? agents
       : filter === "SYNCING"
         ? agents.filter((a) => a.status === "SYNCING")
         : filter === "ACTIVE"
-          ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
-          : agents.filter((a) => a.status === "STOPPED"),
+          ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING")
+          : agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE"),
     [agents, filter]);
 
   const filtered = useMemo(() =>
@@ -337,8 +353,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const filterCounts = useMemo(() => ({
     ALL: agents.length,
     SYNCING: agents.filter(a => a.status === "SYNCING").length,
-    ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "SYNCING").length,
-    STOPPED: agents.filter(a => a.status === "STOPPED").length,
+    ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING").length,
+    STOPPED: agents.filter(a => a.status === "STOPPED" || a.status === "IDLE").length,
   }), [agents]);
 
   // Count how many selected agents are stoppable (not already stopped)
@@ -458,7 +474,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
                 </svg>
               ) : (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.143 17.082a24.248 24.248 0 003.718.17M3.1 9.05A6 6 0 0112 3c1.075 0 2.09.283 2.965.78M17.982 13.5A8.97 8.97 0 0018 9.75V9M3.53 3.53l16.97 16.97M6.268 6.268A5.973 5.973 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m.857 0a3 3 0 005.714 0" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17H5l1.405-1.405A2.032 2.032 0 007 14.158V11a5.002 5.002 0 014-4.9V6a1 1 0 112 0v.1a5 5 0 014 4.9v3.159c0 .538.214 1.055.595 1.436L19 17h-4m-4 0v1a2 2 0 004 0v-1" />
+                  <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" />
                 </svg>
               )}
             </button>
