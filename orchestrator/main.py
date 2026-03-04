@@ -2619,7 +2619,11 @@ async def try_task_changes(task_id: str, request: Request, db: Session = Depends
 
 @app.post("/api/v2/tasks/{task_id}/revert-try", response_model=TaskOut)
 async def revert_task_try(task_id: str, request: Request, db: Session = Depends(get_db)):
-    """Revert a previously tried merge — reset main to pre-merge HEAD."""
+    """Revert a previously tried merge — reset main to pre-merge HEAD.
+
+    For non-worktree tasks (no branch_name), creates a backup branch first
+    so the agent's commits are preserved and can be re-tried or approved later.
+    """
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(404, "Task not found")
@@ -2633,6 +2637,16 @@ async def revert_task_try(task_id: str, request: Request, db: Session = Depends(
     gm = getattr(request.app.state, "git_manager", None)
     if not gm:
         raise HTTPException(503, "Git manager not available")
+
+    # Non-worktree task: save agent's commits to a backup branch before resetting
+    if not task.branch_name:
+        backup_branch = f"task/{task.id}/backup"
+        import subprocess
+        subprocess.run(
+            ["git", "branch", "-f", backup_branch, "HEAD"],
+            cwd=proj.path, capture_output=True, timeout=10,
+        )
+        task.branch_name = backup_branch
 
     # Reset to the pre-merge commit
     result = gm.reset_hard(proj.path, task.try_base_commit)
