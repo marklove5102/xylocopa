@@ -1859,7 +1859,13 @@ class AgentDispatcher:
             agent = db.get(Agent, task.agent_id)
             if not agent:
                 # Agent deleted while task was EXECUTING — fail the task
+                try:
+                    from task_state_machine import validate_transition
+                    validate_transition(task.status, TaskStatus.FAILED)
+                except Exception:
+                    logger.warning("Task %s: invalid transition %s -> FAILED (agent deleted)", task.id, task.status.value)
                 task.status = TaskStatus.FAILED
+                task.completed_at = _utcnow()
                 task.error_message = "Agent was deleted while task was executing"
                 db.commit()
                 from websocket import emit_task_update
@@ -1889,7 +1895,13 @@ class AgentDispatcher:
                     task.agent_summary = last_msg.content[:2000] if last_msg.content else None
                 # If agent died without producing any output → FAILED, not REVIEW
                 if not last_msg:
+                    try:
+                        from task_state_machine import validate_transition
+                        validate_transition(task.status, TaskStatus.FAILED)
+                    except Exception:
+                        logger.warning("Task %s: invalid transition %s -> FAILED (no output)", task.id, task.status.value)
                     task.status = TaskStatus.FAILED
+                    task.completed_at = _utcnow()
                     task.error_message = "Agent stopped without producing output"
                     db.commit()
                     from websocket import emit_task_update
@@ -1919,7 +1931,13 @@ class AgentDispatcher:
                     logger.debug("Push notification failed for task %s", task.id)
                 logger.info("Task %s moved to REVIEW (agent %s done)", task.id, agent.id)
             elif agent.status == AgentStatus.ERROR:
+                try:
+                    from task_state_machine import validate_transition
+                    validate_transition(task.status, TaskStatus.FAILED)
+                except Exception:
+                    logger.warning("Task %s: invalid transition %s -> FAILED (agent error)", task.id, task.status.value)
                 task.status = TaskStatus.FAILED
+                task.completed_at = _utcnow()
                 task.error_message = "Agent encountered an error"
                 db.commit()
                 from websocket import emit_task_update
@@ -1937,7 +1955,13 @@ class AgentDispatcher:
             .all()
         )
         for task in stale_merging:
+            try:
+                from task_state_machine import validate_transition
+                validate_transition(task.status, TaskStatus.FAILED)
+            except Exception:
+                logger.warning("Task %s: invalid transition %s -> FAILED (stale merge)", task.id, task.status.value)
             task.status = TaskStatus.FAILED
+            task.completed_at = _utcnow()
             task.error_message = "Stale merge task — please re-approve"
             db.commit()
             from websocket import emit_task_update
@@ -2173,6 +2197,45 @@ class AgentDispatcher:
                 agent.status = post_exec_status
                 # Successful completion — reset stale session retry counter
                 self._stale_session_retries.pop(agent_id, None)
+
+            # Auto-continue after ExitPlanMode in exec mode.
+            # When a non-cli_sync agent calls ExitPlanMode, the CLI
+            # auto-approves (no tmux) and exits.  Create a follow-up
+            # PENDING message so the next dispatch cycle resumes the
+            # agent and executes the plan.
+            if result_meta_json and not agent.cli_sync:
+                try:
+                    _meta = json.loads(result_meta_json)
+                    _has_exit_plan = any(
+                        item.get("type") == "exit_plan_mode"
+                        for item in _meta.get("interactive", [])
+                    )
+                    if _has_exit_plan:
+                        # Guard: don't auto-continue if this exec was
+                        # itself a plan follow-up (prevents infinite loop).
+                        trigger_msg = db.get(Message, info["message_id"])
+                        is_already_followup = (
+                            trigger_msg
+                            and trigger_msg.source == "plan_continue"
+                        )
+                        if not is_already_followup:
+                            follow_up = Message(
+                                agent_id=agent.id,
+                                role=MessageRole.USER,
+                                content=(
+                                    "Plan approved. Proceed with implementation now. "
+                                    "Do not re-plan — execute the plan directly."
+                                ),
+                                status=MessageStatus.PENDING,
+                                source="plan_continue",
+                            )
+                            db.add(follow_up)
+                            logger.info(
+                                "Auto-created plan execution follow-up for agent %s",
+                                agent.id,
+                            )
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
             # Update agent denormalized fields
             preview = (result_text or "")[:200]
