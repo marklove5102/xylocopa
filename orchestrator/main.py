@@ -2666,7 +2666,6 @@ async def get_task_v2(task_id: str, db: Session = Depends(get_db)):
     return TaskDetailOut(
         **TaskOut.model_validate(task).model_dump(),
         retry_context=task.retry_context,
-        review_artifacts=task.review_artifacts,
         conversation=conversation,
     )
 
@@ -3678,7 +3677,7 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
             _task.started_at = datetime.now(timezone.utc)
             _task.worktree_name = worktree if worktree else None
             if worktree:
-                _task.branch_name = _task.branch_name or f"task/{_task.id}/{worktree}"
+                _task.branch_name = _task.branch_name or f"worktree-{worktree}"
 
     # Save the initial prompt as a user message so it shows in the chat
     if prompt:

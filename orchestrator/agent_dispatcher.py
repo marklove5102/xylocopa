@@ -1952,7 +1952,7 @@ Here are today's completed tasks:
         if getattr(task, 'use_worktree', True):
             wt_name = task.worktree_name or f"task-{task.id}"
             task.worktree_name = wt_name
-            branch = f"task/{task.id}/{wt_name}"
+            branch = f"worktree-{wt_name}"
             task.branch_name = branch
         else:
             # Non-worktree: record HEAD so we can revert agent's changes later
@@ -2169,7 +2169,7 @@ Here are today's completed tasks:
                 Agent.is_subagent == True,
                 Agent.name.like("Verify:%"),
                 Agent.task_id.isnot(None),
-                Agent.status.in_([AgentStatus.STOPPED, AgentStatus.ERROR]),
+                Agent.status.in_([AgentStatus.STOPPED, AgentStatus.ERROR, AgentStatus.IDLE]),
             )
             .all()
         )
