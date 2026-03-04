@@ -6,3 +6,7 @@ The write to PROGRESS.md needs your permission. The entry consolidates all of to
 ## 2026-03-04 - FP4: reject retry test
 - Created test_fp4.txt with content: FP4_FIRST_ATTEMPT
 - Straightforward task — no issues
+
+## 2026-03-04 - FP9: inbox direct dispatch
+- Created test_fp9.txt with content: FP9_DIRECT_DISPATCH_OK
+- Straightforward task — no issues
