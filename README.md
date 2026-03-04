@@ -67,11 +67,10 @@ After installation, your home directory will look like this:
 ```
 ~/
 ├── agenthive-main/              <- This repo (orchestrator, frontend, configs)
-│   ├── install.sh               <- One-command installer
-│   ├── run.sh                   <- Launch script
+│   ├── run.sh                   <- Launch script (backend + frontend)
+│   ├── agenthive                <- Management CLI (start/stop/restart/status)
 │   ├── orchestrator/            <- FastAPI backend
 │   ├── frontend/                <- React + Vite frontend
-│   ├── scripts/                 <- Helper scripts (init, add-project, restore)
 │   ├── certs/                   <- Self-signed SSL certificates
 │   ├── project-configs/         <- Project registry (registry.yaml)
 │   ├── data/                    <- SQLite database
@@ -85,24 +84,9 @@ After installation, your home directory will look like this:
 
 `agenthive-main` contains the orchestration system itself. `agenthive-projects` contains the actual project repositories that agents work on. They are kept separate so you can back up, move, or resize them independently.
 
-## Quick Install
+## Installation
 
-Run the automated installer:
-
-```bash
-git clone https://github.com/jyao97/AgentHive.git agenthive-main
-cd agenthive-main
-chmod +x install.sh
-./install.sh
-```
-
-The installer handles everything: system packages, Node.js, Python venv, Claude CLI, SSL certs, `.env` setup, and service startup. It creates `~/agenthive-projects/` automatically.
-
-After installation, open `https://<your-ip>:3000` in a browser.
-
-## Manual Installation
-
-If you prefer to set things up step by step:
+Follow the steps below to set things up:
 
 ### 1. Clone the repository
 
@@ -205,11 +189,15 @@ The frontend dev server proxies `/api` and `/ws` to the backend at `localhost:80
 
 ### 8. Register a project
 
-```bash
-./scripts/add-project.sh my-project https://github.com/user/my-project.git
+Add a project entry to `project-configs/registry.yaml`:
+
+```yaml
+- name: my-project
+  path: /home/YOUR_USERNAME/agenthive-projects/my-project
+  description: My project description
 ```
 
-This clones the repo into `~/agenthive-projects/my-project/`, creates a `CLAUDE.md` template if missing, and registers it in `project-configs/registry.yaml`.
+Then clone the repo into your projects directory and restart the backend.
 
 ### 9. Access the UI
 
@@ -267,12 +255,10 @@ All configuration is in `.env`. Key settings:
 ./run.sh                                      # Start backend
 cd frontend && npm run dev                    # Start frontend (separate terminal)
 
-# Project management
-./scripts/add-project.sh <name> <git-url>     # Register a project
+# Project management — edit project-configs/registry.yaml
 
 # Backup
 ls backups/                                   # List backups
-./scripts/restore-backup.sh <backup-file>     # Restore from backup
 
 # Logs
 tail -f logs/orchestrator.log                 # View backend logs
