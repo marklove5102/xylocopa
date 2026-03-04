@@ -1775,6 +1775,18 @@ class AgentDispatcher:
             task.worktree_name = wt_name
             branch = f"task/{task.id}/{wt_name}"
             task.branch_name = branch
+        else:
+            # Non-worktree: record HEAD so we can revert agent's changes later
+            import subprocess
+            try:
+                head = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=proj.path,
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
+                if head and len(head) >= 7:
+                    task.try_base_commit = head
+            except Exception:
+                pass
 
         model = task.model or proj.default_model or CC_MODEL
         prompt = self._build_task_prompt(task)
