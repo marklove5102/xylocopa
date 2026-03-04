@@ -226,6 +226,8 @@ export const fetchSystemStats = () => request("/api/system/stats");
 export const fetchStorageStats = () => request("/api/system/storage");
 export const fetchTokenUsage = () => request("/api/system/token-usage");
 export const restartServer = () => request("/api/system/restart", { method: "POST" });
+export const scanOrphans = () => request("/api/system/orphans/scan");
+export const cleanOrphans = () => request("/api/system/orphans/clean", { method: "POST" });
 export const fetchProcesses = () => request("/api/processes");
 
 // --- Notification Settings ---

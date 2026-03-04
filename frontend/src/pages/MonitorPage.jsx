@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
+import { scanOrphans, cleanOrphans } from "../lib/api";
 import { useMonitor } from "../contexts/MonitorContext";
 
 const HEALTH_COLORS = {
@@ -164,6 +165,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     refresh, activate, deactivate,
   } = useMonitor();
   const [refreshing, setRefreshing] = useState(false);
+  const [orphanBusy, setOrphanBusy] = useState(false);
+  const [orphanResult, setOrphanResult] = useState(null);
 
   // Activate fast polling while this page is mounted; show cached data
   // immediately, then do a fresh fetch.
@@ -172,6 +175,32 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     refresh();
     return () => deactivate();
   }, [activate, deactivate, refresh]);
+
+  const handleOrphanClean = useCallback(async () => {
+    setOrphanBusy(true);
+    setOrphanResult(null);
+    try {
+      const scan = await scanOrphans();
+      if (scan.total_files === 0) {
+        setOrphanResult({ freed_bytes: 0, message: "No orphans found" });
+        return;
+      }
+      const ok = window.confirm(
+        `Delete ${scan.total_files} orphaned files (${formatBytes(scan.total_bytes)})?\n\n` +
+        `${scan.orphan_session_count} session files (${formatBytes(scan.orphan_session_bytes)})\n` +
+        `${scan.orphan_log_count} log files (${formatBytes(scan.orphan_log_bytes)})\n` +
+        `${scan.empty_dir_count} empty directories`
+      );
+      if (!ok) return;
+      const result = await cleanOrphans();
+      setOrphanResult(result);
+      refresh();
+    } catch (err) {
+      setOrphanResult({ error: err.message || "Failed" });
+    } finally {
+      setOrphanBusy(false);
+    }
+  }, [refresh]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -303,6 +332,27 @@ export default function MonitorPage({ theme, onToggleTheme }) {
 
         {/* Storage */}
         <StorageChart data={storageStats} />
+
+        {/* Orphan Cleanup */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={orphanBusy}
+            onClick={handleOrphanClean}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors disabled:opacity-50"
+          >
+            {orphanBusy ? "Scanning..." : "Clean orphans"}
+          </button>
+          {orphanResult && (
+            <span className="text-xs text-dim">
+              {orphanResult.error
+                ? `Error: ${orphanResult.error}`
+                : orphanResult.message
+                  ? orphanResult.message
+                  : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs)`}
+            </span>
+          )}
+        </div>
 
         {/* Summary Stats */}
         <section className="grid grid-cols-2 gap-3">
