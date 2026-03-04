@@ -399,3 +399,21 @@ Priority-ranked architectural gaps:
 - What: Execute high-priority concurrent test task
 - Resolution: Ran `echo task2_high_priority_done` and verified output
 - Lesson: Straightforward — no issues
+
+### 2026-03-04 | Task: Pipeline test: non-worktree echo | Status: success
+
+- What: Run echo and date commands in non-worktree context
+- Resolution: Executed `echo Pipeline test successful!` (output: "Pipeline test successful!") and `date` (output: "Wed Mar  4 02:22:33 PM PST 2026")
+- Lesson: Straightforward — no issues
+
+### 2026-03-04 | Task: Pipeline A: add test marker file | Status: success
+
+- What: Created marker file for pipeline A test verification
+- Resolution: Created `test_pipeline_marker_a.txt` with content `PIPELINE_A_MARKER_SUCCESS` and committed to master
+- Lesson: Straightforward — no issues
+
+### 2026-03-04 | Task: Concurrent test 1: normal priority | Status: success
+
+- What: Execute normal priority concurrent test task
+- Resolution: Ran `echo task1_normal_priority_done` and verified output
+- Lesson: Straightforward — no issues
