@@ -1,0 +1,117 @@
+"""Scan and delete orphaned session JSONL files and output logs."""
+
+import glob
+import os
+
+from sqlalchemy import text
+
+from config import CLAUDE_HOME
+from database import engine
+
+
+def scan_orphans() -> dict:
+    """Walk ~/.claude/projects/ and /tmp/claude-output-*.log, return orphan
+    file list with sizes.  Does NOT delete anything."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT session_id FROM agents WHERE session_id IS NOT NULL")
+        ).fetchall()
+        live_sessions = {r[0] for r in rows}
+
+        rows = conn.execute(text("SELECT id FROM messages")).fetchall()
+        live_msg_ids = {r[0] for r in rows}
+
+    # 1. Session JSONL files
+    projects_dir = os.path.join(CLAUDE_HOME, "projects")
+    orphan_sessions = []
+    total_sessions = 0
+    if os.path.isdir(projects_dir):
+        for dirpath, _, filenames in os.walk(projects_dir):
+            for fname in filenames:
+                if not fname.endswith(".jsonl"):
+                    continue
+                total_sessions += 1
+                session_id = fname[:-6]
+                if session_id not in live_sessions:
+                    fp = os.path.join(dirpath, fname)
+                    try:
+                        sz = os.path.getsize(fp)
+                    except OSError:
+                        sz = 0
+                    orphan_sessions.append({"path": fp, "size": sz})
+
+    # 2. Output log files in /tmp
+    orphan_logs = []
+    total_logs = 0
+    for log_path in glob.glob("/tmp/claude-output-*.log"):
+        total_logs += 1
+        basename = os.path.basename(log_path)
+        msg_id = basename.replace("claude-output-", "").replace(".log", "")
+        if msg_id not in live_msg_ids:
+            try:
+                sz = os.path.getsize(log_path)
+            except OSError:
+                sz = 0
+            orphan_logs.append({"path": log_path, "size": sz})
+
+    # 3. Empty directories
+    empty_dirs = []
+    if os.path.isdir(projects_dir):
+        for entry in os.listdir(projects_dir):
+            d = os.path.join(projects_dir, entry)
+            if os.path.isdir(d) and not os.listdir(d):
+                empty_dirs.append(d)
+
+    session_bytes = sum(f["size"] for f in orphan_sessions)
+    log_bytes = sum(f["size"] for f in orphan_logs)
+
+    return {
+        "orphan_sessions": orphan_sessions,
+        "orphan_logs": orphan_logs,
+        "empty_dirs": empty_dirs,
+        "orphan_session_count": len(orphan_sessions),
+        "orphan_session_bytes": session_bytes,
+        "orphan_log_count": len(orphan_logs),
+        "orphan_log_bytes": log_bytes,
+        "empty_dir_count": len(empty_dirs),
+        "total_files": len(orphan_sessions) + len(orphan_logs),
+        "total_bytes": session_bytes + log_bytes,
+    }
+
+
+def delete_orphans(scan_result: dict) -> dict:
+    """Delete files from a scan result.  Returns counts + freed bytes."""
+    deleted_sessions = 0
+    deleted_logs = 0
+    deleted_dirs = 0
+    freed = 0
+
+    for f in scan_result.get("orphan_sessions", []):
+        try:
+            os.remove(f["path"])
+            freed += f["size"]
+            deleted_sessions += 1
+        except OSError:
+            pass
+
+    for f in scan_result.get("orphan_logs", []):
+        try:
+            os.remove(f["path"])
+            freed += f["size"]
+            deleted_logs += 1
+        except OSError:
+            pass
+
+    for d in scan_result.get("empty_dirs", []):
+        try:
+            os.rmdir(d)
+            deleted_dirs += 1
+        except OSError:
+            pass
+
+    return {
+        "deleted_sessions": deleted_sessions,
+        "deleted_logs": deleted_logs,
+        "deleted_dirs": deleted_dirs,
+        "freed_bytes": freed,
+    }
