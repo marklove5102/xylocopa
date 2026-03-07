@@ -317,8 +317,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
       : filter === "SYNCING"
         ? agents.filter((a) => a.status === "SYNCING")
         : filter === "ACTIVE"
-          ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING")
-          : agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE"),
+          ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
+          : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
   const filtered = useMemo(() =>
@@ -367,8 +367,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const filterCounts = useMemo(() => ({
     ALL: agents.length,
     SYNCING: agents.filter(a => a.status === "SYNCING").length,
-    ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING").length,
-    STOPPED: agents.filter(a => a.status === "STOPPED" || a.status === "IDLE").length,
+    ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "SYNCING").length,
+    STOPPED: agents.filter(a => a.status === "STOPPED").length,
   }), [agents]);
 
   // Count how many selected agents are stoppable (not already stopped)
