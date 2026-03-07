@@ -57,7 +57,7 @@ import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
-import useWebSocket, { isAgentMuted, setAgentMuted, clearAgentNotified } from "../hooks/useWebSocket";
+import useWebSocket, { isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
 
@@ -1513,10 +1513,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Initial load + clear notification flag for this agent
   useEffect(() => {
     clearAgentNotified(id);
+    registerViewing(id);
     initialLoadDone.current = false;
     setLoading(true);
     loadData();
-    return () => abortRef.current?.abort();
+    return () => { abortRef.current?.abort(); unregisterViewing(id); };
   }, [loadData, id]);
 
   // Polling — faster when executing, pauses when page hidden

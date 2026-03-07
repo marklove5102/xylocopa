@@ -54,6 +54,22 @@ export function setTaskNotificationsEnabled(enabled) {
   localStorage.setItem(TASKS_NOTIF_KEY, enabled ? "1" : "0");
 }
 
+/** Agents currently being viewed (across all panes / tabs).
+ *  Used to suppress notifications instead of checking window.location.pathname
+ *  which returns "/split" in split-screen mode. */
+const _viewingAgents = new Set();
+/** Number of active TasksPage / TaskDetailPage instances viewing tasks. */
+let _viewingTasksCount = 0;
+
+/** Register that a component is viewing this agent (call on mount / id change). */
+export function registerViewing(agentId) { if (agentId) _viewingAgents.add(agentId); }
+/** Unregister viewing (call on unmount / id change cleanup). */
+export function unregisterViewing(agentId) { if (agentId) _viewingAgents.delete(agentId); }
+/** Register a tasks page viewer. */
+export function registerViewingTasks() { _viewingTasksCount++; }
+/** Unregister a tasks page viewer. */
+export function unregisterViewingTasks() { _viewingTasksCount = Math.max(0, _viewingTasksCount - 1); }
+
 /** Tracks which agents have already shown a notification.
  *  Cleared when the user navigates to that agent's chat page. */
 const _notifiedAgents = new Set();
@@ -75,8 +91,8 @@ export function clearAgentNotified(agentId) {
 
 function shouldSuppressNotification(agentId, allowRepeat = false) {
   if (!agentId) return false;
-  // Only suppress if user is actively viewing (tab visible + on agent page)
-  if (window.location.pathname === `/agents/${agentId}` && document.visibilityState === "visible") return true;
+  // Suppress if user is actively viewing this agent in any pane AND tab is visible
+  if (_viewingAgents.has(agentId) && document.visibilityState === "visible") return true;
   if (isAgentMuted(agentId)) return true;
   if (!allowRepeat && _notifiedAgents.has(agentId)) return true;
   return false;
@@ -202,8 +218,8 @@ function showBrowserNotification(event) {
     if (!isTaskNotificationsEnabled()) return;
     const status = d.status;
     if (!status || !["COMPLETE", "FAILED", "TIMEOUT"].includes(status)) return;
-    // Suppress if user is currently on the tasks page and tab is visible
-    if (window.location.pathname.startsWith("/tasks") && document.visibilityState === "visible") return;
+    // Suppress if user is currently viewing tasks in any pane and tab is visible
+    if (_viewingTasksCount > 0 && document.visibilityState === "visible") return;
     const emoji = status === "COMPLETE" ? "\u2705" : "\u274c";
     const title = `${emoji} Task ${status.charAt(0) + status.slice(1).toLowerCase()}`;
     const body = d.title || d.task_id?.slice(0, 8) || "Task update";

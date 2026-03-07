@@ -6,7 +6,7 @@ import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
-import useWebSocket, { isTaskNotificationsEnabled, setTaskNotificationsEnabled } from "../hooks/useWebSocket";
+import useWebSocket, { isTaskNotificationsEnabled, setTaskNotificationsEnabled, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
 import InboxView from "./tasks/InboxView";
 import ExecutingView from "./tasks/ExecutingView";
 import ReviewView from "./tasks/ReviewView";
@@ -79,6 +79,9 @@ export default function TasksPage({ theme, onToggleTheme }) {
     loadTasks();
     loadCounts();
   }, [lastEvent, loadTasks, loadCounts]);
+
+  // Register viewing for notification suppression
+  useEffect(() => { registerViewingTasks(); return () => unregisterViewingTasks(); }, []);
 
   // Load on mount + poll
   useEffect(() => {

@@ -5,7 +5,7 @@ import { TASK_STATUS_COLORS, TASK_STATUS_TEXT_COLORS, projectBadgeColor, modelDi
 import { relativeTime, renderMarkdown } from "../lib/formatters";
 import ProjectSelector from "../components/ProjectSelector";
 import usePageVisible from "../hooks/usePageVisible";
-import useWebSocket from "../hooks/useWebSocket";
+import useWebSocket, { registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
 import { useToast } from "../contexts/ToastContext";
 
 export default function TaskDetailPage({ theme, onToggleTheme }) {
@@ -39,6 +39,9 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
   }, [id]);
 
   const TERMINAL_STATUSES = new Set(["COMPLETE", "CANCELLED", "FAILED", "TIMEOUT", "REJECTED"]);
+
+  // Register viewing for notification suppression
+  useEffect(() => { registerViewingTasks(); return () => unregisterViewingTasks(); }, []);
 
   useEffect(() => {
     if (!visible) return;

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import {
   useNavigate, useLocation, MemoryRouter, Routes, Route, Navigate, NavLink,
+  useNavigate as usePaneNavigate,
   useLocation as usePaneLocation,
   UNSAFE_LocationContext, UNSAFE_NavigationContext, UNSAFE_RouteContext,
 } from "react-router";
@@ -144,7 +145,17 @@ const paneTabs = [
 
 function PaneShell({ theme, onToggleTheme }) {
   const location = usePaneLocation();
+  const paneNav = usePaneNavigate();
   const themeProps = { theme, onToggleTheme };
+
+  // Navigate to another agent within this pane's MemoryRouter
+  const onNavigateAgent = useCallback((agentId) => {
+    paneNav(`/agents/${agentId}`);
+  }, [paneNav]);
+
+  const onCloseChat = useCallback(() => {
+    paneNav("/agents");
+  }, [paneNav]);
 
   // Hide pane nav on detail pages (same logic as main App)
   const hideNav =
@@ -161,7 +172,7 @@ function PaneShell({ theme, onToggleTheme }) {
             <Route path="/projects/trash" element={<TrashPage {...themeProps} />} />
             <Route path="/projects/:name" element={<ProjectDetailPage {...themeProps} />} />
             <Route path="/agents" element={<AgentsPage {...themeProps} />} />
-            <Route path="/agents/:id" element={<AgentChatPage {...themeProps} embedded />} />
+            <Route path="/agents/:id" element={<AgentChatPage {...themeProps} embedded onClose={onCloseChat} onNavigateAgent={onNavigateAgent} />} />
             <Route path="/tasks" element={<TasksPage {...themeProps} />} />
             <Route path="/tasks/:id" element={<TaskDetailPage {...themeProps} />} />
             <Route path="/new" element={<NewPage {...themeProps} />} />
@@ -305,7 +316,7 @@ export default function SplitScreenPage() {
   const handleExit = useCallback(() => navigate(-1), [navigate]);
   const exitBtnDefault = useMemo(() => () => ({
     x: window.innerWidth - 44,
-    y: window.innerHeight - 76,
+    y: window.innerHeight / 2 - 20,
   }), []);
 
   return (
@@ -365,7 +376,7 @@ export default function SplitScreenPage() {
       {/* Mobile floating exit button — draggable */}
       {!isWide && (
         <DraggableFab
-          storageKey="ah:fab-pos-split-exit"
+          storageKey="ah:fab-pos-split-exit-v2"
           defaultPosition={exitBtnDefault}
           onClick={handleExit}
           className="w-8 h-8 flex items-center justify-center rounded-full bg-surface/90 shadow-lg border border-edge text-dim hover:text-heading transition-colors backdrop-blur-sm"
