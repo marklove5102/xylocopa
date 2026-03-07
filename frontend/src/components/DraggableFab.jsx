@@ -13,11 +13,36 @@ function toRB(abs, w, h) {
   return { right: window.innerWidth - abs.x - w, bottom: window.innerHeight - abs.y - h };
 }
 
-function clampRB(rb, w, h) {
+function clampRB(rb, w, h, minBottom = 0) {
   return {
     right: Math.max(0, Math.min(rb.right, window.innerWidth - w)),
-    bottom: Math.max(0, Math.min(rb.bottom, window.innerHeight - h)),
+    bottom: Math.max(minBottom, Math.min(rb.bottom, window.innerHeight - h)),
   };
+}
+
+// Detect the height of fixed/sticky bottom bars (nav bar, input bar)
+function detectBottomBarHeight() {
+  const candidates = document.querySelectorAll("nav, [class*='glass-bar-nav']");
+  let maxH = 0;
+  for (const el of candidates) {
+    const style = window.getComputedStyle(el);
+    if (style.position === "fixed" || style.position === "sticky") {
+      const rect = el.getBoundingClientRect();
+      const fromBottom = window.innerHeight - rect.top;
+      if (fromBottom > 0 && fromBottom < 200) {
+        maxH = Math.max(maxH, fromBottom);
+      }
+    }
+  }
+  const inputBars = document.querySelectorAll("[class*='pointer-events-none'] > [class*='glass-bar-nav']");
+  for (const el of inputBars) {
+    const rect = el.getBoundingClientRect();
+    const fromBottom = window.innerHeight - rect.top;
+    if (fromBottom > 0 && fromBottom < 200) {
+      maxH = Math.max(maxH, fromBottom);
+    }
+  }
+  return maxH;
 }
 
 export default function DraggableFab({ storageKey, defaultPosition, onClick, className, children }) {
@@ -28,6 +53,8 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, cla
   const dragStart = useRef({ x: 0, y: 0 });
   const absStart = useRef({ x: 0, y: 0 });
   const moved = useRef(false);
+  const onClickRef = useRef(onClick);
+  onClickRef.current = onClick;
 
   // Resolve position on mount
   useEffect(() => {
@@ -39,14 +66,12 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, cla
           setRB(clampRB(p, sizeRef.current.w, sizeRef.current.h));
           return;
         }
-        // Migrate old {x, y} format
         if (p.x != null && p.y != null) {
           setRB(clampRB(toRB(p, sizeRef.current.w, sizeRef.current.h), sizeRef.current.w, sizeRef.current.h));
           return;
         }
       }
     } catch { /* use default */ }
-    // Default position is given as {x, y} absolute — convert to {right, bottom}
     const dp = typeof defaultPosition === "function" ? defaultPosition() : defaultPosition;
     setRB(toRB(dp, sizeRef.current.w, sizeRef.current.h));
   }, [storageKey, defaultPosition]);
@@ -81,19 +106,25 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, cla
       if (!moved.current && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
       moved.current = true;
       const abs = { x: absStart.current.x + dx, y: absStart.current.y + dy };
-      setRB(clampRB(toRB(abs, w, h), w, h));
+      const barH = detectBottomBarHeight();
+      const minBottom = barH > 0 ? barH + 8 : 0;
+      setRB(clampRB(toRB(abs, w, h), w, h, minBottom));
     };
 
     const onEnd = () => {
       if (!dragging.current) return;
       dragging.current = false;
       if (moved.current) {
+        // Dragged — save position, do NOT trigger click
         setRB((p) => {
           if (p) {
             try { localStorage.setItem(storageKey, JSON.stringify(p)); } catch { /* ok */ }
           }
           return p;
         });
+      } else {
+        // Not dragged — this was a tap, trigger click
+        onClickRef.current?.();
       }
     };
 
@@ -109,10 +140,11 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, cla
     };
   }, [storageKey]);
 
-  const handleClick = useCallback((e) => {
-    if (moved.current) { e.preventDefault(); e.stopPropagation(); return; }
-    onClick?.(e);
-  }, [onClick]);
+  // Block ALL click events — taps are handled in onEnd above
+  const blockClick = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
   if (!rb) return null;
 
@@ -122,7 +154,7 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, cla
       type="button"
       onMouseDown={onStart}
       onTouchStart={onStart}
-      onClick={handleClick}
+      onClick={blockClick}
       className={className}
       style={{ position: "fixed", right: rb.right, bottom: rb.bottom, zIndex: 50, touchAction: "none" }}
     >
