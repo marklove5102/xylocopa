@@ -125,7 +125,7 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, onL
       clearTimeout(longPressTimer.current); // Cancel long-press on drag
       // Direct DOM manipulation — no React re-render during drag
       if (fabRef.current) {
-        fabRef.current.style.transform = `translate(${dx}px, ${dy}px)`;
+        fabRef.current.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
       }
     };
 
@@ -181,7 +181,7 @@ export default function DraggableFab({ storageKey, defaultPosition, onClick, onL
       onTouchStart={onStart}
       onClick={blockClick}
       className={className}
-      style={{ position: "fixed", right: rb.right, bottom: rb.bottom, zIndex: 50, touchAction: "none", willChange: "transform" }}
+      style={{ position: "fixed", right: rb.right, bottom: rb.bottom, zIndex: 50, touchAction: "none" }}
     >
       {children}
     </button>
