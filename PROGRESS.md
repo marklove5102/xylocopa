@@ -436,3 +436,30 @@ Priority-ranked architectural gaps:
 - What: Execute normal priority concurrent test task
 - Resolution: Ran `echo task3_normal_priority_done` and verified output
 - Lesson: Straightforward — no issues
+
+## 2026-03-06 — Daily Insights
+1. Try/Revert has a multi-task conflict bug: if Task A is tried (merged to main) and then Task B is also tried, reverting Task A via `git reset --hard` silently rolls back Task B's merge too — `try_base_commit` of Task B now points to a dangling intermediate state.
+2. Non-worktree tasks have `try_base_commit` set at agent creation time (`agent_dispatcher.py:1779`), which means the "Try" button never appears in the frontend — only "Revert" shows, creating a semantic mismatch.
+3. `approve_task_v2` endpoint (`main.py:2523-2575`) fails to clear `try_base_commit` after approval; `reject_task_v2` correctly clears it at line 2605 — asymmetry bug.
+4. Global `ToastContext` created (`frontend/src/contexts/ToastContext.jsx`) to replace per-page toast implementations — all pages should use `useToast()` instead of local state.
+5. AgentHive vs OpenClaw differentiators: Try/Revert, Retry-with-context (feeding `agent_summary` to next attempt), and the full REVIEW→MERGING→CONFLICT merge state machine.
+6. PROGRESS.md corruption by auto-summary: LLM was asked to output entire file plus new content, repeatedly truncated history — fix: generate only new section and append programmatically.
+7. `_last_summary_date` was a local variable in dispatcher `run()`, reset on every restart — moved to `SystemConfig` DB table for persistence.
+8. Auto-summary output validation: two guards for (1) conversational refusal markers and (2) output length <60% of original.
+9. Anthropic token usage API (`/v1/oauth/usage`) returns 429 without `User-Agent` header — adding `User-Agent: claude-code/{version}` resolves it.
+10. Token usage polling changed from auto 30s to manual refresh + 120s server-side cache.
+11. Mobile clipboard "operation not supported" root cause: scroll-triggered `touchend` events lack browser "user activation", so `navigator.clipboard.writeText()` fails.
+12. Clipboard fix: track `touchStartY`, skip double-tap if moved >10px (scroll), plus `.catch(() => {})` on all 7 `clipboard.writeText()` call sites.
+13. Claude CLI image metadata text (`[Image: original NxN...]`) leaking into chat UI — `_is_image_metadata()` regex filter added to `_parse_stream_parts` and `_parse_session_turns`.
+14. Orphan session JSONL cleanup: `cleanup_source_session()` added at all 4 orphan-producing code paths (session rotation, stale exhaustion, no-cache fallback, missing file at launch).
+15. `permanently_delete_agent()` was missing session subdirectory and cache cleanup — updated to use `cleanup_source_session()` + `evict_session()`.
+16. Session cascade bug: CWD-based detection without content verification causes agents on same project to adopt each other's sessions — content-based verification (matching first user message) added.
+17. Task time properties redesigned: `scheduled_at` split into `notify_at` (push only) and `dispatch_at` (auto-dispatch to PENDING queue), with DB migration preserving existing data.
+18. `_check_scheduled_tasks` rewritten into two passes: one for `notify_at` (notification) and one for `dispatch_at` (auto-dispatch).
+19. Pydantic `model_fields_set` used to distinguish "field not sent" from "field explicitly set to null" in task update endpoint.
+20. Split-screen uses `MemoryRouter` per pane with `RouterIsolator` wrapper (resetting `UNSAFE_LocationContext`, `UNSAFE_NavigationContext`, `UNSAFE_RouteContext`) to bypass React Router v7 nested router prohibition.
+21. Cross-pane state sync uses `CustomEvent` dispatching: `agent-mute-changed`, `agent-star-changed`, `agent-renamed`, `agents-data-changed`, `projects-data-changed`.
+22. `DraggableFab` uses `{right, bottom}` offsets (not absolute `{x, y}`), adapts on resize; dynamically detects fixed/sticky bottom bars via DOM measurement for `minBottom` boundary.
+23. Known issue: split-screen `window.location.pathname` always returns `/split` instead of per-pane MemoryRouter path, breaking WS notification suppression logic.
+24. PLANNING state is purely passive — does not auto-spawn agent or generate plan; tasks remain until manually dispatched.
+25. Remaining gaps from Hu article: Plan Mode (propose before execute), closed-loop verification (Verify button spawning sub-agent), failure mode classification with auto-tuning.
