@@ -822,15 +822,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     agentTab === "syncing"
       ? agents.filter((a) => a.status === "SYNCING")
       : agentTab === "active"
-        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING")
-        : agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE");
+        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
+        : agents.filter((a) => a.status === "STOPPED");
 
   // Tab counts
   const tabCounts = {
     starred: (sessions || []).filter((s) => s.starred).length,
     syncing: agents.filter((a) => a.status === "SYNCING").length,
-    active: agents.filter((a) => a.status !== "STOPPED" && a.status !== "IDLE" && a.status !== "SYNCING").length,
-    stopped: agents.filter((a) => a.status === "STOPPED" || a.status === "IDLE").length,
+    active: agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING").length,
+    stopped: agents.filter((a) => a.status === "STOPPED").length,
     sessions: sessions != null ? sessions.length : 0,
   };
 
