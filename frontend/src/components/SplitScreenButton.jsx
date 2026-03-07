@@ -4,7 +4,7 @@ import DraggableFab from "./DraggableFab";
 
 const defaultPos = () => ({
   x: window.innerWidth - 64,
-  y: window.innerHeight - 80,
+  y: window.innerHeight - 140,
 });
 
 export default function SplitScreenButton() {
@@ -20,7 +20,7 @@ export default function SplitScreenButton() {
 
   return (
     <DraggableFab
-      storageKey="ah:fab-pos-split-enter"
+      storageKey="ah:fab-pos-split-enter-v2"
       defaultPosition={defaultPos}
       onClick={handleClick}
       className="w-11 h-11 flex items-center justify-center rounded-full bg-surface shadow-lg border border-edge text-dim hover:text-cyan-400 hover:border-cyan-500/50 transition-all hover:shadow-cyan-500/10"
