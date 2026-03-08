@@ -2447,6 +2447,7 @@ Here are the day's conversations (with timestamps):
             self._cancel_sync_task(agent.id)
             self._cancel_launch_task(agent.id)
             self._stale_session_retries.pop(agent.id, None)
+            self._syncing_no_pane_retries.pop(agent.id, None)
             self._known_subagents.pop(agent.id, None)
 
         if emit:
@@ -2463,6 +2464,7 @@ Here are the day's conversations (with timestamps):
                 self.stop_agent_cleanup(
                     db, sub, reason,
                     emit=emit, add_message=False,
+                    fail_executing=fail_executing, fail_reason=fail_reason,
                     cancel_tasks=True, cascade_subagents=False,
                 )
 
@@ -2771,6 +2773,7 @@ Here are the day's conversations (with timestamps):
                     continue
                 TaskStateMachine.transition(task, TaskStatus.REVIEW)
                 # Stop agent — it has finished its task
+                saved_pane = agent.tmux_pane  # save before stop clears it
                 self.stop_agent_cleanup(
                     db, agent, "",
                     add_message=False, cancel_tasks=False, emit=False,
@@ -2785,7 +2788,7 @@ Here are the day's conversations (with timestamps):
                 # Send push notification (suppress if user is viewing the agent or tasks notifications off)
                 try:
                     from push import send_push_notification, is_notification_enabled
-                    if is_notification_enabled("tasks") and not self._is_agent_in_use(agent.id, agent.tmux_pane):
+                    if is_notification_enabled("tasks") and not self._is_agent_in_use(agent.id, saved_pane):
                         send_push_notification(
                             "Task Ready for Review",
                             task.title[:60],
@@ -2813,7 +2816,6 @@ Here are the day's conversations (with timestamps):
             .all()
         )
         for task in stale_merging:
-            TaskStateMachine.transition(task, TaskStatus.FAILED)
             # Stop linked agent if still running/idle
             if task.agent_id:
                 agent = db.get(Agent, task.agent_id)
