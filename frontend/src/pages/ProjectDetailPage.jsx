@@ -32,14 +32,16 @@ import WaveformVisualizer from "../components/WaveformVisualizer";
 import SendLaterPicker from "../components/SendLaterPicker";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
-import { relativeTime } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName } from "../lib/constants";
+import { relativeTime, TIME_SHORT } from "../lib/formatters";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName, agentBotState } from "../lib/constants";
 import FilterTabs from "../components/FilterTabs";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import ClaudeMdDiffModal from "../components/ClaudeMdDiffModal";
 import useWebSocket from "../hooks/useWebSocket";
 import usePageVisible from "../hooks/usePageVisible";
+import { useStreamingAgents } from "../hooks/useStreamingAgents";
+import { useToast } from "../contexts/ToastContext";
 
 const AGENT_TABS = [
   { key: "starred", label: "Starred" },
@@ -56,12 +58,6 @@ function projectBotState(proj) {
   return "idle";
 }
 
-function agentBotState(status) {
-  if (status === "EXECUTING" || status === "SYNCING") return "running";
-  if (status === "ERROR") return "error";
-  if (status === "IDLE") return "completed";
-  return "idle";
-}
 
 function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isStreaming }) {
   const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
@@ -409,8 +405,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [dragOver, setDragOver] = useState(false);
   const dragCountRef = useRef(0);
   const fileInputRef = useRef(null);
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
+  const toast = useToast();
   const textareaRef = useRef(null);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -426,61 +421,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Track which agents are actively streaming via WebSocket events + API is_generating
   const { lastEvent } = useWebSocket();
-  const [streamingAgents, setStreamingAgents] = useState(new Set());
-
-  useEffect(() => {
-    if (!lastEvent) return;
-    if (lastEvent.type === "agent_stream" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      setStreamingAgents((prev) => {
-        if (prev.has(aid)) return prev;
-        const next = new Set(prev);
-        next.add(aid);
-        return next;
-      });
-    }
-    // Deterministic end signal from backend
-    if (lastEvent.type === "agent_stream_end" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      setStreamingAgents((prev) => {
-        if (!prev.has(aid)) return prev;
-        const next = new Set(prev);
-        next.delete(aid);
-        return next;
-      });
-    }
-    if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      const s = lastEvent.data.status;
-      if (s !== "EXECUTING" && s !== "SYNCING") {
-        setStreamingAgents((prev) => {
-          if (!prev.has(aid)) return prev;
-          const next = new Set(prev);
-          next.delete(aid);
-          return next;
-        });
-      }
-    }
-  }, [lastEvent]);
-
-  // Seed streaming state from API is_generating on poll
-  useEffect(() => {
-    if (!agents.length) return;
-    setStreamingAgents((prev) => {
-      const apiGenerating = new Set(agents.filter((a) => a.is_generating).map((a) => a.id));
-      const next = new Set([...prev, ...apiGenerating]);
-      for (const aid of prev) {
-        if (!apiGenerating.has(aid)) {
-          const ag = agents.find((a) => a.id === aid);
-          if (!ag || (ag.status !== "EXECUTING" && ag.status !== "SYNCING")) {
-            next.delete(aid);
-          }
-        }
-      }
-      if (next.size === prev.size && [...next].every((a) => prev.has(a))) return prev;
-      return next;
-    });
-  }, [agents]);
+  const streamingAgents = useStreamingAgents(agents, lastEvent);
 
   // Rename
   const [editingName, setEditingName] = useState(false);
@@ -496,10 +437,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [deleting, setDeleting] = useState(false);
 
   const showToast = useCallback((message, type = "success") => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
-  }, []);
+    if (type === "error") toast.error(message);
+    else toast.success(message);
+  }, [toast]);
 
   // Auto-select name input when rename starts (useEffect runs after DOM commit)
   useEffect(() => {
@@ -813,10 +753,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     return () => clearInterval(timer);
   }, [visible, agentTab, name]);
 
-  useEffect(() => {
-    return () => { if (toastTimer.current) clearTimeout(toastTimer.current); };
-  }, []);
-
   // Filter agents by tab
   const filtered =
     agentTab === "syncing"
@@ -970,7 +906,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       clearAllDrafts();
       clearAttachments();
       const when = new Date(scheduledAt);
-      showToast(`Scheduled for ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+      showToast(`Scheduled for ${when.toLocaleTimeString([], TIME_SHORT)}`);
       navigate(`/agents/${agent.id}`);
     } catch (err) {
       showToast("Failed: " + err.message, "error");
@@ -1046,13 +982,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium pointer-events-none safe-area-toast ${toast.type === "error" ? "bg-red-600 text-white" : "bg-cyan-600 text-white"}`}>
-          {toast.message}
-        </div>
-      )}
-
       {/* Fixed Header */}
       <div className="shrink-0 bg-page border-b border-divider px-4 pt-3 pb-3 relative z-10 safe-area-pt">
         <div className="max-w-2xl mx-auto">

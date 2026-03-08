@@ -3,13 +3,15 @@ import { Bell, BellOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchAgents, stopAgent, deleteAgent, scanAgents, searchMessages, markAgentRead, updateNotificationSettings } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName } from "../lib/constants";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName, agentBotState } from "../lib/constants";
 import BotIcon from "../components/BotIcon";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import useWebSocket, { isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
 import usePageVisible from "../hooks/usePageVisible";
+import { useStreamingAgents } from "../hooks/useStreamingAgents";
+import { useToast } from "../contexts/ToastContext";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
@@ -17,14 +19,6 @@ const FILTER_TABS = [
   { key: "ACTIVE", label: "Active" },
   { key: "STOPPED", label: "Stopped" },
 ];
-
-function agentBotState(status) {
-  if (status === "EXECUTING" || status === "SYNCING") return "running";
-  if (status === "ERROR") return "error";
-  if (status === "IDLE") return "completed";
-  if (status === "STOPPED") return "idle";
-  return "idle";
-}
 
 const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle, isStreaming }) {
   const navigate = useNavigate();
@@ -140,80 +134,18 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   // Track which agents are actively streaming via WebSocket events + API is_generating
   const { lastEvent } = useWebSocket();
-  const [streamingAgents, setStreamingAgents] = useState(new Set());
-
-  useEffect(() => {
-    if (!lastEvent) return;
-    if (lastEvent.type === "agent_stream" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      setStreamingAgents((prev) => {
-        if (prev.has(aid)) return prev;
-        const next = new Set(prev);
-        next.add(aid);
-        return next;
-      });
-    }
-    // Deterministic end signal from backend
-    if (lastEvent.type === "agent_stream_end" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      setStreamingAgents((prev) => {
-        if (!prev.has(aid)) return prev;
-        const next = new Set(prev);
-        next.delete(aid);
-        return next;
-      });
-    }
-    // Clear streaming on status change away from active states
-    if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id) {
-      const aid = lastEvent.data.agent_id;
-      const s = lastEvent.data.status;
-      if (s !== "EXECUTING" && s !== "SYNCING") {
-        setStreamingAgents((prev) => {
-          if (!prev.has(aid)) return prev;
-          const next = new Set(prev);
-          next.delete(aid);
-          return next;
-        });
-      }
-    }
-  }, [lastEvent]);
-
-  // Seed streaming state from API is_generating on poll
-  useEffect(() => {
-    if (!agents.length) return;
-    setStreamingAgents((prev) => {
-      const apiGenerating = new Set(agents.filter((a) => a.is_generating).map((a) => a.id));
-      // Merge: keep WS-derived streaming that API hasn't caught yet, add API-derived
-      const next = new Set([...prev, ...apiGenerating]);
-      // Remove agents API says are not generating AND no recent WS stream
-      for (const aid of prev) {
-        if (!apiGenerating.has(aid)) {
-          // Keep if agent is still EXECUTING/SYNCING (WS might be ahead of poll)
-          const ag = agents.find((a) => a.id === aid);
-          if (!ag || (ag.status !== "EXECUTING" && ag.status !== "SYNCING")) {
-            next.delete(aid);
-          }
-        }
-      }
-      if (next.size === prev.size && [...next].every((a) => prev.has(a))) return prev;
-      return next;
-    });
-  }, [agents]);
+  const streamingAgents = useStreamingAgents(agents, lastEvent);
 
   // Multi-select state
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [bulkStopping, setBulkStopping] = useState(false);
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
+  const toast = useToast();
 
   const showToast = useCallback((message, type = "success") => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
-  }, []);
-
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+    if (type === "error") toast.error(message);
+    else toast.success(message);
+  }, [toast]);
 
   // Notification toggle
   const [agentNotifsOn, setAgentNotifsOn] = useState(() => isAgentNotificationsEnabled());
@@ -466,13 +398,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium pointer-events-none safe-area-toast ${toast.type === "error" ? "bg-red-600 text-white" : "bg-cyan-600 text-white"}`}>
-          {toast.message}
-        </div>
-      )}
-
       <PageHeader
         title="Agents"
         theme={theme}

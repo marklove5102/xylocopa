@@ -173,3 +173,19 @@ export const TASK_PERSPECTIVE_TABS = [
   { key: "REVIEW", label: "Review" },
   { key: "DONE", label: "Done" },
 ];
+
+// ---- Agent helpers ----
+
+/** Map agent status to BotIcon visual state. */
+export function agentBotState(status) {
+  if (status === "EXECUTING" || status === "SYNCING") return "running";
+  if (status === "ERROR") return "error";
+  if (status === "IDLE") return "completed";
+  if (status === "STOPPED") return "idle";
+  return "idle";
+}
+
+/** Check if system health object indicates all systems OK. */
+export function isSystemHealthy(health) {
+  return health && health.status === "ok" && health.db === "ok" && health.claude_cli === "ok";
+}

@@ -51,8 +51,9 @@ import {
   POLL_ACTIVE_INTERVAL, POLL_IDLE_INTERVAL, STREAM_TIMEOUT,
   COPY_TOAST_DURATION, ERROR_TOAST_DURATION, TOAST_DURATION,
   ESCAPE_COOLDOWN, LONG_PRESS_DELAY, DOUBLE_TAP_WINDOW,
-  SCROLL_SAVE_DEBOUNCE,
+  SCROLL_SAVE_DEBOUNCE, isSystemHealthy,
 } from "../lib/constants";
+import { DATE_SHORT, TIME_SHORT } from "../lib/formatters";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 import useDraft from "../hooks/useDraft";
@@ -60,6 +61,7 @@ import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
+import { useToast } from "../contexts/ToastContext";
 
 // --- Chat Bubble ---
 
@@ -722,7 +724,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   );
 
   const scheduledTime = isScheduled
-    ? new Date(message.scheduled_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? new Date(message.scheduled_at).toLocaleTimeString([], TIME_SHORT)
     : null;
 
   // Editing UI for scheduled/pending messages
@@ -730,7 +732,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   if (editing) {
     const scheduleLabel = editSchedule
-      ? new Date(editSchedule).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      ? new Date(editSchedule).toLocaleString([], DATE_SHORT)
       : "Set time";
 
     return (
@@ -1411,7 +1413,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState(null);
+  const toastCtx = useToast();
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -1431,14 +1433,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
   const [headerExpanded, setHeaderExpanded] = useState(false);
   const messagesEndRef = useRef(null);
-  const toastTimer = useRef(null);
   const health = useHealthStatus();
 
   const showToast = useCallback((message, type = "success") => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), TOAST_DURATION);
-  }, []);
+    if (type === "error") toastCtx.error(message);
+    else toastCtx.success(message);
+  }, [toastCtx]);
 
   // Load agent + messages with AbortController support.
   // On initial load, errors propagate to console so failures are visible.
@@ -1835,7 +1835,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Cleanup
   useEffect(() => {
     return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
       clearTimeout(streamTimeoutRef.current);
     };
   }, []);
@@ -1884,7 +1883,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     try {
       await sendMessage(id, content, { queue: true, scheduled_at: scheduledAt });
       const when = new Date(scheduledAt);
-      const timeStr = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const timeStr = when.toLocaleTimeString([], TIME_SHORT);
       showToast(`Scheduled for ${timeStr}`);
       loadData();
     } catch (err) {
@@ -2013,7 +2012,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     );
   }
 
-  const isHealthy = health && health.status === "ok" && health.db === "ok" && health.claude_cli === "ok";
+  const isHealthy = isSystemHealthy(health);
   const healthChipCls = health === null
     ? "bg-gray-500/15 text-gray-400"
     : isHealthy
@@ -2039,12 +2038,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium pointer-events-none safe-area-toast ${toast.type === "error" ? "bg-red-600 text-white" : "bg-cyan-600 text-white"}`}>
-          {toast.message}
-        </div>
-      )}
 
       {/* Header */}
       <div className={`shrink-0 bg-surface border-b border-divider px-4 ${compactHeader ? "py-1.5" : "py-2"} safe-area-pt relative z-10`}>

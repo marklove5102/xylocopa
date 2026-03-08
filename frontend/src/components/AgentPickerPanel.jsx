@@ -1,15 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchAgents } from "../lib/api";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, agentBotState } from "../lib/constants";
 import { relativeTime } from "../lib/formatters";
 import BotIcon from "./BotIcon";
-
-function agentBotState(status) {
-  if (status === "EXECUTING" || status === "SYNCING") return "running";
-  if (status === "ERROR") return "error";
-  if (status === "IDLE") return "completed";
-  return "idle";
-}
 
 export default function AgentPickerPanel({ onSelect }) {
   const [agents, setAgents] = useState([]);
