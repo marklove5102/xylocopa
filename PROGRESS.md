@@ -437,6 +437,12 @@ Priority-ranked architectural gaps:
 - Resolution: Ran `echo task3_normal_priority_done` and verified output
 - Lesson: Straightforward — no issues
 
+### 2026-03-04 | Task: Race test v2: double dispatch | Status: success
+- What: Fixed TOCTOU race in `dispatch_task_v2` and `_dispatch_pending_tasks` using atomic compare-and-swap (CAS) pattern. Added 5 race condition tests.
+- Fix: `db.query(Task).filter(Task.id == id, Task.status == expected).update(...)` instead of read-modify-write. Returns `rows == 0` when another thread already changed the status.
+- Also: `_create_task_agent` now flushes instead of committing, so the caller can rollback agent+message if the CAS fails.
+- Lesson: **Atomic CAS for SQLite concurrency**: `UPDATE ... WHERE status=:expected` is the correct pattern for SQLite (no row-level locks). The WHERE clause acts as a compare-and-swap — if another transaction changed the status, `rowcount == 0` and the caller knows to abort. Always flush (not commit) in sub-functions when the caller needs atomic multi-step operations.
+
 ## 2026-03-06 — Daily Insights
 1. Try/Revert has a multi-task conflict bug: if Task A is tried (merged to main) and then Task B is also tried, reverting Task A via `git reset --hard` silently rolls back Task B's merge too — `try_base_commit` of Task B now points to a dangling intermediate state.
 2. Non-worktree tasks have `try_base_commit` set at agent creation time (`agent_dispatcher.py:1779`), which means the "Try" button never appears in the frontend — only "Revert" shows, creating a semantic mismatch.
