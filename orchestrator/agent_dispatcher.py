@@ -26,6 +26,7 @@ from models import (
     Task,
     TaskStatus,
 )
+from task_state import TaskStateMachine
 from session_cache import (
     session_source_dir,
     cache_session,
@@ -232,6 +233,10 @@ def _merge_interactive_meta(db_meta_json: str | None, new_meta: dict | None) -> 
 
     return json.dumps(merged)
 
+
+# Marker embedded in _build_agent_prompt output — sync loop uses this to skip
+# wrapped prompts (which are already stored as the original user message).
+_AGENTHIVE_PROMPT_MARKER = "<!-- agenthive-prompt -->"
 
 # Image metadata injected by Claude Code's Read tool — internal only, hide from UI
 _IMAGE_META_RE = re.compile(
@@ -2024,6 +2029,57 @@ class AgentDispatcher:
         evict_session(session_id, project_path, worktree)
         cleanup_source_session(session_id, project_path, worktree)
 
+    def _clear_agent_session(
+        self,
+        db,
+        agent: Agent,
+        *,
+        reason: str = "",
+        emit: bool = True,
+        add_message: bool = True,
+    ):
+        """Clear agent's session_id with consistent notification.
+
+        Centralises the session_id = None pattern so every call site
+        gets a system message and a WebSocket emit by default.
+        """
+        if not agent.session_id:
+            return
+        agent.session_id = None
+        if add_message and reason:
+            db.add(Message(
+                agent_id=agent.id,
+                role=MessageRole.SYSTEM,
+                content=f"Session ended: {reason}",
+                status=MessageStatus.COMPLETED,
+            ))
+        if emit:
+            from websocket import emit_agent_update
+            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+
+    def _clear_agent_pane(
+        self,
+        db,
+        agent: Agent,
+        *,
+        kill_tmux: bool = True,
+    ):
+        """Clear agent's tmux pane reference with optional session kill.
+
+        When *kill_tmux* is True (default), kills the ``ah-{id[:8]}``
+        tmux session before clearing the reference.  Pass False when
+        the pane is already dead or is being transferred to a new agent.
+        """
+        if not agent.tmux_pane:
+            return
+        if kill_tmux:
+            import subprocess as _sp
+            _sp.run(
+                ["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
+                capture_output=True, timeout=5,
+            )
+        agent.tmux_pane = None
+
     def _refresh_pane_attached(self):
         """Check which tmux panes have a human client attached."""
         import subprocess as sp
@@ -2311,6 +2367,107 @@ Here are the day's conversations (with timestamps):
         except Exception:
             logger.warning("Failed to schedule WebSocket emit", exc_info=True)
 
+    def _fail_message(self, msg: Message, reason: str, *, emit: bool = True):
+        """Mark a message as FAILED with a reason and optional WebSocket emit."""
+        msg.status = MessageStatus.FAILED
+        msg.error_message = reason
+        msg.completed_at = _utcnow()
+        if emit:
+            from websocket import emit_message_update
+            self._emit(emit_message_update(msg.agent_id, msg.id, "FAILED",
+                                           error_message=reason))
+
+    def _fail_pending_messages(self, db: Session, agent_id: str, reason: str):
+        """Fail all PENDING/EXECUTING messages for an agent."""
+        pending = db.query(Message).filter(
+            Message.agent_id == agent_id,
+            Message.status.in_([MessageStatus.PENDING, MessageStatus.EXECUTING]),
+        ).all()
+        for m in pending:
+            self._fail_message(m, reason)
+
+    def stop_agent_cleanup(
+        self,
+        db: Session,
+        agent: Agent,
+        reason: str,
+        *,
+        kill_tmux: bool = True,
+        emit: bool = True,
+        add_message: bool = True,
+        fail_executing: bool = False,
+        fail_reason: str | None = None,
+        cancel_tasks: bool = True,
+        cascade_subagents: bool = False,
+    ) -> bool:
+        """Centralized agent stop — sets STOPPED and performs cleanup.
+
+        Returns True if the agent was actually stopped, False if already
+        STOPPED/ERROR.
+
+        Args:
+            db: Active SQLAlchemy session (caller is responsible for commit).
+            agent: Agent instance to stop.
+            reason: Human-readable reason (used for system message content).
+            kill_tmux: Kill the agent's tmux session if it has a pane.
+            emit: Emit a WebSocket agent-update event.
+            add_message: Add a system message with the reason text.
+            fail_executing: Mark EXECUTING messages as FAILED.
+            fail_reason: Error message for failed EXECUTING messages
+                         (defaults to reason if not provided).
+            cancel_tasks: Cancel dispatcher sync/launch tasks and clear
+                          retry state for this agent.
+            cascade_subagents: Also stop child subagents (is_subagent=True).
+        """
+        if agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
+            return False
+
+        # Kill tmux + clear pane
+        self._clear_agent_pane(db, agent, kill_tmux=kill_tmux)
+
+        agent.status = AgentStatus.STOPPED
+
+        if fail_executing:
+            executing_msgs = db.query(Message).filter(
+                Message.agent_id == agent.id,
+                Message.status == MessageStatus.EXECUTING,
+            ).all()
+            for m in executing_msgs:
+                self._fail_message(m, fail_reason or reason)
+
+        if add_message:
+            db.add(Message(
+                agent_id=agent.id,
+                role=MessageRole.SYSTEM,
+                content=reason,
+                status=MessageStatus.COMPLETED,
+            ))
+
+        if cancel_tasks:
+            self._cancel_sync_task(agent.id)
+            self._cancel_launch_task(agent.id)
+            self._stale_session_retries.pop(agent.id, None)
+            self._known_subagents.pop(agent.id, None)
+
+        if emit:
+            from websocket import emit_agent_update
+            self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
+
+        if cascade_subagents:
+            child_subs = db.query(Agent).filter(
+                Agent.parent_id == agent.id,
+                Agent.is_subagent == True,  # noqa: E712
+                Agent.status != AgentStatus.STOPPED,
+            ).all()
+            for sub in child_subs:
+                self.stop_agent_cleanup(
+                    db, sub, reason,
+                    emit=emit, add_message=False,
+                    cancel_tasks=True, cascade_subagents=False,
+                )
+
+        return True
+
     def _next_generation_id(self, agent_id: str) -> int:
         """Return the next monotonic generation ID for an agent."""
         gid = self._generation_ids.get(agent_id, 0) + 1
@@ -2562,13 +2719,7 @@ Here are the day's conversations (with timestamps):
             agent = db.get(Agent, task.agent_id)
             if not agent:
                 # Agent deleted while task was EXECUTING — fail the task
-                try:
-                    from task_state_machine import validate_transition
-                    validate_transition(task.status, TaskStatus.FAILED)
-                except Exception:
-                    logger.warning("Task %s: invalid transition %s -> FAILED (agent deleted)", task.id, task.status.value)
-                task.status = TaskStatus.FAILED
-                task.completed_at = _utcnow()
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Agent was deleted while task was executing"
                 db.commit()
                 from websocket import emit_task_update
@@ -2608,13 +2759,7 @@ Here are the day's conversations (with timestamps):
                             logger.debug("Failed to store task-completion insight for task %s", task.id, exc_info=True)
                 # If agent died without producing any output → FAILED, not REVIEW
                 if not last_msg:
-                    try:
-                        from task_state_machine import validate_transition
-                        validate_transition(task.status, TaskStatus.FAILED)
-                    except Exception:
-                        logger.warning("Task %s: invalid transition %s -> FAILED (no output)", task.id, task.status.value)
-                    task.status = TaskStatus.FAILED
-                    task.completed_at = _utcnow()
+                    TaskStateMachine.transition(task, TaskStatus.FAILED)
                     task.error_message = "Agent stopped without producing output"
                     db.commit()
                     from websocket import emit_task_update
@@ -2624,15 +2769,12 @@ Here are the day's conversations (with timestamps):
                     ))
                     logger.info("Task %s FAILED (agent %s died without output)", task.id, agent.id)
                     continue
-                task.status = TaskStatus.REVIEW
+                TaskStateMachine.transition(task, TaskStatus.REVIEW)
                 # Stop agent — it has finished its task
-                if agent.status != AgentStatus.STOPPED:
-                    agent.status = AgentStatus.STOPPED
-                    if agent.tmux_pane:
-                        import subprocess as _sp
-                        _sp.run(["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
-                                capture_output=True, timeout=5)
-                        agent.tmux_pane = None
+                self.stop_agent_cleanup(
+                    db, agent, "",
+                    add_message=False, cancel_tasks=False, emit=False,
+                )
                 db.commit()
                 from websocket import emit_task_update, emit_agent_update
                 self._emit(emit_task_update(
@@ -2653,13 +2795,7 @@ Here are the day's conversations (with timestamps):
                     logger.warning("Push notification failed for task %s", task.id, exc_info=True)
                 logger.info("Task %s moved to REVIEW (agent %s stopped)", task.id, agent.id)
             elif agent.status == AgentStatus.ERROR:
-                try:
-                    from task_state_machine import validate_transition
-                    validate_transition(task.status, TaskStatus.FAILED)
-                except Exception:
-                    logger.warning("Task %s: invalid transition %s -> FAILED (agent error)", task.id, task.status.value)
-                task.status = TaskStatus.FAILED
-                task.completed_at = _utcnow()
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Agent encountered an error"
                 db.commit()
                 from websocket import emit_task_update
@@ -2677,35 +2813,27 @@ Here are the day's conversations (with timestamps):
             .all()
         )
         for task in stale_merging:
-            try:
-                from task_state_machine import validate_transition
-                validate_transition(task.status, TaskStatus.FAILED)
-            except Exception:
-                logger.warning("Task %s: invalid transition %s -> FAILED (stale merge)", task.id, task.status.value)
+            TaskStateMachine.transition(task, TaskStatus.FAILED)
             # Stop linked agent if still running/idle
             if task.agent_id:
                 agent = db.get(Agent, task.agent_id)
-                if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
-                    agent.status = AgentStatus.STOPPED
-                    if agent.tmux_pane:
-                        import subprocess as _sp
-                        _sp.run(["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
-                                capture_output=True, timeout=5)
-                        agent.tmux_pane = None
+                if agent:
+                    self.stop_agent_cleanup(
+                        db, agent, "",
+                        add_message=False, emit=False, cancel_tasks=False,
+                    )
             # Stop verify sub-agents
-            import subprocess as _sp
             for va in (
                 db.query(Agent)
                 .filter(Agent.task_id == task.id, Agent.is_subagent == True, Agent.name.like("Verify:%"))
                 .filter(Agent.status.notin_([AgentStatus.STOPPED, AgentStatus.ERROR]))
                 .all()
             ):
-                va.status = AgentStatus.STOPPED
-                if va.tmux_pane:
-                    _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
-                    va.tmux_pane = None
-            task.status = TaskStatus.FAILED
-            task.completed_at = _utcnow()
+                self.stop_agent_cleanup(
+                    db, va, "",
+                    add_message=False, emit=False, cancel_tasks=False,
+                )
+            TaskStateMachine.transition(task, TaskStatus.FAILED)
             task.error_message = "Stale merge task — please re-approve"
             db.commit()
             from websocket import emit_task_update
@@ -2880,12 +3008,7 @@ Here are the day's conversations (with timestamps):
                 self.worker_mgr.stop_worker(info["pid_str"])
                 message = db.get(Message, info["message_id"])
                 if message and message.status == MessageStatus.EXECUTING:
-                    message.status = MessageStatus.FAILED
-                    message.error_message = "Agent stopped by user"
-                    message.completed_at = _utcnow()
-                    from websocket import emit_message_update
-                    self._emit(emit_message_update(agent_id, message.id, "FAILED",
-                                                   error_message=message.error_message))
+                    self._fail_message(message, "Agent stopped by user")
                 done_agents.append(agent_id)
                 continue
 
@@ -2962,7 +3085,10 @@ Here are the day's conversations (with timestamps):
                         project.path if project else None,
                         agent.worktree, db,
                     )
-                    agent.session_id = None
+                    self._clear_agent_session(
+                        db, agent,
+                        reason="stale session recovery exhausted retries",
+                    )
                     self._stale_session_retries.pop(agent_id, None)
                     # Fall through to normal error handling below
                 else:
@@ -2989,7 +3115,10 @@ Here are the day's conversations (with timestamps):
                             restore_sid, agent.id,
                             project_path, agent.worktree, db,
                         )
-                        agent.session_id = None
+                        self._clear_agent_session(
+                            db, agent,
+                            reason="stale session data unavailable",
+                        )
 
                     if message:
                         message.status = MessageStatus.PENDING
@@ -3394,31 +3523,19 @@ Here are the day's conversations (with timestamps):
 
             # Grace window exhausted — stop the agent
             self._syncing_no_pane_retries.pop(agent.id, None)
-            agent.status = AgentStatus.STOPPED
-            agent.tmux_pane = None
-            db.add(Message(
-                agent_id=agent.id, role=MessageRole.SYSTEM,
-                content="CLI session ended — tmux pane not found",
-                status=MessageStatus.COMPLETED,
-            ))
+            self.stop_agent_cleanup(
+                db, agent, "CLI session ended — tmux pane not found",
+                kill_tmux=False, cancel_tasks=False,
+            )
             # Fail any pending messages
-            pending = db.query(Message).filter(
-                Message.agent_id == agent.id,
-                Message.status == MessageStatus.PENDING,
-            ).all()
-            from websocket import emit_message_update
-            for m in pending:
-                m.status = MessageStatus.FAILED
-                m.error_message = "Agent tmux session no longer exists"
-                self._emit(emit_message_update(agent.id, m.id, "FAILED",
-                                               error_message=m.error_message))
+            self._fail_pending_messages(db, agent.id,
+                                        "Agent tmux session no longer exists")
             # NOTE: removed db.commit() here — it was flushing ALL dirty
             # objects in the session (including harvest changes from step 1),
             # making re-queued messages visible to the dispatch query below
             # and causing same-tick double-dispatch (Bug: duplicate AGENT
             # responses).  The final db.commit() in _tick() handles
             # everything atomically.
-            self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
             logger.info(
                 "Stopped dead SYNCING agent %s — tmux pane gone", agent.id,
             )
@@ -3490,10 +3607,8 @@ Here are the day's conversations (with timestamps):
                 )
                 if count >= self._max_project_ready_failures:
                     agent.status = AgentStatus.ERROR
-                    pending_msg.status = MessageStatus.FAILED
-                    pending_msg.error_message = (
-                        f"Project directory not ready after {count} attempts"
-                    )
+                    reason = f"Project directory not ready after {count} attempts"
+                    self._fail_message(pending_msg, reason)
                     msg = Message(
                         agent_id=agent.id,
                         role=MessageRole.SYSTEM,
@@ -3505,9 +3620,6 @@ Here are the day's conversations (with timestamps):
                     # dirty objects caused double-dispatch.  Let _tick()
                     # commit atomically at the end.
                     self._emit(emit_agent_update(agent.id, "ERROR", agent.project))
-                    from websocket import emit_message_update
-                    self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED",
-                                                   error_message=pending_msg.error_message))
                 continue
 
             # Use --resume with session_id if available.
@@ -3535,7 +3647,11 @@ Here are the day's conversations (with timestamps):
                             resume_session_id, agent.id,
                             project_path, agent.worktree, db,
                         )
-                        agent.session_id = None
+                        self._clear_agent_session(
+                            db, agent,
+                            reason="session missing, starting fresh",
+                            emit=False, add_message=False,
+                        )
                         resume_session_id = None
 
             # Refresh agent from DB to catch concurrent status changes
@@ -3546,22 +3662,12 @@ Here are the day's conversations (with timestamps):
             if agent.id in self._active_execs:
                 continue
 
-            # Build the prompt — session cache handles continuity, no fake history
-            prompt, insights_list = self._build_agent_prompt(
-                agent, project, pending_msg.content,
-                include_history=False, db=db,
+            # Unified preparation: RAG insights + prompt wrapping + agent preview
+            _, prompt, _ = self._prepare_dispatch(
+                db, agent, project, pending_msg.content,
+                existing_message=pending_msg,
+                wrap_prompt=True,
             )
-
-            # Store RAG insights in message metadata for frontend display
-            if insights_list:
-                existing_meta = {}
-                if pending_msg.meta_json:
-                    try:
-                        existing_meta = json.loads(pending_msg.meta_json)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                existing_meta["insights"] = insights_list
-                pending_msg.meta_json = json.dumps(existing_meta)
 
             try:
                 pid_str, output_file = self.worker_mgr.exec_claude_in_agent(
@@ -3602,11 +3708,7 @@ Here are the day's conversations (with timestamps):
                 logger.exception(
                     "Failed to exec claude for agent %s", agent.id
                 )
-                pending_msg.status = MessageStatus.FAILED
-                pending_msg.error_message = "Failed to start claude process"
-                from websocket import emit_message_update
-                self._emit(emit_message_update(agent.id, pending_msg.id, "FAILED",
-                                               error_message=pending_msg.error_message))
+                self._fail_message(pending_msg, "Failed to start claude process")
 
     def _dispatch_tmux_pending(self, db: Session):
         """Send pending messages to SYNCING/STARTING agents via tmux.
@@ -3646,28 +3748,20 @@ Here are the day's conversations (with timestamps):
                     "Tmux pane %s gone for SYNCING agent %s — clearing pane",
                     agent.tmux_pane, agent.id,
                 )
-                agent.tmux_pane = None
+                self._clear_agent_pane(db, agent, kill_tmux=False)
                 # Don't transition to STOPPED here — the sync loop's
                 # liveness check handles that with a grace period.
                 # But we must skip this agent so messages don't pile up.
                 continue
 
-            # Store RAG insights in message metadata for frontend display
+            # Unified preparation: RAG insights + agent preview
             project = db.get(Project, agent.project)
-            if project and due_msg.content:
-                try:
-                    insights_list = query_insights(db, project.name, due_msg.content, limit=10)
-                    if insights_list:
-                        existing_meta = {}
-                        if due_msg.meta_json:
-                            try:
-                                existing_meta = json.loads(due_msg.meta_json)
-                            except (json.JSONDecodeError, ValueError):
-                                pass
-                        existing_meta["insights"] = insights_list
-                        due_msg.meta_json = json.dumps(existing_meta)
-                except Exception:
-                    logger.debug("query_insights failed for tmux dispatch", exc_info=True)
+            if project:
+                self._prepare_dispatch(
+                    db, agent, project, due_msg.content,
+                    existing_message=due_msg,
+                    wrap_prompt=False,
+                )
 
             ok = send_tmux_message(agent.tmux_pane, due_msg.content)
             if ok:
@@ -3681,46 +3775,125 @@ Here are the day's conversations (with timestamps):
                 from websocket import emit_message_update
                 self._emit(emit_message_update(agent.id, due_msg.id, "COMPLETED"))
             else:
-                due_msg.status = MessageStatus.FAILED
-                due_msg.error_message = "Failed to send via tmux"
+                self._fail_message(due_msg, "Failed to send via tmux")
                 logger.warning(
                     "Failed to dispatch pending message %s via tmux for agent %s",
                     due_msg.id, agent.id,
                 )
-                from websocket import emit_message_update
-                self._emit(emit_message_update(agent.id, due_msg.id, "FAILED",
-                                               error_message=due_msg.error_message))
+
+    # ------------------------------------------------------------------
+    # Unified message preparation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_first_user_message(db: Session, agent_id: str) -> bool:
+        """Check whether the agent has any completed/executing user messages."""
+        return db.query(Message.id).filter(
+            Message.agent_id == agent_id,
+            Message.role == MessageRole.USER,
+            Message.status.in_([MessageStatus.COMPLETED, MessageStatus.EXECUTING]),
+        ).first() is None
+
+    def _prepare_dispatch(
+        self,
+        db: Session,
+        agent: Agent,
+        project: Project,
+        content: str,
+        *,
+        existing_message: Message | None = None,
+        source: str | None = "web",
+        wrap_prompt: bool = False,
+        include_history: bool = False,
+    ) -> tuple[Message, str, list[str]]:
+        """Prepare a user message for dispatch.  Single entry point for all
+        message paths — handles RAG insights, metadata, prompt wrapping,
+        and agent preview update.
+
+        Returns ``(message, prompt, insights_list)`` where:
+        - *message*: the DB Message (created or updated, NOT yet committed)
+        - *prompt*: the text to send to Claude (wrapped or raw)
+        - *insights_list*: RAG insights found (may be empty)
+
+        The caller is responsible for:
+        - Setting the final message status (COMPLETED / EXECUTING / PENDING)
+        - Actual delivery (tmux send / subprocess exec)
+        - ``db.commit()``
+        - WebSocket notifications
+        """
+        # 1. RAG insights — only for the first user message
+        insights_list: list[str] = []
+        if content and self._is_first_user_message(db, agent.id):
+            try:
+                insights_list = query_insights(db, project.name, content, limit=10)
+            except Exception:
+                logger.debug("query_insights failed in _prepare_dispatch", exc_info=True)
+
+        # 2. Create or reuse message
+        if existing_message:
+            msg = existing_message
+        else:
+            msg = Message(
+                agent_id=agent.id,
+                role=MessageRole.USER,
+                content=content,
+                source=source,
+            )
+            db.add(msg)
+
+        # 3. Store insights in meta_json
+        if insights_list:
+            existing_meta = {}
+            if msg.meta_json:
+                try:
+                    existing_meta = json.loads(msg.meta_json)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            existing_meta["insights"] = insights_list
+            msg.meta_json = json.dumps(existing_meta)
+
+        # 4. Build prompt (optionally wrapped with project context)
+        prompt = content
+        if wrap_prompt:
+            prompt = self._build_agent_prompt(
+                agent, project, content,
+                include_history=include_history, db=db,
+                insights_list=insights_list,
+            )
+
+        # 5. Update agent preview
+        agent.last_message_preview = content[:200]
+        agent.last_message_at = _utcnow()
+
+        return msg, prompt, insights_list
 
     def _build_agent_prompt(
         self, agent: Agent, project: Project, user_message: str,
         include_history: bool = False, db: Session | None = None,
-    ) -> tuple[str, list[str]]:
-        """Build the prompt sent to claude for an agent message.
-        When include_history=True, injects recent conversation history so context
-        is preserved even when the Claude Code session can't be resumed.
+        insights_list: list[str] | None = None,
+    ) -> str:
+        """Build the wrapped prompt sent to Claude for an agent message.
 
-        Returns (prompt_str, insights_list) where insights_list contains the
-        raw insight strings retrieved from RAG (empty if none found).
+        When *insights_list* is provided, uses it directly instead of
+        querying the DB (avoids duplicate queries when called from
+        ``_prepare_dispatch``).
         """
         history_block = ""
         if include_history and db:
             history_block = self._format_conversation_history(agent, db)
 
-        # Inject relevant insights from FTS5 RAG
+        # Format insights line from pre-computed list
         insights_line = ""
-        insights_list: list[str] = []
-        if db:
-            try:
-                insights_list = query_insights(db, project.name, user_message, limit=10)
-                if insights_list:
-                    items = "\n".join(f"  - {i}" for i in insights_list)
-                    insights_line = (
-                        f"Relevant past insights for this project:\n{items}\n"
-                    )
-            except Exception:
-                logger.debug("query_insights failed for agent prompt", exc_info=True)
+        if insights_list is None:
+            insights_list = []
+        if insights_list:
+            items = "\n".join(f"  - {i}" for i in insights_list)
+            insights_line = (
+                f"Relevant past insights for this project:\n{items}\n"
+            )
 
-        prompt = (
+        return (
+            f"{_AGENTHIVE_PROMPT_MARKER}\n"
             f"You are working in project: {project.display_name}\n"
             f"Project path: {project.path}\n"
             f"\n"
@@ -3731,7 +3904,6 @@ Here are the day's conversations (with timestamps):
             f"If you make code changes, commit with message format: "
             f"[agent-{agent.id}] short description"
         )
-        return prompt, insights_list
 
     def _format_conversation_history(self, agent: Agent, db: Session) -> str:
         """Format recent conversation messages as context for a fresh session."""
@@ -4044,12 +4216,11 @@ Here are the day's conversations (with timestamps):
                             existing_pane_agent.id,
                         )
                         self._cancel_sync_task(existing_pane_agent.id)
-                        existing_pane_agent.status = AgentStatus.STOPPED
-                        existing_pane_agent.tmux_pane = None
+                        self.stop_agent_cleanup(
+                            db, existing_pane_agent, "",
+                            kill_tmux=False, add_message=False, cancel_tasks=False,
+                        )
                         db.flush()
-                        self._emit(emit_agent_update(
-                            existing_pane_agent.id, "STOPPED", proj.name,
-                        ))
 
                 # --- Create new SYNCING agent ---
                 agent_name = "CLI session"
@@ -4187,8 +4358,10 @@ Here are the day's conversations (with timestamps):
                         "Orchestrator agent %s EXECUTING but not tracked — stopping",
                         agent.id,
                     )
-                    agent.status = AgentStatus.STOPPED
-                    self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
+                    self.stop_agent_cleanup(
+                        db, agent, "",
+                        kill_tmux=False, add_message=False, cancel_tasks=False,
+                    )
                 # IDLE/ERROR/STARTING orchestrator agents are fine
                 continue
 
@@ -4212,8 +4385,10 @@ Here are the day's conversations (with timestamps):
                         "CLI agent %s EXECUTING but not tracked — stopping",
                         agent.id,
                     )
-                    agent.status = AgentStatus.STOPPED
-                    self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
+                    self.stop_agent_cleanup(
+                        db, agent, "",
+                        kill_tmux=False, add_message=False, cancel_tasks=False,
+                    )
                 if agent.status == AgentStatus.IDLE:
                     # cli_sync agents should not normally be IDLE (they
                     # should be SYNCING or STOPPED).  If we see one here
@@ -4223,15 +4398,10 @@ Here are the day's conversations (with timestamps):
                             "CLI agent %s is IDLE with no sync task and no pane — stopping",
                             agent.id,
                         )
-                        agent.status = AgentStatus.STOPPED
-                        sys_msg = Message(
-                            agent_id=agent.id,
-                            role=MessageRole.SYSTEM,
-                            content="Sync lost — agent stopped (no active CLI session)",
-                            status=MessageStatus.COMPLETED,
+                        self.stop_agent_cleanup(
+                            db, agent, "Sync lost — agent stopped (no active CLI session)",
+                            kill_tmux=False, cancel_tasks=False,
                         )
-                        db.add(sys_msg)
-                        self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
                 continue
 
             # Determine if this agent's underlying process is alive.
@@ -4244,7 +4414,7 @@ Here are the day's conversations (with timestamps):
                     alive = True
                 elif not verify_tmux_pane(agent.tmux_pane):
                     # Pane is gone entirely
-                    agent.tmux_pane = None
+                    self._clear_agent_pane(db, agent, kill_tmux=False)
                 # else: pane exists but claude isn't running in it → not alive
             elif agent.session_id:
                 # No pane — check if session file was recently written
@@ -4309,12 +4479,10 @@ Here are the day's conversations (with timestamps):
                 agent.id, agent.name[:40], agent.status.value,
                 agent.tmux_pane, (agent.session_id or "")[:12],
             )
-            agent.status = AgentStatus.STOPPED
-            agent.tmux_pane = None
-            self._cancel_sync_task(agent.id)
-            self._cancel_launch_task(agent.id)
-            self._stale_session_retries.pop(agent.id, None)
-            self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
+            self.stop_agent_cleanup(
+                db, agent, "",
+                kill_tmux=False, add_message=False,
+            )
 
     # ---- Streaming output ----
 
@@ -4563,11 +4731,12 @@ Here are the day's conversations (with timestamps):
                         if info["idle_polls"] >= 3:
                             sub_ag = db.get(Agent, info["agent_id"])
                             if sub_ag and sub_ag.status == AgentStatus.SYNCING:
-                                sub_ag.status = AgentStatus.STOPPED
+                                self.stop_agent_cleanup(
+                                    db, sub_ag, "",
+                                    kill_tmux=False, add_message=False,
+                                    cancel_tasks=False,
+                                )
                                 db.commit()
-                                self._emit(emit_agent_update(
-                                    sub_ag.id, "STOPPED", project_name,
-                                ))
                 else:
                     # New subagent — create Agent record and import turns
                     name = sub["slug"] or f"subagent-{cid[:8]}"
@@ -4835,12 +5004,13 @@ Here are the day's conversations (with timestamps):
 
             # Stop old agent
             self._cancel_sync_task(old_agent_id)
-            old_agent.status = AgentStatus.STOPPED
-            old_agent.tmux_pane = None
+            self.stop_agent_cleanup(
+                db, old_agent, "",
+                kill_tmux=False, add_message=False, cancel_tasks=False,
+            )
             # Keep session_id so the UI can still show session size.
             # Resume is blocked by the successor check in the API.
             db.flush()
-            self._emit(emit_agent_update(old_agent_id, "STOPPED", project_name))
 
             # Parse new session for name and turns
             new_fpath = _resolve_session_jsonl(new_sid, project_path, wt)
@@ -5044,7 +5214,11 @@ Here are the day's conversations (with timestamps):
                     for cid, info in known_subs.items():
                         sub_ag = db_sub.get(Agent, info["agent_id"])
                         if sub_ag and sub_ag.status == AgentStatus.SYNCING:
-                            sub_ag.status = AgentStatus.STOPPED
+                            self.stop_agent_cleanup(
+                                db_sub, sub_ag, "",
+                                kill_tmux=False, emit=False,
+                                add_message=False, cancel_tasks=False,
+                            )
                     db_sub.commit()
                 except Exception:
                     logger.warning("Error stopping subagents for %s", agent_id, exc_info=True)
@@ -5121,6 +5295,9 @@ Here are the day's conversations (with timestamps):
             conv_turns = [
                 (r, c, m) for r, c, m in initial_turns
                 if r in ("user", "assistant")
+                # Skip system-wrapped prompts injected by _build_agent_prompt —
+                # the original user message is already stored in the DB.
+                and not (r == "user" and _AGENTHIVE_PROMPT_MARKER in c[:80])
             ]
 
             if conv_turns:
@@ -5286,16 +5463,11 @@ Here are the day's conversations (with timestamps):
                     try:
                         agent = db.get(Agent, agent_id)
                         if agent and agent.status == AgentStatus.SYNCING:
-                            agent.status = AgentStatus.STOPPED
-                            agent.tmux_pane = None
-                            db.add(Message(
-                                agent_id=agent_id,
-                                role=MessageRole.SYSTEM,
-                                content="Session file not found — sync stopped",
-                                status=MessageStatus.COMPLETED,
-                            ))
+                            self.stop_agent_cleanup(
+                                db, agent, "Session file not found — sync stopped",
+                                kill_tmux=False, cancel_tasks=False,
+                            )
                             db.commit()
-                            self._emit(emit_agent_update(agent_id, "STOPPED", agent.project))
                     finally:
                         db.close()
                     break
@@ -5432,20 +5604,13 @@ Here are the day's conversations (with timestamps):
                             try:
                                 ag_stop = db_stop.get(Agent, agent_id)
                                 if ag_stop and ag_stop.status == AgentStatus.SYNCING:
-                                    ag_stop.status = AgentStatus.STOPPED
-                                    ag_stop.tmux_pane = None
-                                    sys_msg = Message(
-                                        agent_id=agent_id,
-                                        role=MessageRole.SYSTEM,
-                                        content="CLI session ended — sync stopped (tmux pane gone)",
-                                        status=MessageStatus.COMPLETED,
+                                    self.stop_agent_cleanup(
+                                        db_stop, ag_stop,
+                                        "CLI session ended — sync stopped (tmux pane gone)",
+                                        kill_tmux=False, cancel_tasks=False,
                                     )
-                                    db_stop.add(sys_msg)
                                     ag_stop.last_message_at = _utcnow()
                                     db_stop.commit()
-                                    self._emit(emit_agent_update(
-                                        agent_id, "STOPPED", ag_stop.project,
-                                    ))
                             finally:
                                 db_stop.close()
                             return
@@ -5647,6 +5812,9 @@ Here are the day's conversations (with timestamps):
                         meta = rest[0] if rest else None
                         meta_json = json.dumps(meta) if meta else None
                         if role == "user":
+                            # Skip system-wrapped prompts from _build_agent_prompt
+                            if _AGENTHIVE_PROMPT_MARKER in content[:80]:
+                                continue
                             # Dedup: skip if a matching web-sent (or sourceless)
                             # message already exists.  Use whitespace-normalised
                             # comparison because tmux converts tabs to spaces.
@@ -5873,8 +6041,11 @@ Here are the day's conversations (with timestamps):
                     agent = db.get(Agent, agent_id)
                     if agent and agent.status == AgentStatus.SYNCING:
                         saved_pane = agent.tmux_pane
-                        agent.status = AgentStatus.STOPPED
-                        agent.tmux_pane = None
+                        self.stop_agent_cleanup(
+                            db, agent, "",
+                            kill_tmux=False, add_message=False,
+                            emit=False, cancel_tasks=False,
+                        )
                         sys_msg = Message(
                             agent_id=agent_id,
                             role=MessageRole.SYSTEM,
@@ -5971,15 +6142,12 @@ Here are the day's conversations (with timestamps):
                     pane_id, keeper.id, stale.id,
                 )
                 self._cancel_sync_task(stale.id)
-                stale.status = AgentStatus.STOPPED
-                stale.tmux_pane = None
-                db.add(Message(
-                    agent_id=stale.id, role=MessageRole.SYSTEM,
-                    content="CLI session ended — another agent owns this tmux pane",
-                    status=MessageStatus.COMPLETED,
-                ))
+                self.stop_agent_cleanup(
+                    db, stale,
+                    "CLI session ended — another agent owns this tmux pane",
+                    kill_tmux=False, cancel_tasks=False,
+                )
                 stopped_ids.add(stale.id)
-                self._emit(emit_agent_update(stale.id, "STOPPED", stale.project))
 
         # Also detect agents sharing the same session_id (different panes)
         session_agents: dict[str, list[Agent]] = {}
@@ -6005,15 +6173,12 @@ Here are the day's conversations (with timestamps):
                     sid[:12], keeper.id, stale.id,
                 )
                 self._cancel_sync_task(stale.id)
-                stale.status = AgentStatus.STOPPED
-                stale.tmux_pane = None
-                db.add(Message(
-                    agent_id=stale.id, role=MessageRole.SYSTEM,
-                    content="Stopped — another agent already syncs this session",
-                    status=MessageStatus.COMPLETED,
-                ))
+                self.stop_agent_cleanup(
+                    db, stale,
+                    "Stopped — another agent already syncs this session",
+                    kill_tmux=False, cancel_tasks=False,
+                )
                 stopped_ids.add(stale.id)
-                self._emit(emit_agent_update(stale.id, "STOPPED", stale.project))
 
         return stopped_ids
 
@@ -6166,15 +6331,10 @@ Here are the day's conversations (with timestamps):
                         continue
 
                     # Process is dead or session stale — stop
-                    agent.status = AgentStatus.STOPPED
-                    agent.tmux_pane = None
-                    msg = Message(
-                        agent_id=agent.id,
-                        role=MessageRole.SYSTEM,
-                        content="CLI session ended — sync stopped",
-                        status=MessageStatus.COMPLETED,
+                    self.stop_agent_cleanup(
+                        db, agent, "CLI session ended — sync stopped",
+                        kill_tmux=False, emit=False, cancel_tasks=False,
                     )
-                    db.add(msg)
                     continue
 
                 if agent.status == AgentStatus.EXECUTING:

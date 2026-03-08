@@ -1561,17 +1561,18 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
                 _sp.run(["tmux", "kill-pane", "-t", agent.tmux_pane], capture_output=True, timeout=_TMUX_CMD_TIMEOUT)
             except Exception:
                 logger.warning("Failed to kill tmux pane %s for agent %s during archive", agent.tmux_pane, agent.id, exc_info=True)
-        # Cancel sync task
         if ad:
-            ad._cancel_sync_task(agent.id)
-        agent.status = AgentStatus.STOPPED
-        agent.tmux_pane = None
-        db.add(Message(
-            agent_id=agent.id,
-            role=MessageRole.SYSTEM,
-            content="Agent stopped — project archived",
-            status=MessageStatus.COMPLETED,
-        ))
+            ad.stop_agent_cleanup(db, agent, "Agent stopped — project archived",
+                                  kill_tmux=False, emit=False)
+        else:
+            agent.status = AgentStatus.STOPPED
+            agent.tmux_pane = None
+            db.add(Message(
+                agent_id=agent.id,
+                role=MessageRole.SYSTEM,
+                content="Agent stopped — project archived",
+                status=MessageStatus.COMPLETED,
+            ))
     stopped_count = len(active_agents)
 
     # Cancel all non-terminal tasks for this project
@@ -1583,8 +1584,7 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
         .all()
     )
     for t in orphan_tasks:
-        t.status = TaskStatus.CANCELLED
-        t.completed_at = _utcnow()
+        TaskStateMachine.transition(t, TaskStatus.CANCELLED)
     cancelled_count = len(orphan_tasks)
 
     # Stop all running subprocess workers for this project
@@ -2639,6 +2639,7 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 # ---- Tasks v2 (first-class Task entity) ----
 
 from task_state_machine import can_transition, validate_transition, InvalidTransitionError
+from task_state import TaskStateMachine
 from websocket import emit_task_update, emit_agent_update
 
 
@@ -2854,7 +2855,7 @@ async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(g
         try:
             new_status = TaskStatus(body.status)
             validate_transition(task.status, new_status)
-            task.status = new_status
+            TaskStateMachine.transition(task, new_status)
         except (ValueError, InvalidTransitionError) as exc:
             raise HTTPException(409, str(exc))
     for field in ("title", "description", "project_name", "priority", "model", "effort"):
@@ -2885,7 +2886,7 @@ async def plan_task_v2(task_id: str, db: Session = Depends(get_db)):
         validate_transition(task.status, TaskStatus.PLANNING)
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e))
-    task.status = TaskStatus.PLANNING
+    TaskStateMachine.transition(task, TaskStatus.PLANNING)
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -2960,16 +2961,20 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 
     # Helper: stop linked agent if still running
     def _stop_linked_agent():
+        ad = getattr(request.app.state, "agent_dispatcher", None)
         agent = db.get(Agent, task.agent_id) if task.agent_id else None
         if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            import subprocess as _sp
-            agent.status = AgentStatus.STOPPED
-            if agent.tmux_pane:
-                sess_name = f"ah-{agent.id[:8]}"
-                _sp.run(["tmux", "kill-session", "-t", sess_name],
-                        capture_output=True, timeout=5)
-                agent.tmux_pane = None
-            asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
+            if ad:
+                ad.stop_agent_cleanup(db, agent, "Agent stopped — task approved",
+                                      add_message=False)
+            else:
+                agent.status = AgentStatus.STOPPED
+                import subprocess as _sp
+                if agent.tmux_pane:
+                    _sp.run(["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
+                            capture_output=True, timeout=5)
+                    agent.tmux_pane = None
+                asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
         # Also stop any running verify sub-agents for this task
         verify_agents = (
             db.query(Agent)
@@ -2978,20 +2983,23 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
             .all()
         )
         for va in verify_agents:
-            import subprocess as _sp
-            va.status = AgentStatus.STOPPED
-            if va.tmux_pane:
-                _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"],
-                        capture_output=True, timeout=5)
-                va.tmux_pane = None
-            asyncio.ensure_future(emit_agent_update(va.id, "STOPPED", va.project))
+            if ad:
+                ad.stop_agent_cleanup(db, va, "Verify agent stopped — task approved",
+                                      add_message=False)
+            else:
+                va.status = AgentStatus.STOPPED
+                import subprocess as _sp
+                if va.tmux_pane:
+                    _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"],
+                            capture_output=True, timeout=5)
+                    va.tmux_pane = None
+                asyncio.ensure_future(emit_agent_update(va.id, "STOPPED", va.project))
 
     # No branch to merge (use_worktree=False) — skip merge, go straight to COMPLETE
     if not task.branch_name:
         _stop_linked_agent()
-        task.status = TaskStatus.COMPLETE
+        TaskStateMachine.transition(task, TaskStatus.COMPLETE)
         task.try_base_commit = None
-        task.completed_at = _utcnow()
         db.commit()
         db.refresh(task)
         asyncio.ensure_future(emit_task_update(
@@ -3009,9 +3017,8 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
             wt_path = os.path.join(proj.path, ".claude", "worktrees", task.worktree_name)
             gm.remove_worktree(proj.path, wt_path)
             gm.delete_branch(proj.path, task.branch_name)
-        task.status = TaskStatus.COMPLETE
+        TaskStateMachine.transition(task, TaskStatus.COMPLETE)
         task.try_base_commit = None
-        task.completed_at = _utcnow()
         db.commit()
         db.refresh(task)
         asyncio.ensure_future(emit_task_update(
@@ -3023,7 +3030,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 
     # Has branch, not tried — perform merge synchronously
     _stop_linked_agent()
-    task.status = TaskStatus.MERGING
+    TaskStateMachine.transition(task, TaskStatus.MERGING)
     task.error_message = None
     db.commit()
     asyncio.ensure_future(emit_task_update(
@@ -3034,7 +3041,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 
     gm = getattr(request.app.state, "git_manager", None)
     if not gm:
-        task.status = TaskStatus.CONFLICT
+        TaskStateMachine.transition(task, TaskStatus.CONFLICT)
         task.error_message = "Git manager not available"
         db.commit()
         db.refresh(task)
@@ -3049,7 +3056,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
     if current_branch != main_branch:
         co_result = gm.checkout(proj.path, main_branch)
         if co_result.startswith("ERROR:"):
-            task.status = TaskStatus.CONFLICT
+            TaskStateMachine.transition(task, TaskStatus.CONFLICT)
             task.error_message = f"Cannot checkout {main_branch}: {co_result}"
             db.commit()
             db.refresh(task)
@@ -3061,7 +3068,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
     # Merge
     result = gm.merge_branch(proj.path, task.branch_name)
     if not result.get("success"):
-        task.status = TaskStatus.CONFLICT
+        TaskStateMachine.transition(task, TaskStatus.CONFLICT)
         task.error_message = f"Merge failed: {result.get('error', 'unknown')}"
         db.commit()
         db.refresh(task)
@@ -3077,7 +3084,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
         del_result = gm.delete_branch(proj.path, task.branch_name)
         # delete_branch uses -d which fails if branch is not merged — treat as merge failure
         if del_result.startswith("ERROR:") and "not yet merged" in del_result:
-            task.status = TaskStatus.CONFLICT
+            TaskStateMachine.transition(task, TaskStatus.CONFLICT)
             task.error_message = "Merge appeared to succeed but branch was not actually merged. Please retry."
             db.commit()
             db.refresh(task)
@@ -3086,8 +3093,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
             ))
             logger.warning("Task %s: merge succeeded but branch not merged (phantom merge)", task.id)
             return TaskOut.model_validate(task)
-    task.status = TaskStatus.COMPLETE
-    task.completed_at = _utcnow()
+    TaskStateMachine.transition(task, TaskStatus.COMPLETE)
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -3102,6 +3108,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 async def reject_task_v2(
     task_id: str,
     body: TaskRejectRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Reject a task with a reason → REJECTED."""
@@ -3112,19 +3119,23 @@ async def reject_task_v2(
         validate_transition(task.status, TaskStatus.REJECTED)
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e))
+    ad = getattr(request.app.state, "agent_dispatcher", None)
     # Stop running agent if still active
     if task.agent_id:
         agent = db.get(Agent, task.agent_id)
         if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            agent.status = AgentStatus.STOPPED
-            if agent.tmux_pane:
-                import subprocess
-                sess_name = f"ah-{agent.id[:8]}"
-                subprocess.run(["tmux", "kill-session", "-t", sess_name],
-                               capture_output=True, timeout=5)
-                agent.tmux_pane = None
+            if ad:
+                ad.stop_agent_cleanup(db, agent, "Agent stopped — task rejected",
+                                      emit=False, add_message=False)
+            else:
+                agent.status = AgentStatus.STOPPED
+                if agent.tmux_pane:
+                    import subprocess
+                    sess_name = f"ah-{agent.id[:8]}"
+                    subprocess.run(["tmux", "kill-session", "-t", sess_name],
+                                   capture_output=True, timeout=5)
+                    agent.tmux_pane = None
     # Stop any running verify sub-agents
-    import subprocess as _sp
     verify_agents = (
         db.query(Agent)
         .filter(Agent.task_id == task.id, Agent.is_subagent == True, Agent.name.like("Verify:%"))
@@ -3132,15 +3143,19 @@ async def reject_task_v2(
         .all()
     )
     for va in verify_agents:
-        va.status = AgentStatus.STOPPED
-        if va.tmux_pane:
-            _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
-            va.tmux_pane = None
-    task.status = TaskStatus.REJECTED
+        if ad:
+            ad.stop_agent_cleanup(db, va, "Verify agent stopped — task rejected",
+                                  emit=False, add_message=False)
+        else:
+            va.status = AgentStatus.STOPPED
+            if va.tmux_pane:
+                import subprocess as _sp
+                _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
+                va.tmux_pane = None
+    TaskStateMachine.transition(task, TaskStatus.REJECTED)
     task.rejection_reason = body.reason
     task.try_base_commit = None  # Clear try state on reject
     task.review_artifacts = None  # Clear stale verify data
-    task.completed_at = _utcnow()
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -3424,21 +3439,24 @@ async def cancel_task_v2(task_id: str, request: Request, db: Session = Depends(g
         validate_transition(task.status, TaskStatus.CANCELLED)
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e))
+    ad = getattr(request.app.state, "agent_dispatcher", None)
     # Stop linked agent regardless of task status (EXECUTING, MERGING, REVIEW, etc.)
     if task.agent_id:
         agent = db.get(Agent, task.agent_id)
         if agent and agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            agent.status = AgentStatus.STOPPED
-            # Kill tmux session
-            if agent.tmux_pane:
-                import subprocess
-                sess_name = f"ah-{agent.id[:8]}"
-                subprocess.run(["tmux", "kill-session", "-t", sess_name],
-                               capture_output=True, timeout=5)
-                agent.tmux_pane = None
-            asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
+            if ad:
+                ad.stop_agent_cleanup(db, agent, "Agent stopped — task cancelled",
+                                      add_message=False)
+            else:
+                agent.status = AgentStatus.STOPPED
+                if agent.tmux_pane:
+                    import subprocess
+                    sess_name = f"ah-{agent.id[:8]}"
+                    subprocess.run(["tmux", "kill-session", "-t", sess_name],
+                                   capture_output=True, timeout=5)
+                    agent.tmux_pane = None
+                asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
     # Stop any running verify sub-agents
-    import subprocess as _sp
     verify_agents = (
         db.query(Agent)
         .filter(Agent.task_id == task.id, Agent.is_subagent == True, Agent.name.like("Verify:%"))
@@ -3446,12 +3464,16 @@ async def cancel_task_v2(task_id: str, request: Request, db: Session = Depends(g
         .all()
     )
     for va in verify_agents:
-        va.status = AgentStatus.STOPPED
-        if va.tmux_pane:
-            _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
-            va.tmux_pane = None
-    task.status = TaskStatus.CANCELLED
-    task.completed_at = _utcnow()
+        if ad:
+            ad.stop_agent_cleanup(db, va, "Verify agent stopped — task cancelled",
+                                  emit=False, add_message=False)
+        else:
+            va.status = AgentStatus.STOPPED
+            if va.tmux_pane:
+                import subprocess as _sp
+                _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
+                va.tmux_pane = None
+    TaskStateMachine.transition(task, TaskStatus.CANCELLED)
     # Clean up git artifacts
     proj = db.query(Project).filter(Project.name == task.project_name).first()
     if proj:
@@ -3600,13 +3622,23 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
             )
     else:
         # Normal mode: create the initial user message
-        msg = Message(
-            agent_id=agent.id,
-            role=MessageRole.USER,
-            content=body.prompt,
-            status=MessageStatus.PENDING,
-        )
-        db.add(msg)
+        ad = getattr(request.app.state, "agent_dispatcher", None)
+        if ad:
+            msg, _, _ = ad._prepare_dispatch(
+                db, agent, project, body.prompt,
+                source="web",
+                wrap_prompt=False,  # wrapping deferred to dispatch time
+            )
+            msg.status = MessageStatus.PENDING
+        else:
+            msg = Message(
+                agent_id=agent.id,
+                role=MessageRole.USER,
+                content=body.prompt,
+                status=MessageStatus.PENDING,
+                source="web",
+            )
+            db.add(msg)
         db.commit()
         db.refresh(agent)
 
@@ -3876,36 +3908,38 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         _task = db.get(Task, task_id)
         if _task and can_transition(_task.status, TaskStatus.EXECUTING):
             _task.agent_id = agent.id
-            _task.status = TaskStatus.EXECUTING
-            _task.started_at = datetime.now(timezone.utc)
+            TaskStateMachine.transition(_task, TaskStatus.EXECUTING)
             _task.worktree_name = worktree if worktree else None
             if worktree:
                 _task.branch_name = _task.branch_name or f"worktree-{worktree}"
 
-    # Save the initial prompt as a user message so it shows in the chat
+    # Save the initial prompt and prepare wrapped version for Claude
+    launch_prompt = None
+    ad = getattr(request.app.state, "agent_dispatcher", None)
     if prompt:
-        msg = Message(
-            agent_id=agent.id,
-            role=MessageRole.USER,
-            content=prompt,
-            status=MessageStatus.COMPLETED,
-            source="web",
-            completed_at=datetime.now(timezone.utc),
-        )
-        db.add(msg)
+        if ad:
+            msg, launch_prompt, _ = ad._prepare_dispatch(
+                db, agent, proj, prompt,
+                source="web",
+                wrap_prompt=True,
+            )
+        else:
+            msg = Message(
+                agent_id=agent.id,
+                role=MessageRole.USER,
+                content=prompt,
+                source="web",
+            )
+            db.add(msg)
+        msg.status = MessageStatus.COMPLETED
+        msg.completed_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(agent)
 
     # Schedule background task: wait for Claude TUI to load, send prompt,
     # detect session JSONL, and start sync.
-    ad = getattr(request.app.state, "agent_dispatcher", None)
-    if ad and prompt:
-        # Wrap raw prompt with project context + RAG insights (same as
-        # _dispatch_tmux_pending does for subsequent messages)
-        launch_prompt, _ = ad._build_agent_prompt(
-            agent, proj, prompt, include_history=False, db=db,
-        )
+    if ad and launch_prompt:
         launch_task = asyncio.ensure_future(
             _launch_tmux_background(ad, agent.id, pane_id, launch_prompt, proj.path)
         )
@@ -3950,7 +3984,7 @@ async def _launch_tmux_background(
             agent = db.get(Agent, agent_id)
             if agent and agent.status != AgentStatus.STOPPED:
                 agent.status = AgentStatus.ERROR
-                agent.tmux_pane = None  # release pane so discovery doesn't conflict
+                ad._clear_agent_pane(db, agent, kill_tmux=False)  # release pane so discovery doesn't conflict
                 db.commit()
                 ad._emit(emit_agent_update(agent_id, "ERROR", agent.project))
         finally:
@@ -4447,58 +4481,55 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
         except Exception:
             pass
 
-    agent.status = AgentStatus.STOPPED
-    agent.tmux_pane = None
-
-    # Mark any EXECUTING messages as FAILED so they don't stay stuck
-    executing_msgs = db.query(Message).filter(
-        Message.agent_id == agent.id,
-        Message.status == MessageStatus.EXECUTING,
-    ).all()
-    for m in executing_msgs:
-        m.status = MessageStatus.FAILED
-        m.error_message = "Agent stopped by user"
-        m.completed_at = datetime.now(timezone.utc)
-
-    # Add system message
-    msg = Message(
-        agent_id=agent.id,
-        role=MessageRole.SYSTEM,
-        content="Agent stopped",
-        status=MessageStatus.COMPLETED,
-    )
-    db.add(msg)
-
-    # Cancel any active sync or launch tasks and clear retry state
     ad = getattr(request.app.state, "agent_dispatcher", None)
-    if ad:
-        ad._cancel_sync_task(agent.id)
-        ad._cancel_launch_task(agent.id)
-        ad._stale_session_retries.pop(agent.id, None)
-        ad._known_subagents.pop(agent.id, None)
 
-    # Cascade stop to child subagents
-    child_subs = db.query(Agent).filter(
-        Agent.parent_id == agent.id,
-        Agent.is_subagent == True,  # noqa: E712
-        Agent.status != AgentStatus.STOPPED,
-    ).all()
-    for sub in child_subs:
-        sub.status = AgentStatus.STOPPED
-        if ad:
-            ad._cancel_sync_task(sub.id)
-            ad._cancel_launch_task(sub.id)
-            ad._stale_session_retries.pop(sub.id, None)
-        if sub.tmux_pane:
-            try:
-                _sp.run(["tmux", "kill-pane", "-t", sub.tmux_pane],
-                        capture_output=True, timeout=_TMUX_CMD_TIMEOUT)
-            except Exception:
-                logger.debug("Failed to kill tmux pane for subagent %s", sub.id)
+    if ad:
+        ad.stop_agent_cleanup(db, agent, "Agent stopped",
+                              kill_tmux=False, fail_executing=True,
+                              fail_reason="Agent stopped by user",
+                              cascade_subagents=True)
+    else:
+        agent.status = AgentStatus.STOPPED
+        agent.tmux_pane = None
+
+        # Mark any EXECUTING messages as FAILED so they don't stay stuck
+        executing_msgs = db.query(Message).filter(
+            Message.agent_id == agent.id,
+            Message.status == MessageStatus.EXECUTING,
+        ).all()
+        for m in executing_msgs:
+            m.status = MessageStatus.FAILED
+            m.error_message = "Agent stopped by user"
+            m.completed_at = datetime.now(timezone.utc)
+
+        # Add system message
+        db.add(Message(
+            agent_id=agent.id,
+            role=MessageRole.SYSTEM,
+            content="Agent stopped",
+            status=MessageStatus.COMPLETED,
+        ))
+
+        # Cascade stop to child subagents
+        child_subs = db.query(Agent).filter(
+            Agent.parent_id == agent.id,
+            Agent.is_subagent == True,  # noqa: E712
+            Agent.status != AgentStatus.STOPPED,
+        ).all()
+        for sub in child_subs:
+            sub.status = AgentStatus.STOPPED
+            if sub.tmux_pane:
+                try:
+                    import subprocess as _sp2
+                    _sp2.run(["tmux", "kill-pane", "-t", sub.tmux_pane],
+                             capture_output=True, timeout=_TMUX_CMD_TIMEOUT)
+                except Exception:
+                    logger.debug("Failed to kill tmux pane for subagent %s", sub.id)
+
+        asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
 
     db.commit()
     db.refresh(agent)
-    asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
     logger.info("Agent %s stopped", agent.id)
     return agent
 
@@ -4634,7 +4665,10 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         if agent.cli_sync and resume_mode == "normal":
             # Convert to normal (non-sync) agent
             agent.cli_sync = False
-            agent.tmux_pane = None
+            if ad:
+                ad._clear_agent_pane(db, agent, kill_tmux=False)
+            else:
+                agent.tmux_pane = None
             agent.status = AgentStatus.IDLE
         elif agent.cli_sync and resume_mode == "tmux":
             # Launch a new tmux session and resume the CLI session in it
@@ -4888,7 +4922,11 @@ async def send_agent_message(
                 agent.tmux_pane = recovered_pane
                 db.commit()
             else:
-                agent.tmux_pane = None
+                ad_msg = getattr(request.app.state, "agent_dispatcher", None)
+                if ad_msg:
+                    ad_msg._clear_agent_pane(db, agent, kill_tmux=False)
+                else:
+                    agent.tmux_pane = None
                 db.commit()
                 is_syncing_with_tmux = False
 
@@ -4900,18 +4938,27 @@ async def send_agent_message(
                     detail="Failed to send via tmux",
                 )
 
-            # Record the message as completed (it was sent directly)
-            msg = Message(
-                agent_id=agent.id,
-                role=MessageRole.USER,
-                content=body.content,
-                status=MessageStatus.COMPLETED,
-                source="web",
-                completed_at=_utcnow(),
-            )
-            db.add(msg)
-            agent.last_message_preview = body.content[:200]
-            agent.last_message_at = _utcnow()
+            # Unified preparation: RAG insights + message creation + agent preview
+            project = db.get(Project, agent.project)
+            if not project:
+                raise HTTPException(status_code=400, detail="Project not found")
+            ad = getattr(request.app.state, "agent_dispatcher", None)
+            if ad:
+                msg, _, _ = ad._prepare_dispatch(
+                    db, agent, project, body.content,
+                    source="web",
+                    wrap_prompt=False,
+                )
+            else:
+                msg = Message(
+                    agent_id=agent.id,
+                    role=MessageRole.USER,
+                    content=body.content,
+                    source="web",
+                )
+                db.add(msg)
+            msg.status = MessageStatus.COMPLETED
+            msg.completed_at = _utcnow()
             db.commit()
             db.refresh(msg)
             ad = getattr(request.app.state, "agent_dispatcher", None)
