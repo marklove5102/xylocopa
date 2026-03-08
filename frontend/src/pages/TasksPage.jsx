@@ -7,6 +7,7 @@ import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket, { isTaskNotificationsEnabled, setTaskNotificationsEnabled, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
+import { useToast } from "../contexts/ToastContext";
 import InboxView from "./tasks/InboxView";
 import ExecutingView from "./tasks/ExecutingView";
 import ReviewView from "./tasks/ReviewView";
@@ -136,16 +137,12 @@ export default function TasksPage({ theme, onToggleTheme }) {
 
   // Notification toggle
   const [taskNotifsOn, setTaskNotifsOn] = useState(() => isTaskNotificationsEnabled());
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
+  const toast = useToast();
 
   const showToast = useCallback((message, type = "success") => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
-  }, []);
-
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+    if (type === "error") toast.error(message);
+    else toast.success(message);
+  }, [toast]);
 
   const handleToggleTaskNotifs = useCallback(() => {
     const next = !taskNotifsOn;
@@ -173,13 +170,6 @@ export default function TasksPage({ theme, onToggleTheme }) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium pointer-events-none safe-area-toast ${toast.type === "error" ? "bg-red-600 text-white" : "bg-cyan-600 text-white"}`}>
-          {toast.message}
-        </div>
-      )}
-
       <PageHeader
         title="Tasks"
         theme={theme}

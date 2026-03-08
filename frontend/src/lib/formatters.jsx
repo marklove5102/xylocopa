@@ -1,3 +1,7 @@
+/** Shared date format options for toLocaleString / toLocaleTimeString. */
+export const DATE_SHORT = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
+export const TIME_SHORT = { hour: "2-digit", minute: "2-digit" };
+
 /** Turn an ISO / unix timestamp into a relative string like "2m ago". */
 export function relativeTime(dateStr) {
   if (!dateStr) return "";

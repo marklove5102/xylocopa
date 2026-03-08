@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
 import { useMonitor } from "../contexts/MonitorContext";
 import { restartServer, fetchHealth } from "../lib/api";
+import { isSystemHealthy } from "../lib/constants";
 
 /* ── Task Stats Popover ── */
 function TaskStatsPopover({ taskStats, onClose, containerRef }) {
@@ -220,7 +221,7 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
     };
   }, []);
 
-  const isHealthy = health && health.status === "ok" && health.db === "ok" && health.claude_cli === "ok";
+  const isHealthy = isSystemHealthy(health);
   const chipCls = health === null
     ? "bg-gray-500/15 text-gray-400"
     : isHealthy
