@@ -11,6 +11,7 @@ from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES
 from database import SessionLocal
 from log_config import save_worker_log
 from models import Project, Task, TaskStatus
+from task_state import TaskStateMachine
 from worker_manager import WorkerManager
 
 logger = logging.getLogger("orchestrator.dispatcher")
@@ -116,15 +117,15 @@ class TaskDispatcher:
             task.completed_at = _utcnow()
 
             if "EXIT_SUCCESS" in logs:
-                task.status = TaskStatus.COMPLETE
+                TaskStateMachine.transition(task, TaskStatus.COMPLETE)
                 task.result_summary = _extract_summary(logs)
                 logger.info("Task %s completed successfully", task.id)
             elif "EXIT_FAILURE" in logs:
-                task.status = TaskStatus.FAILED
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = _extract_error(logs)
                 logger.warning("Task %s failed: %s", task.id, task.error_message)
             else:
-                task.status = TaskStatus.FAILED
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Worker exited without EXIT_SUCCESS or EXIT_FAILURE signal"
                 logger.warning("Task %s: worker exited without status signal", task.id)
 
@@ -176,9 +177,8 @@ class TaskDispatcher:
                         self.worker_mgr.get_logs(task.container_id), 50000
                     )
                     self.worker_mgr.stop_worker(task.container_id)
-                task.status = TaskStatus.TIMEOUT
+                TaskStateMachine.transition(task, TaskStatus.TIMEOUT)
                 task.error_message = f"Timed out after {int(elapsed)}s"
-                task.completed_at = now
                 from websocket import emit_task_update
                 self._emit(emit_task_update(task.id, task.status.value, task.project))
 
@@ -196,7 +196,7 @@ class TaskDispatcher:
         )
         for task in retriable:
             task.retries += 1
-            task.status = TaskStatus.PENDING
+            TaskStateMachine.transition(task, TaskStatus.PENDING, set_timestamps=False)
             task.container_id = None
             task.started_at = None
             task.completed_at = None
@@ -243,7 +243,7 @@ class TaskDispatcher:
 
             project = db.get(Project, task.project)
             if not project:
-                task.status = TaskStatus.FAILED
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = f"Project '{task.project}' not found"
                 from websocket import emit_task_update
                 self._emit(emit_task_update(task.id, task.status.value, task.project))
@@ -256,8 +256,7 @@ class TaskDispatcher:
             try:
                 pid_str = self.worker_mgr.start_worker(task, project)
                 task.container_id = pid_str
-                task.status = TaskStatus.EXECUTING
-                task.started_at = _utcnow()
+                TaskStateMachine.transition(task, TaskStatus.EXECUTING)
                 total_active += 1
                 project_counts[task.project] = proj_active + 1
                 logger.info(
@@ -269,9 +268,8 @@ class TaskDispatcher:
                 self._emit(emit_worker_update("created", f"claude-worker-{task.id[:8]}", task.project))
             except Exception:
                 logger.exception("Failed to start worker for task %s", task.id)
-                task.status = TaskStatus.FAILED
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Failed to start worker process"
-                task.completed_at = _utcnow()
                 from websocket import emit_task_update
                 self._emit(emit_task_update(task.id, task.status.value, task.project))
 
@@ -352,9 +350,8 @@ class TaskDispatcher:
                 .all()
             )
             for task in stale:
-                task.status = TaskStatus.FAILED
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Orchestrator restarted while task was executing"
-                task.completed_at = _utcnow()
                 task.container_id = None
                 logger.warning("Recovered stale task %s → FAILED", task.id)
 

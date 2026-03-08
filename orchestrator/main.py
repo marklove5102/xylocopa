@@ -1583,8 +1583,7 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
         .all()
     )
     for t in orphan_tasks:
-        t.status = TaskStatus.CANCELLED
-        t.completed_at = _utcnow()
+        TaskStateMachine.transition(t, TaskStatus.CANCELLED)
     cancelled_count = len(orphan_tasks)
 
     # Stop all running subprocess workers for this project
@@ -2639,6 +2638,7 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 # ---- Tasks v2 (first-class Task entity) ----
 
 from task_state_machine import can_transition, validate_transition, InvalidTransitionError
+from task_state import TaskStateMachine
 from websocket import emit_task_update, emit_agent_update
 
 
@@ -2854,7 +2854,7 @@ async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(g
         try:
             new_status = TaskStatus(body.status)
             validate_transition(task.status, new_status)
-            task.status = new_status
+            TaskStateMachine.transition(task, new_status)
         except (ValueError, InvalidTransitionError) as exc:
             raise HTTPException(409, str(exc))
     for field in ("title", "description", "project_name", "priority", "model", "effort"):
@@ -2885,7 +2885,7 @@ async def plan_task_v2(task_id: str, db: Session = Depends(get_db)):
         validate_transition(task.status, TaskStatus.PLANNING)
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e))
-    task.status = TaskStatus.PLANNING
+    TaskStateMachine.transition(task, TaskStatus.PLANNING)
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -2989,9 +2989,8 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
     # No branch to merge (use_worktree=False) — skip merge, go straight to COMPLETE
     if not task.branch_name:
         _stop_linked_agent()
-        task.status = TaskStatus.COMPLETE
+        TaskStateMachine.transition(task, TaskStatus.COMPLETE)
         task.try_base_commit = None
-        task.completed_at = _utcnow()
         db.commit()
         db.refresh(task)
         asyncio.ensure_future(emit_task_update(
@@ -3009,9 +3008,8 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
             wt_path = os.path.join(proj.path, ".claude", "worktrees", task.worktree_name)
             gm.remove_worktree(proj.path, wt_path)
             gm.delete_branch(proj.path, task.branch_name)
-        task.status = TaskStatus.COMPLETE
+        TaskStateMachine.transition(task, TaskStatus.COMPLETE)
         task.try_base_commit = None
-        task.completed_at = _utcnow()
         db.commit()
         db.refresh(task)
         asyncio.ensure_future(emit_task_update(
@@ -3023,7 +3021,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 
     # Has branch, not tried — perform merge synchronously
     _stop_linked_agent()
-    task.status = TaskStatus.MERGING
+    TaskStateMachine.transition(task, TaskStatus.MERGING)
     task.error_message = None
     db.commit()
     asyncio.ensure_future(emit_task_update(
@@ -3034,7 +3032,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
 
     gm = getattr(request.app.state, "git_manager", None)
     if not gm:
-        task.status = TaskStatus.CONFLICT
+        TaskStateMachine.transition(task, TaskStatus.CONFLICT)
         task.error_message = "Git manager not available"
         db.commit()
         db.refresh(task)
@@ -3049,7 +3047,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
     if current_branch != main_branch:
         co_result = gm.checkout(proj.path, main_branch)
         if co_result.startswith("ERROR:"):
-            task.status = TaskStatus.CONFLICT
+            TaskStateMachine.transition(task, TaskStatus.CONFLICT)
             task.error_message = f"Cannot checkout {main_branch}: {co_result}"
             db.commit()
             db.refresh(task)
@@ -3061,7 +3059,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
     # Merge
     result = gm.merge_branch(proj.path, task.branch_name)
     if not result.get("success"):
-        task.status = TaskStatus.CONFLICT
+        TaskStateMachine.transition(task, TaskStatus.CONFLICT)
         task.error_message = f"Merge failed: {result.get('error', 'unknown')}"
         db.commit()
         db.refresh(task)
@@ -3077,7 +3075,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
         del_result = gm.delete_branch(proj.path, task.branch_name)
         # delete_branch uses -d which fails if branch is not merged — treat as merge failure
         if del_result.startswith("ERROR:") and "not yet merged" in del_result:
-            task.status = TaskStatus.CONFLICT
+            TaskStateMachine.transition(task, TaskStatus.CONFLICT)
             task.error_message = "Merge appeared to succeed but branch was not actually merged. Please retry."
             db.commit()
             db.refresh(task)
@@ -3086,8 +3084,7 @@ async def approve_task_v2(task_id: str, request: Request, db: Session = Depends(
             ))
             logger.warning("Task %s: merge succeeded but branch not merged (phantom merge)", task.id)
             return TaskOut.model_validate(task)
-    task.status = TaskStatus.COMPLETE
-    task.completed_at = _utcnow()
+    TaskStateMachine.transition(task, TaskStatus.COMPLETE)
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -3136,11 +3133,10 @@ async def reject_task_v2(
         if va.tmux_pane:
             _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
             va.tmux_pane = None
-    task.status = TaskStatus.REJECTED
+    TaskStateMachine.transition(task, TaskStatus.REJECTED)
     task.rejection_reason = body.reason
     task.try_base_commit = None  # Clear try state on reject
     task.review_artifacts = None  # Clear stale verify data
-    task.completed_at = _utcnow()
     db.commit()
     db.refresh(task)
     asyncio.ensure_future(emit_task_update(
@@ -3450,8 +3446,7 @@ async def cancel_task_v2(task_id: str, request: Request, db: Session = Depends(g
         if va.tmux_pane:
             _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
             va.tmux_pane = None
-    task.status = TaskStatus.CANCELLED
-    task.completed_at = _utcnow()
+    TaskStateMachine.transition(task, TaskStatus.CANCELLED)
     # Clean up git artifacts
     proj = db.query(Project).filter(Project.name == task.project_name).first()
     if proj:
@@ -3886,8 +3881,7 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         _task = db.get(Task, task_id)
         if _task and can_transition(_task.status, TaskStatus.EXECUTING):
             _task.agent_id = agent.id
-            _task.status = TaskStatus.EXECUTING
-            _task.started_at = datetime.now(timezone.utc)
+            TaskStateMachine.transition(_task, TaskStatus.EXECUTING)
             _task.worktree_name = worktree if worktree else None
             if worktree:
                 _task.branch_name = _task.branch_name or f"worktree-{worktree}"

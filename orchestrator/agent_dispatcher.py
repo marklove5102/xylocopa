@@ -26,6 +26,7 @@ from models import (
     Task,
     TaskStatus,
 )
+from task_state import TaskStateMachine
 from session_cache import (
     session_source_dir,
     cache_session,
@@ -2585,13 +2586,7 @@ Here are the day's conversations (with timestamps):
             agent = db.get(Agent, task.agent_id)
             if not agent:
                 # Agent deleted while task was EXECUTING — fail the task
-                try:
-                    from task_state_machine import validate_transition
-                    validate_transition(task.status, TaskStatus.FAILED)
-                except Exception:
-                    logger.warning("Task %s: invalid transition %s -> FAILED (agent deleted)", task.id, task.status.value)
-                task.status = TaskStatus.FAILED
-                task.completed_at = _utcnow()
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Agent was deleted while task was executing"
                 db.commit()
                 from websocket import emit_task_update
@@ -2631,13 +2626,7 @@ Here are the day's conversations (with timestamps):
                             logger.debug("Failed to store task-completion insight for task %s", task.id, exc_info=True)
                 # If agent died without producing any output → FAILED, not REVIEW
                 if not last_msg:
-                    try:
-                        from task_state_machine import validate_transition
-                        validate_transition(task.status, TaskStatus.FAILED)
-                    except Exception:
-                        logger.warning("Task %s: invalid transition %s -> FAILED (no output)", task.id, task.status.value)
-                    task.status = TaskStatus.FAILED
-                    task.completed_at = _utcnow()
+                    TaskStateMachine.transition(task, TaskStatus.FAILED)
                     task.error_message = "Agent stopped without producing output"
                     db.commit()
                     from websocket import emit_task_update
@@ -2647,7 +2636,7 @@ Here are the day's conversations (with timestamps):
                     ))
                     logger.info("Task %s FAILED (agent %s died without output)", task.id, agent.id)
                     continue
-                task.status = TaskStatus.REVIEW
+                TaskStateMachine.transition(task, TaskStatus.REVIEW)
                 # Stop agent — it has finished its task
                 if agent.status != AgentStatus.STOPPED:
                     agent.status = AgentStatus.STOPPED
@@ -2676,13 +2665,7 @@ Here are the day's conversations (with timestamps):
                     logger.warning("Push notification failed for task %s", task.id, exc_info=True)
                 logger.info("Task %s moved to REVIEW (agent %s stopped)", task.id, agent.id)
             elif agent.status == AgentStatus.ERROR:
-                try:
-                    from task_state_machine import validate_transition
-                    validate_transition(task.status, TaskStatus.FAILED)
-                except Exception:
-                    logger.warning("Task %s: invalid transition %s -> FAILED (agent error)", task.id, task.status.value)
-                task.status = TaskStatus.FAILED
-                task.completed_at = _utcnow()
+                TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Agent encountered an error"
                 db.commit()
                 from websocket import emit_task_update
@@ -2700,11 +2683,7 @@ Here are the day's conversations (with timestamps):
             .all()
         )
         for task in stale_merging:
-            try:
-                from task_state_machine import validate_transition
-                validate_transition(task.status, TaskStatus.FAILED)
-            except Exception:
-                logger.warning("Task %s: invalid transition %s -> FAILED (stale merge)", task.id, task.status.value)
+            TaskStateMachine.transition(task, TaskStatus.FAILED)
             # Stop linked agent if still running/idle
             if task.agent_id:
                 agent = db.get(Agent, task.agent_id)
@@ -2727,8 +2706,7 @@ Here are the day's conversations (with timestamps):
                 if va.tmux_pane:
                     _sp.run(["tmux", "kill-session", "-t", f"ah-{va.id[:8]}"], capture_output=True, timeout=5)
                     va.tmux_pane = None
-            task.status = TaskStatus.FAILED
-            task.completed_at = _utcnow()
+            TaskStateMachine.transition(task, TaskStatus.FAILED)
             task.error_message = "Stale merge task — please re-approve"
             db.commit()
             from websocket import emit_task_update
