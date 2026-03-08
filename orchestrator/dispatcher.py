@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from config import MAX_CONCURRENT_WORKERS, MAX_RETRIES
+from utils import utcnow as _utcnow, truncate as _truncate
 from database import SessionLocal
 from log_config import save_worker_log
 from models import Project, Task, TaskStatus
@@ -20,10 +21,6 @@ logger = logging.getLogger("orchestrator.dispatcher")
 DISK_USAGE_THRESHOLD = 0.90
 # How often (in ticks, ~2s each) to run housekeeping checks
 HOUSEKEEPING_INTERVAL = 30  # ~60 seconds
-
-
-def _utcnow():
-    return datetime.now(timezone.utc)
 
 
 class TaskDispatcher:
@@ -371,12 +368,6 @@ class TaskDispatcher:
 
 
 # ---- Helpers ----
-
-def _truncate(text: str, max_len: int) -> str:
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + "\n... [truncated]"
-
 
 def _extract_summary(logs: str) -> str:
     """Extract a brief summary from worker output."""
