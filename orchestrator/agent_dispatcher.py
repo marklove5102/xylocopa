@@ -2047,12 +2047,7 @@ class AgentDispatcher:
             return
         agent.session_id = None
         if add_message and reason:
-            db.add(Message(
-                agent_id=agent.id,
-                role=MessageRole.SYSTEM,
-                content=f"Session ended: {reason}",
-                status=MessageStatus.COMPLETED,
-            ))
+            self._add_system_message(db, agent.id, f"Session ended: {reason}")
         if emit:
             from websocket import emit_agent_update
             self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
@@ -2386,6 +2381,65 @@ Here are the day's conversations (with timestamps):
         for m in pending:
             self._fail_message(m, reason)
 
+    def _add_system_message(self, db, agent_id, content, *, status=MessageStatus.COMPLETED, error_message=None):
+        """Add a system message with consistent fields."""
+        msg = Message(
+            agent_id=agent_id,
+            role=MessageRole.SYSTEM,
+            content=content,
+            status=status,
+            completed_at=_utcnow(),
+        )
+        if error_message:
+            msg.error_message = error_message
+        db.add(msg)
+        return msg
+
+    def _import_turns_as_messages(self, db, agent_id, turns, *, source="cli"):
+        """Import conversation turns as Message records.
+
+        Each turn is (role, content, meta) where meta is optional dict.
+        Returns the number of messages imported.
+        """
+        imported = 0
+        for role, content, *rest in turns:
+            meta = rest[0] if rest else None
+            meta_json = json.dumps(meta) if meta else None
+            if role == "user":
+                msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.USER,
+                    content=content,
+                    status=MessageStatus.COMPLETED,
+                    source=source,
+                    meta_json=meta_json,
+                    completed_at=_utcnow(),
+                )
+            elif role == "assistant":
+                msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.AGENT,
+                    content=content,
+                    status=MessageStatus.COMPLETED,
+                    source=source,
+                    meta_json=meta_json,
+                    completed_at=_utcnow(),
+                )
+            elif role == "system":
+                msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.SYSTEM,
+                    content=content,
+                    status=MessageStatus.COMPLETED,
+                    source=source,
+                    completed_at=_utcnow(),
+                )
+            else:
+                continue
+            db.add(msg)
+            imported += 1
+        return imported
+
     def stop_agent_cleanup(
         self,
         db: Session,
@@ -2436,12 +2490,7 @@ Here are the day's conversations (with timestamps):
                 self._fail_message(m, fail_reason or reason)
 
         if add_message:
-            db.add(Message(
-                agent_id=agent.id,
-                role=MessageRole.SYSTEM,
-                content=reason,
-                status=MessageStatus.COMPLETED,
-            ))
+            self._add_system_message(db, agent.id, reason)
 
         if cancel_tasks:
             self._cancel_sync_task(agent.id)
@@ -3352,13 +3401,7 @@ Here are the day's conversations (with timestamps):
                 timeout_note = f"Timed out after {int(idle_seconds)}s of inactivity (ran {int(elapsed)}s total)"
                 if will_retry:
                     timeout_note += f" — auto-retrying ({retry_count}/{self._max_timeout_retries})"
-                sys_msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content=timeout_note,
-                    status=MessageStatus.COMPLETED,
-                )
-                db.add(sys_msg)
+                sys_msg = self._add_system_message(db, agent.id, timeout_note)
 
                 # Guard: check agent wasn't stopped by API during timeout handling
                 db.refresh(agent)
@@ -3426,13 +3469,10 @@ Here are the day's conversations (with timestamps):
             project = db.get(Project, agent.project)
             if not project:
                 agent.status = AgentStatus.ERROR
-                msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content=f"Project '{agent.project}' not found",
+                msg = self._add_system_message(
+                    db, agent.id, f"Project '{agent.project}' not found",
                     status=MessageStatus.FAILED,
                 )
-                db.add(msg)
 
                 from websocket import emit_agent_update, emit_new_message
                 self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
@@ -3451,13 +3491,7 @@ Here are the day's conversations (with timestamps):
                 project_path = self.worker_mgr.ensure_project_ready(project)
                 agent.status = AgentStatus.IDLE
 
-                sys_msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content="Agent started",
-                    status=MessageStatus.COMPLETED,
-                )
-                db.add(sys_msg)
+                sys_msg = self._add_system_message(db, agent.id, "Agent started")
 
                 logger.info("Agent %s started (project: %s)", agent.id, project.name)
                 from websocket import emit_agent_update
@@ -3465,13 +3499,10 @@ Here are the day's conversations (with timestamps):
             except Exception:
                 logger.exception("Failed to start agent %s", agent.id)
                 agent.status = AgentStatus.ERROR
-                msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.SYSTEM,
-                    content="Failed to start — project directory not found",
+                msg = self._add_system_message(
+                    db, agent.id, "Failed to start — project directory not found",
                     status=MessageStatus.FAILED,
                 )
-                db.add(msg)
 
                 from websocket import emit_agent_update, emit_new_message
                 self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
@@ -3611,13 +3642,10 @@ Here are the day's conversations (with timestamps):
                     agent.status = AgentStatus.ERROR
                     reason = f"Project directory not ready after {count} attempts"
                     self._fail_message(pending_msg, reason)
-                    msg = Message(
-                        agent_id=agent.id,
-                        role=MessageRole.SYSTEM,
-                        content=f"Project directory for '{project.name}' is not accessible — agent stopped",
-                        status=MessageStatus.COMPLETED,
+                    self._add_system_message(
+                        db, agent.id,
+                        f"Project directory for '{project.name}' is not accessible — agent stopped",
                     )
-                    db.add(msg)
                     # NOTE: removed db.commit() — same-tick flush of ALL
                     # dirty objects caused double-dispatch.  Let _tick()
                     # commit atomically at the end.
@@ -4286,31 +4314,7 @@ Here are the day's conversations (with timestamps):
                     )
 
                 # Import existing turns as messages
-                for role, content, *rest in turns:
-                    meta = rest[0] if rest else None
-                    meta_json = json.dumps(meta) if meta else None
-                    if role == "user":
-                        msg = Message(
-                            agent_id=agent.id,
-                            role=MessageRole.USER,
-                            content=content,
-                            status=MessageStatus.COMPLETED,
-                            source="cli",
-                            completed_at=_utcnow(),
-                        )
-                    elif role == "assistant":
-                        msg = Message(
-                            agent_id=agent.id,
-                            role=MessageRole.AGENT,
-                            content=content,
-                            status=MessageStatus.COMPLETED,
-                            source="cli",
-                            meta_json=meta_json,
-                            completed_at=_utcnow(),
-                        )
-                    else:
-                        continue
-                    db.add(msg)
+                self._import_turns_as_messages(db, agent.id, turns)
 
                 db.commit()
                 agents_to_sync.append((agent.id, best_sid, proj.path))
@@ -4607,39 +4611,7 @@ Here are the day's conversations (with timestamps):
 
         db = SessionLocal()
         try:
-            imported = 0
-            for role, content, *rest in turns:
-                meta = rest[0] if rest else None
-                meta_json = json.dumps(meta) if meta else None
-                if role == "user":
-                    msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.USER,
-                        content=content,
-                        status=MessageStatus.COMPLETED,
-                        completed_at=_utcnow(),
-                    )
-                elif role == "assistant":
-                    msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.AGENT,
-                        content=content,
-                        status=MessageStatus.COMPLETED,
-                        meta_json=meta_json,
-                        completed_at=_utcnow(),
-                    )
-                elif role == "system":
-                    msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.SYSTEM,
-                        content=content,
-                        status=MessageStatus.COMPLETED,
-                        completed_at=_utcnow(),
-                    )
-                else:
-                    continue
-                db.add(msg)
-                imported += 1
+            imported = self._import_turns_as_messages(db, agent_id, turns, source=None)
 
             if imported:
                 agent = db.get(Agent, agent_id)
@@ -4694,28 +4666,7 @@ Here are the day's conversations (with timestamps):
                         ).count()
                         if len(turns) > existing_count:
                             # Import new turns
-                            for role, content, *rest in turns[existing_count:]:
-                                meta = rest[0] if rest else None
-                                meta_json = json.dumps(meta) if meta else None
-                                if role == "user":
-                                    db.add(Message(
-                                        agent_id=sub_agent_id,
-                                        role=MessageRole.USER,
-                                        content=content,
-                                        status=MessageStatus.COMPLETED,
-                                        source="cli",
-                                        completed_at=_utcnow(),
-                                    ))
-                                elif role == "assistant":
-                                    db.add(Message(
-                                        agent_id=sub_agent_id,
-                                        role=MessageRole.AGENT,
-                                        content=content,
-                                        status=MessageStatus.COMPLETED,
-                                        source="cli",
-                                        meta_json=meta_json,
-                                        completed_at=_utcnow(),
-                                    ))
+                            self._import_turns_as_messages(db, sub_agent_id, turns[existing_count:])
                             sub_ag = db.get(Agent, sub_agent_id)
                             if sub_ag:
                                 last_turn = turns[-1] if turns else None
@@ -4758,28 +4709,7 @@ Here are the day's conversations (with timestamps):
 
                     # Import turns from JSONL
                     turns = _parse_session_turns(sub["jsonl_path"])
-                    for role, content, *rest in turns:
-                        meta = rest[0] if rest else None
-                        meta_json = json.dumps(meta) if meta else None
-                        if role == "user":
-                            db.add(Message(
-                                agent_id=sub_agent.id,
-                                role=MessageRole.USER,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                completed_at=_utcnow(),
-                            ))
-                        elif role == "assistant":
-                            db.add(Message(
-                                agent_id=sub_agent.id,
-                                role=MessageRole.AGENT,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                meta_json=meta_json,
-                                completed_at=_utcnow(),
-                            ))
+                    self._import_turns_as_messages(db, sub_agent.id, turns)
 
                     if turns:
                         last_turn = turns[-1]
@@ -5048,31 +4978,7 @@ Here are the day's conversations (with timestamps):
             db.flush()
 
             # Import existing turns
-            for role, content, *rest in turns:
-                meta = rest[0] if rest else None
-                meta_json = json.dumps(meta) if meta else None
-                if role == "user":
-                    msg = Message(
-                        agent_id=new_agent.id,
-                        role=MessageRole.USER,
-                        content=content,
-                        status=MessageStatus.COMPLETED,
-                        source="cli",
-                        completed_at=_utcnow(),
-                    )
-                elif role == "assistant":
-                    msg = Message(
-                        agent_id=new_agent.id,
-                        role=MessageRole.AGENT,
-                        content=content,
-                        status=MessageStatus.COMPLETED,
-                        source="cli",
-                        meta_json=meta_json,
-                        completed_at=_utcnow(),
-                    )
-                else:
-                    continue
-                db.add(msg)
+            self._import_turns_as_messages(db, new_agent.id, turns)
 
             db.commit()
             self._emit(emit_agent_update(new_agent.id, "SYNCING", project_name))
@@ -5138,12 +5044,7 @@ Here are the day's conversations (with timestamps):
             detected_model = _detect_session_model(new_fpath)
             if detected_model:
                 agent.model = detected_model
-            db.add(Message(
-                agent_id=agent_id,
-                role=MessageRole.SYSTEM,
-                content="CLI session continued (new context)",
-                status=MessageStatus.COMPLETED,
-            ))
+            self._add_system_message(db, agent_id, "CLI session continued (new context)")
             agent.last_message_at = _utcnow()
             db.commit()
             self._emit(emit_agent_update(agent_id, "SYNCING", agent.project))
@@ -5183,12 +5084,7 @@ Here are the day's conversations (with timestamps):
                 agent = db.get(Agent, agent_id)
                 if agent and agent.status == AgentStatus.SYNCING:
                     agent.status = AgentStatus.ERROR
-                    db.add(Message(
-                        agent_id=agent_id,
-                        role=MessageRole.SYSTEM,
-                        content="Sync loop crashed — check server logs for details",
-                        status=MessageStatus.COMPLETED,
-                    ))
+                    self._add_system_message(db, agent_id, "Sync loop crashed — check server logs for details")
                     db.commit()
                     self._emit(emit_agent_update(agent.id, "ERROR", agent.project))
                     logger.warning(
@@ -5492,13 +5388,10 @@ Here are the day's conversations (with timestamps):
                 # Notify UI about the compact
                 db_compact = SessionLocal()
                 try:
-                    compact_msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.SYSTEM,
-                        content="Context compacted — conversation history refreshed",
-                        status=MessageStatus.COMPLETED,
+                    compact_msg = self._add_system_message(
+                        db_compact, agent_id,
+                        "Context compacted — conversation history refreshed",
                     )
-                    db_compact.add(compact_msg)
                     db_compact.commit()
                     self._emit(emit_new_message(
                         agent_id, compact_msg.id, _sync_agent_name, _sync_project,
@@ -5674,13 +5567,10 @@ Here are the day's conversations (with timestamps):
                 # Notify UI about the compact
                 db_compact = SessionLocal()
                 try:
-                    compact_msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.SYSTEM,
-                        content="Context compacted — conversation history refreshed",
-                        status=MessageStatus.COMPLETED,
+                    compact_msg = self._add_system_message(
+                        db_compact, agent_id,
+                        "Context compacted — conversation history refreshed",
                     )
-                    db_compact.add(compact_msg)
                     db_compact.commit()
                     self._emit(emit_new_message(
                         agent_id, compact_msg.id, _sync_agent_name, _sync_project,
@@ -5954,37 +5844,7 @@ Here are the day's conversations (with timestamps):
                     final_new = turns[last_turn_count:]
                     agent = db.get(Agent, agent_id)
                     if agent and final_new:
-                        for role, content, *rest in final_new:
-                            meta = rest[0] if rest else None
-                            meta_json = json.dumps(meta) if meta else None
-                            if role == "user":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.USER,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    completed_at=_utcnow(),
-                                )
-                            elif role == "assistant":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.AGENT,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    meta_json=meta_json,
-                                    completed_at=_utcnow(),
-                                )
-                            elif role == "system":
-                                msg = Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.SYSTEM,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    completed_at=_utcnow(),
-                                )
-                            else:
-                                continue
-                            db.add(msg)
+                        self._import_turns_as_messages(db, agent_id, final_new, source=None)
                         agent.last_message_preview = (final_new[-1][1] or "")[:200]
                         agent.last_message_at = _utcnow()
                         if not self._is_agent_in_use(agent.id, agent.tmux_pane):
@@ -6048,13 +5908,7 @@ Here are the day's conversations (with timestamps):
                             kill_tmux=False, add_message=False,
                             emit=False, cancel_tasks=False,
                         )
-                        sys_msg = Message(
-                            agent_id=agent_id,
-                            role=MessageRole.SYSTEM,
-                            content="CLI session ended — sync stopped",
-                            status=MessageStatus.COMPLETED,
-                        )
-                        db.add(sys_msg)
+                        sys_msg = self._add_system_message(db, agent_id, "CLI session ended — sync stopped")
                         agent.last_message_at = _utcnow()
                         db.commit()
 
@@ -6354,13 +6208,10 @@ Here are the day's conversations (with timestamps):
                                 )
 
                     agent.status = AgentStatus.IDLE
-                    msg = Message(
-                        agent_id=agent.id,
-                        role=MessageRole.SYSTEM,
-                        content="Agent recovered after restart — re-queuing pending messages",
-                        status=MessageStatus.COMPLETED,
+                    self._add_system_message(
+                        db, agent.id,
+                        "Agent recovered after restart — re-queuing pending messages",
                     )
-                    db.add(msg)
 
                 # Re-queue EXECUTING messages so the original prompt is
                 # re-dispatched automatically instead of being lost.
