@@ -617,9 +617,45 @@ def store_insights(db, project: str, date_str: str, section_text: str):
     return len(items)
 
 
+_NON_ENGLISH_RE = re.compile(r"[^\x00-\x7F]{2,}")
+_translate_cache: dict[str, str] = {}
+
+
+def _translate_to_english(text_input: str) -> str:
+    """Translate non-English text to English keywords via OpenAI. Returns original if already English or on error."""
+    if not _NON_ENGLISH_RE.search(text_input):
+        return text_input
+    # Check cache
+    cache_key = text_input[:200]
+    if cache_key in _translate_cache:
+        return _translate_cache[cache_key]
+    try:
+        import openai
+        client = openai.OpenAI()
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": f"Translate the following to English technical keywords (no explanation, just the keywords separated by spaces):\n{text_input[:300]}",
+            }],
+            max_tokens=100,
+            temperature=0,
+        )
+        translated = resp.choices[0].message.content.strip()
+        if translated:
+            _translate_cache[cache_key] = translated
+            return translated
+    except Exception:
+        pass
+    return text_input
+
+
 def query_insights(db, project: str, query: str, limit: int = 15, recent_days: int = 7) -> list[str]:
     """Retrieve relevant insights for a project via FTS5 + recency boost."""
     from models import ProgressInsight
+
+    # Auto-translate CJK queries to English for FTS5 matching
+    query = _translate_to_english(query)
 
     results: dict[int, tuple[str, float]] = {}
 
