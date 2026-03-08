@@ -343,24 +343,35 @@ def cleanup_source_session(
     return removed
 
 
-def evict_session(session_id: str, project_path: str) -> None:
+def evict_session(session_id: str, project_path: str, worktree: str | None = None) -> None:
     """Remove a cached session that has been superseded.
 
     When Claude assigns a new session_id on --resume, the new file contains
     the full conversation.  The old cached file is a strict subset and can be
-    safely deleted.
+    safely deleted.  Also cleans the worktree cache directory if provided.
     """
-    cache_dir = session_cache_dir(project_path)
-    jsonl_path = os.path.join(cache_dir, f"{session_id}.jsonl")
-    subdir_path = os.path.join(cache_dir, session_id)
+    dirs_to_check = [session_cache_dir(project_path)]
+    if worktree:
+        wt_path = os.path.join(project_path, ".claude", "worktrees", worktree)
+        dirs_to_check.append(session_cache_dir(wt_path))
 
     removed = False
-    if os.path.exists(jsonl_path):
-        os.unlink(jsonl_path)
-        removed = True
-    if os.path.isdir(subdir_path):
-        shutil.rmtree(subdir_path)
-        removed = True
+    for cache_dir in dirs_to_check:
+        jsonl_path = os.path.join(cache_dir, f"{session_id}.jsonl")
+        subdir_path = os.path.join(cache_dir, session_id)
+
+        if os.path.exists(jsonl_path):
+            try:
+                os.unlink(jsonl_path)
+                removed = True
+            except OSError as e:
+                logger.warning("Failed to evict cached JSONL %s: %s", jsonl_path, e)
+        if os.path.isdir(subdir_path):
+            try:
+                shutil.rmtree(subdir_path)
+                removed = True
+            except OSError as e:
+                logger.warning("Failed to evict cached subdir %s: %s", subdir_path, e)
 
     if removed:
         logger.info("Evicted superseded cache for session %s", session_id)

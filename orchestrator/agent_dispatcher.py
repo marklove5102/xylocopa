@@ -2021,7 +2021,7 @@ class AgentDispatcher:
                 session_id, other[0],
             )
             return
-        evict_session(session_id, project_path)
+        evict_session(session_id, project_path, worktree)
         cleanup_source_session(session_id, project_path, worktree)
 
     def _refresh_pane_attached(self):
