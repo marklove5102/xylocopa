@@ -1127,7 +1127,11 @@ async def delete_trash_folder(name: str):
     target = os.path.join(projects_dir, ".trash", name)
     if not os.path.isdir(target):
         raise HTTPException(status_code=404, detail=f"Trash folder '{name}' not found")
-    shutil.rmtree(target)
+    try:
+        shutil.rmtree(target)
+    except OSError as e:
+        logger.error("Failed to delete trash folder %s: %s", target, e)
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
     logger.info("Permanently deleted trash folder: %s", target)
     return {"status": "deleted", "name": name}
 
@@ -1330,6 +1334,7 @@ def _check_no_active_agents(name: str, db: Session):
             Agent.status.in_([
                 AgentStatus.STARTING,
                 AgentStatus.EXECUTING,
+                AgentStatus.SYNCING,
             ]),
         )
         .count()
@@ -1555,11 +1560,16 @@ async def delete_project(name: str, request: Request, db: Session = Depends(get_
         agent_ids = [a.id for a in db.query(Agent.id).filter(Agent.project == name).all()]
         if agent_ids:
             db.query(Message).filter(Message.agent_id.in_(agent_ids)).delete(synchronize_session=False)
-        db.query(Agent).filter(Agent.project == name).delete(synchronize_session=False)
+        # Delete Tasks before Agents (Task.agent_id FK references agents.id)
         db.query(Task).filter(Task.project == name).delete(synchronize_session=False)
+        db.query(Agent).filter(Agent.project == name).delete(synchronize_session=False)
         db.query(StarredSession).filter(StarredSession.project == name).delete(synchronize_session=False)
         db.delete(proj)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to delete project records")
         _remove_from_registry(name)
 
     # Move files to .trash regardless of DB registration
@@ -1570,10 +1580,14 @@ async def delete_project(name: str, request: Request, db: Session = Depends(get_
         trash_dir = os.path.join(projects_dir, ".trash")
         os.makedirs(trash_dir, exist_ok=True)
         dst = os.path.join(trash_dir, name)
-        if os.path.exists(dst):
-            shutil.rmtree(dst)
-        shutil.move(src, dst)
-        logger.info("Moved %s to %s", src, dst)
+        try:
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.move(src, dst)
+            logger.info("Moved %s to %s", src, dst)
+        except OSError as e:
+            logger.error("Failed to move project to trash: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to move files to trash: {e}")
     elif not proj:
         raise HTTPException(status_code=404, detail=f"Folder '{name}' not found")
 
@@ -4352,10 +4366,11 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is already stopped")
 
-    # Kill the tmux pane if this is a CLI-synced agent
+    # Kill the tmux pane/session if this is a CLI-synced agent
     if agent.cli_sync and agent.tmux_pane:
         import subprocess as _sp
         pane = agent.tmux_pane
+        sess_name = f"ah-{agent.id[:8]}"
         try:
             # Send Ctrl-C to interrupt Claude, then close the pane
             _sp.run(["tmux", "send-keys", "-t", pane, "C-c"], capture_output=True, timeout=_TMUX_CMD_TIMEOUT)
@@ -4364,6 +4379,11 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
             logger.info("Killed tmux pane %s for agent %s", pane, agent.id)
         except Exception:
             logger.warning("Failed to kill tmux pane %s for agent %s", pane, agent.id, exc_info=True)
+        # Also kill the session as fallback (pane kill may leave the session alive)
+        try:
+            _sp.run(["tmux", "kill-session", "-t", sess_name], capture_output=True, timeout=_TMUX_CMD_TIMEOUT)
+        except Exception:
+            pass
 
     agent.status = AgentStatus.STOPPED
     agent.tmux_pane = None
@@ -4422,7 +4442,7 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
 
 
 @app.delete("/api/agents/{agent_id}/permanent")
-async def permanently_delete_agent(agent_id: str, db: Session = Depends(get_db)):
+async def permanently_delete_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
     """Permanently delete an agent, its messages, session JSONL, and output logs."""
     from session_cache import cleanup_source_session, evict_session
 
@@ -4432,18 +4452,55 @@ async def permanently_delete_agent(agent_id: str, db: Session = Depends(get_db))
     if agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
         raise HTTPException(status_code=400, detail="Agent must be stopped before deleting")
 
-    cleaned_files = []
+    # 0. Kill tmux session if still alive
+    if agent.tmux_pane:
+        import subprocess as _sp
+        sess_name = f"ah-{agent.id[:8]}"
+        try:
+            _sp.run(["tmux", "kill-session", "-t", sess_name],
+                    capture_output=True, timeout=5)
+            logger.info("Killed tmux session %s for permanent delete of agent %s", sess_name, agent.id)
+        except Exception:
+            logger.warning("Failed to kill tmux session %s for agent %s", sess_name, agent.id)
 
-    # 1. Delete session source files (.jsonl + subdir) and cache
-    if agent.session_id:
-        project = db.query(Project).filter(Project.name == agent.project).first()
-        if project:
-            if cleanup_source_session(agent.session_id, project.path, agent.worktree):
-                cleaned_files.append(f"{agent.session_id}.jsonl")
-            evict_session(agent.session_id, project.path)
+    # Cancel dispatcher tasks
+    ad = getattr(request.app.state, "agent_dispatcher", None)
+    if ad:
+        ad._cancel_sync_task(agent.id)
+        ad._cancel_launch_task(agent.id)
+        ad._stale_session_retries.pop(agent.id, None)
+        ad._known_subagents.pop(agent.id, None)
 
-    # 2. Delete output log files for all messages
+    # 1. Delete DB records FIRST (so if this fails, no files are orphaned)
+    # Collect file info before deleting DB records
+    session_id = agent.session_id
+    agent_project = agent.project
+    agent_worktree = agent.worktree
     msg_ids = [m.id for m in db.query(Message.id).filter(Message.agent_id == agent_id).all()]
+
+    deleted_msgs = db.query(Message).filter(Message.agent_id == agent_id).delete(synchronize_session=False)
+    # Unlink Tasks that reference this agent (SET NULL, don't delete the tasks)
+    db.query(Task).filter(Task.agent_id == agent_id).update(
+        {Task.agent_id: None}, synchronize_session=False
+    )
+    db.delete(agent)
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("Failed to delete agent %s from DB: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    # 2. Delete session source files (.jsonl + subdir) and cache (safe: DB already committed)
+    cleaned_files = []
+    if session_id:
+        project = db.query(Project).filter(Project.name == agent_project).first()
+        if project:
+            if cleanup_source_session(session_id, project.path, agent_worktree):
+                cleaned_files.append(f"{session_id}.jsonl")
+            evict_session(session_id, project.path, agent_worktree)
+
+    # 3. Delete output log files for all messages
     for mid in msg_ids:
         log_path = f"/tmp/claude-output-{mid}.log"
         if os.path.isfile(log_path):
@@ -4453,10 +4510,6 @@ async def permanently_delete_agent(agent_id: str, db: Session = Depends(get_db))
             except OSError as e:
                 logger.warning("Failed to delete output log %s: %s", log_path, e)
 
-    # 3. Delete DB records
-    deleted_msgs = db.query(Message).filter(Message.agent_id == agent_id).delete()
-    db.delete(agent)
-    db.commit()
     logger.info("Permanently deleted agent %s (%d messages, %d files cleaned)",
                 agent_id, deleted_msgs, len(cleaned_files))
     return {"detail": "ok", "deleted_messages": deleted_msgs, "cleaned_files": len(cleaned_files)}

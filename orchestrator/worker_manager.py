@@ -309,7 +309,14 @@ class WorkerManager:
         else:
             logger.debug("Process %s already exited", pid_str)
 
-        # Clean up tracking
+        # Clean up output file and tracking
+        output_file = info.get("output_file")
+        if output_file:
+            try:
+                if os.path.isfile(output_file):
+                    os.remove(output_file)
+            except OSError as e:
+                logger.debug("Failed to remove output file %s: %s", output_file, e)
         self._processes.pop(pid_str, None)
 
     def stop_project_processes(self, project_name: str):
