@@ -448,6 +448,20 @@ Priority-ranked architectural gaps:
 - Also: `_create_task_agent` now flushes instead of committing, so the caller can rollback agent+message if the CAS fails.
 - Lesson: **Atomic CAS for SQLite concurrency**: `UPDATE ... WHERE status=:expected` is the correct pattern for SQLite (no row-level locks). The WHERE clause acts as a compare-and-swap — if another transaction changed the status, `rowcount == 0` and the caller knows to abort. Always flush (not commit) in sub-functions when the caller needs atomic multi-step operations.
 
+### 2026-03-04 | Task: Dispatch flow test | Status: success
+
+### What was done
+- Added `test_dispatch_flow.py` with **59 tests** covering the full task dispatch lifecycle
+- 10 test groups: dispatch endpoint, auto-dispatch, `_dispatch_pending_tasks`, `_create_task_agent`, `_build_task_prompt`, `_harvest_task_completions`, `_check_scheduled_tasks`, full flow integration, state machine edge cases, edge cases
+- All 123 backend tests pass (59 new + 64 existing)
+
+### Lessons learned
+- **FK constraints in tests**: When mocking `_create_task_agent` to return an agent ID, that ID must exist in the agents table to satisfy FK constraints. Pre-create agent records before dispatch.
+- **Task model defaults not set outside DB**: Creating `Task(title="X")` without `db.add()/commit()` leaves `attempt_number=None` (not the column default `1`). Always set required fields explicitly in unit tests.
+- **Push module uses its own SessionLocal**: `push.send_push_notification` and `is_notification_enabled` create their own DB sessions via `SessionLocal`, which connect to a different in-memory DB in tests. Patch `push.is_notification_enabled` to `return False` to avoid this.
+- **Dispatcher methods don't commit**: `_check_scheduled_tasks` relies on `_tick()` to commit at the end. When testing individual methods, call `db.commit()` after.
+- **Pre-existing bug**: `GET /api/v2/tasks/{id}` detail endpoint crashes with `TaskDetailOut() got multiple values for keyword argument 'review_artifacts'` — `review_artifacts` exists in both `TaskOut` (base) and the `**TaskOut.model_validate(task).model_dump()` spread.
+
 ## 2026-03-06 — Daily Insights
 1. Try/Revert has a multi-task conflict bug: if Task A is tried (merged to main) and then Task B is also tried, reverting Task A via `git reset --hard` silently rolls back Task B's merge too — `try_base_commit` of Task B now points to a dangling intermediate state.
 2. Non-worktree tasks have `try_base_commit` set at agent creation time (`agent_dispatcher.py:1779`), which means the "Try" button never appears in the frontend — only "Revert" shows, creating a semantic mismatch.
