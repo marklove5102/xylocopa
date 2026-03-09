@@ -149,6 +149,36 @@ async def test_update_project_settings_auto_progress(client, db_engine):
 
 
 @pytest.mark.anyio
+async def test_update_project_settings_ai_insights(client, db_engine):
+    """PATCH /api/projects/{name}/settings with ai_insights=True."""
+    from sqlalchemy.orm import sessionmaker
+
+    Session = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
+    db = Session()
+    db.add(Project(
+        name="ai-insights-proj",
+        display_name="AI Insights Proj",
+        path="/tmp/ai-insights-proj",
+    ))
+    db.commit()
+    db.close()
+
+    resp = await client.patch(
+        "/api/projects/ai-insights-proj/settings",
+        json={"ai_insights": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ai_insights"] is True
+
+    # Verify it persisted in the DB
+    db2 = Session()
+    persisted = db2.get(Project, "ai-insights-proj")
+    assert persisted.ai_insights is True
+    db2.close()
+
+
+@pytest.mark.anyio
 async def test_update_project_settings_not_found(client):
     """PATCH settings for a non-existent project should return 404."""
     resp = await client.patch(

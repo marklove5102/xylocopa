@@ -148,7 +148,121 @@ class TestStripAgentPreamble:
 
 
 # ===========================================================================
-# 3. _dedup_sig() tests
+# 3. query_insights_ai() tests (mocked OpenAI)
+# ===========================================================================
+
+
+def _mock_openai(monkeypatch, response_content=None, raise_exc=None):
+    """Helper to mock the lazy `import openai` inside query_insights_ai."""
+    class FakeChoice:
+        def __init__(self):
+            self.message = type("M", (), {"content": response_content})()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeClient:
+        def __init__(self, **kw): pass
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    if raise_exc:
+                        raise raise_exc
+                    return FakeResp()
+
+    fake_mod = type(sys)("openai")
+    fake_mod.OpenAI = FakeClient
+    monkeypatch.setitem(sys.modules, "openai", fake_mod)
+
+
+class TestQueryInsightsAi:
+    """Unit tests for query_insights_ai with mocked 4o-mini responses."""
+
+    def _make_candidates(self, n=10):
+        return [f"[2026-03-0{i % 10}] Insight number {i}" for i in range(1, n + 1)]
+
+    def test_valid_indices(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        candidates = self._make_candidates(20)
+        monkeypatch.setattr("agent_dispatcher.query_insights", lambda *a, **kw: candidates)
+        _mock_openai(monkeypatch, response_content="[1, 5, 10]")
+
+        result = query_insights_ai(None, "proj", "fix the bug")
+        assert len(result) == 3
+        assert result[0] == candidates[0]   # index 1 → candidates[0]
+        assert result[1] == candidates[4]   # index 5 → candidates[4]
+        assert result[2] == candidates[9]   # index 10 → candidates[9]
+
+    def test_empty_candidates_skips_api_call(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        monkeypatch.setattr("agent_dispatcher.query_insights", lambda *a, **kw: [])
+        result = query_insights_ai(None, "proj", "fix the bug")
+        assert result == []
+
+    def test_out_of_bounds_indices_filtered(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        candidates = self._make_candidates(5)
+        monkeypatch.setattr("agent_dispatcher.query_insights", lambda *a, **kw: candidates)
+        _mock_openai(monkeypatch, response_content="[0, 1, 6, 99]")
+
+        result = query_insights_ai(None, "proj", "fix the bug")
+        # Only index 1 is valid (0 and 6/99 are out of bounds)
+        assert len(result) == 1
+        assert result[0] == candidates[0]
+
+    def test_invalid_json_falls_back_to_fts5(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        candidates = self._make_candidates(5)
+        fts5_results = ["[2026-03-01] FTS5 fallback insight"]
+
+        def mock_query_insights(*a, **kw):
+            if kw.get("pad_recent"):
+                return candidates
+            return fts5_results
+
+        monkeypatch.setattr("agent_dispatcher.query_insights", mock_query_insights)
+        _mock_openai(monkeypatch, response_content="not valid json")
+
+        result = query_insights_ai(None, "proj", "fix the bug")
+        assert result == fts5_results
+
+    def test_timeout_falls_back_to_fts5(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        candidates = self._make_candidates(5)
+        fts5_results = ["[2026-03-01] FTS5 fallback insight"]
+
+        def mock_query_insights(*a, **kw):
+            if kw.get("pad_recent"):
+                return candidates
+            return fts5_results
+
+        monkeypatch.setattr("agent_dispatcher.query_insights", mock_query_insights)
+        _mock_openai(monkeypatch, raise_exc=TimeoutError("Connection timed out"))
+
+        result = query_insights_ai(None, "proj", "fix the bug")
+        assert result == fts5_results
+
+    def test_duplicate_indices_deduped(self, monkeypatch):
+        from agent_dispatcher import query_insights_ai
+
+        candidates = self._make_candidates(5)
+        monkeypatch.setattr("agent_dispatcher.query_insights", lambda *a, **kw: candidates)
+        _mock_openai(monkeypatch, response_content="[2, 2, 3, 3]")
+
+        result = query_insights_ai(None, "proj", "fix the bug")
+        assert len(result) == 2
+        assert result[0] == candidates[1]  # index 2
+        assert result[1] == candidates[2]  # index 3
+
+
+# ===========================================================================
+# 4. _dedup_sig() tests
 # ===========================================================================
 
 
