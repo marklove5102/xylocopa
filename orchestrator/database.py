@@ -356,6 +356,36 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Unique index on agents.session_id ---
+        # Enforces one-agent-per-session at the DB level, preventing
+        # cross-agent session theft even if application logic races.
+        agent_indexes = {r[1] for r in conn.execute(text(
+            "PRAGMA index_list(agents)"
+        )).fetchall()}
+        if "uq_agents_session_id" not in agent_indexes:
+            # Clean up duplicate session_ids before adding unique index.
+            # Keep the most recently active agent for each session_id,
+            # NULL out the rest.
+            conn.execute(text("""
+                UPDATE agents SET session_id = NULL
+                WHERE session_id IS NOT NULL
+                  AND id NOT IN (
+                    SELECT id FROM (
+                      SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY session_id
+                        ORDER BY last_message_at DESC NULLS LAST, created_at DESC
+                      ) AS rn
+                      FROM agents
+                      WHERE session_id IS NOT NULL
+                    ) ranked WHERE rn = 1
+                  )
+            """))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX uq_agents_session_id "
+                "ON agents(session_id) WHERE session_id IS NOT NULL"
+            ))
+            conn.commit()
+
         # --- progress_insights compound index for existing DBs ---
         if "progress_insights" in [r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"
