@@ -777,7 +777,10 @@ def query_insights(db, project: str, query: str, limit: int = 15,
     from models import ProgressInsight
 
     # Auto-translate CJK queries to English for FTS5 matching
+    raw_query = query
     query = _translate_to_english(query)
+    if query != raw_query:
+        logger.info("query_insights translate: %r -> %r", raw_query[:120], query[:200])
 
     results: dict[int, tuple[str, float]] = {}
 
@@ -787,6 +790,7 @@ def query_insights(db, project: str, query: str, limit: int = 15,
         words = [w for w in re.split(r"\W+", query) if len(w) > 1 and w.upper() not in _fts_reserved]
         if words:
             fts_query = " OR ".join(f'"{w}"' for w in words[:20])
+            logger.info("query_insights FTS5: words=%s  fts_query=%s", words[:20], fts_query)
             fts_rows = db.execute(
                 text(
                     "SELECT pi.id, pi.content, pi.date, rank "
@@ -799,6 +803,11 @@ def query_insights(db, project: str, query: str, limit: int = 15,
             ).fetchall()
             for row_id, content, date_str, rank in fts_rows:
                 results[row_id] = (f"[{date_str}] {content}", -rank)
+            logger.info(
+                "query_insights FTS5 hits (%d): %s",
+                len(fts_rows),
+                [(row_id, round(rank, 4), content[:60]) for row_id, content, date_str, rank in fts_rows],
+            )
 
     # 2. Recent insights — only when pad_recent is enabled
     if pad_recent:
@@ -810,12 +819,21 @@ def query_insights(db, project: str, query: str, limit: int = 15,
             .limit(limit * 3)
             .all()
         )
+        padded = 0
         for r in recent_rows:
             if r.id not in results:
                 results[r.id] = (f"[{r.date}] {r.content}", 0.5)  # lower rank than FTS hits
+                padded += 1
+        if padded:
+            logger.info("query_insights pad_recent: added %d recent insights (score=0.5)", padded)
 
     # Sort by relevance score (higher = better)
     sorted_items = sorted(results.values(), key=lambda x: x[1], reverse=True)
+    logger.info(
+        "query_insights final (%d/%d): %s",
+        len(sorted_items[:limit]), len(results),
+        [(round(s, 4), t[:50]) for t, s in sorted_items[:limit]],
+    )
     return [item[0] for item in sorted_items[:limit]]
 
 
@@ -2544,6 +2562,11 @@ Here are the day's conversations (with timestamps):
                 lines = lines[1:]
             new_section = "\n".join(lines).strip()
 
+        # Strip LLM preamble before the ## heading (e.g. "Now I have full context...")
+        heading_idx = new_section.find(f"## {summary_date}")
+        if heading_idx > 0:
+            new_section = new_section[heading_idx:].strip()
+
         # Append to PROGRESS.md (never overwrite)
         progress_path = os.path.join(project_path, "PROGRESS.md")
         try:
@@ -2552,10 +2575,15 @@ Here are the day's conversations (with timestamps):
                 with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
                     existing = f.read()
 
-            separator = "\n\n" if existing and not existing.endswith("\n\n") else ("\n" if existing and not existing.endswith("\n") else "")
-            with open(progress_path, "w", encoding="utf-8") as f:
-                f.write(existing + separator + new_section + "\n")
-            logger.info("Auto-appended daily PROGRESS.md summary for %s", project_name)
+            # Skip append if a section for this date already exists
+            date_heading = f"## {summary_date}"
+            if date_heading in existing:
+                logger.info("Auto-summary skipped append for %s: %s section already in PROGRESS.md", project_name, summary_date)
+            else:
+                separator = "\n\n" if existing and not existing.endswith("\n\n") else ("\n" if existing and not existing.endswith("\n") else "")
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    f.write(existing + separator + new_section + "\n")
+                logger.info("Auto-appended daily PROGRESS.md summary for %s", project_name)
         except OSError as e:
             logger.warning("Failed to write PROGRESS.md for %s: %s", project_name, e)
 
