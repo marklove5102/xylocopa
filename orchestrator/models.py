@@ -223,6 +223,10 @@ class ProgressInsight(Base):
         String(100), ForeignKey("projects.name", ondelete="CASCADE"),
         nullable=False, index=True,
     )
+    # Link insight to the agent that produced it (NULL for cross-agent daily summaries)
+    agent_id: Mapped[str | None] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True,
+    )
     date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

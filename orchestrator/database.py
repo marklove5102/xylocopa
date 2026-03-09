@@ -386,6 +386,18 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Add agent_id column to progress_insights if missing ---
+        if "progress_insights" in [r[0] for r in conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )).fetchall()]:
+            pi_cols = _table_columns(conn, "progress_insights")
+            if "agent_id" not in pi_cols:
+                conn.execute(text(
+                    "ALTER TABLE progress_insights ADD COLUMN agent_id VARCHAR(12) "
+                    "REFERENCES agents(id) ON DELETE SET NULL"
+                ))
+                conn.commit()
+
         # --- progress_insights compound index for existing DBs ---
         if "progress_insights" in [r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"
