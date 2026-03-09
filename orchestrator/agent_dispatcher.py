@@ -1982,6 +1982,11 @@ class AgentDispatcher:
         # Tmux launch background tasks: agent_id -> asyncio.Task
         self._launch_tasks: dict[str, asyncio.Task] = {}
 
+        # Panes currently being launched — sessions appearing in these
+        # panes must NOT be claimed as successors by other agents.
+        # agent_id -> pane_id  (populated by _launch_tmux_background)
+        self._launching_panes: dict[str, str] = {}
+
         # CLI auto-detect tick counter (run every ~30s, not every 2s tick)
         self._cli_detect_counter = 0
         self._cli_detect_interval = 15  # ticks (15 * 2s = 30s)
@@ -3840,8 +3845,7 @@ Here are the day's conversations (with timestamps):
                     wrap_prompt=False,
                 )
 
-            _tagged = f"{_AGENTHIVE_PROMPT_MARKER}\n{due_msg.content}"
-            ok = send_tmux_message(agent.tmux_pane, _tagged)
+            ok = send_tmux_message(agent.tmux_pane, due_msg.content)
             if ok:
                 due_msg.status = MessageStatus.COMPLETED
                 due_msg.completed_at = _utcnow()
@@ -4788,6 +4792,7 @@ Here are the day's conversations (with timestamps):
         task = self._launch_tasks.pop(agent_id, None)
         if task and not task.done():
             task.cancel()
+        self._launching_panes.pop(agent_id, None)
 
     def _detect_successor_session(
         self, current_sid: str, project_path: str, agent_id: str,
@@ -4848,8 +4853,23 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
+        # Collect PIDs of OTHER agents currently being launched.
+        # Their sessions are not yet in active_sids (agent still in STARTING
+        # state with session_id=None), so we must exclude them explicitly
+        # to prevent cross-agent session theft.
+        launching_pids: set[int] = set()
+        pane_map = _build_tmux_claude_map()
+        for other_agent_id, other_pane_id in self._launching_panes.items():
+            if other_agent_id == agent_id:
+                continue
+            other_info = pane_map.get(other_pane_id)
+            if other_info and other_info.get("pid"):
+                launching_pids.add(other_info["pid"])
+
         # Strategy 0: direct fd scan — the most reliable method when
         # Claude Code keeps the JSONL open (not always the case).
+        # Safe: uses THIS agent's own pane PID, so it can only find
+        # sessions belonging to this agent's Claude process.
         if pane_pid:
             fd_sid = _detect_pid_session_jsonl(pane_pid)
             if fd_sid and fd_sid != current_sid and fd_sid not in active_sids:
@@ -4888,6 +4908,16 @@ Here are the day's conversations (with timestamps):
                     if mtime <= current_mtime:
                         continue
 
+                    # Cache session PID lookup (used by launching guard
+                    # and Strategy 3 — avoids double file read).
+                    session_pid = _get_session_pid(sid)
+
+                    # Skip sessions belonging to other agents being launched.
+                    # These agents are in STARTING state with session_id=None,
+                    # so they won't appear in active_sids yet.
+                    if launching_pids and session_pid and session_pid in launching_pids:
+                        continue
+
                     # Strategy 1: slug match (/clear transition) — newest wins
                     if current_slug:
                         candidate_slug = _get_session_slug(fpath)
@@ -4919,7 +4949,6 @@ Here are the day's conversations (with timestamps):
                             continue
 
                     # Strategy 3: legacy PID-based match (fallback) — newest wins
-                    session_pid = _get_session_pid(sid)
                     if pane_pid is not None:
                         if session_pid == pane_pid:
                             if mtime > best_mtime:
@@ -4934,7 +4963,11 @@ Here are the day's conversations (with timestamps):
                                 )
                                 best_sid, best_mtime = sid, mtime
                     elif session_pid is not None:
-                        if mtime > best_mtime:
+                        # Degraded mode: our agent has no pane_pid, but the
+                        # candidate has a session_pid.  Only accept if that
+                        # PID is NOT a known launching pane (avoids stealing
+                        # sessions from agents still in STARTING state).
+                        if session_pid not in launching_pids and mtime > best_mtime:
                             best_sid, best_mtime = sid, mtime
             except OSError as e:
                 logger.warning(
@@ -5744,15 +5777,18 @@ Here are the day's conversations (with timestamps):
                             # Skip system-wrapped prompts from _build_agent_prompt
                             if _AGENTHIVE_PROMPT_MARKER in content[:80]:
                                 continue
-                            # Dedup: skip if a matching web-sent (or sourceless)
-                            # message already exists.  Use whitespace-normalised
-                            # comparison because tmux converts tabs to spaces.
+                            # Dedup: skip if an orchestrator-dispatched message
+                            # already exists.  Use whitespace-normalised comparison
+                            # because tmux converts tabs to spaces.  Match against
+                            # all non-CLI sources (web, task, plan_continue, etc.)
+                            # so queued tmux dispatches are covered without needing
+                            # an inline marker.
                             from sqlalchemy import or_
                             _norm = _dedup_sig(content)
                             _candidates = db.query(Message).filter(
                                 Message.agent_id == agent_id,
                                 Message.role == MessageRole.USER,
-                                or_(Message.source == "web", Message.source.is_(None)),
+                                or_(Message.source != "cli", Message.source.is_(None)),
                             ).all()
                             existing_web = any(
                                 _dedup_sig(m.content) == _norm
