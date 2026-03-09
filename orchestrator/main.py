@@ -4237,7 +4237,15 @@ async def _launch_tmux_background(
                 return
             agent.session_id = session_id
             agent.status = AgentStatus.SYNCING
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                # UNIQUE constraint on session_id — another agent raced us
+                db.rollback()
+                _mark_error(
+                    "Session %s UNIQUE constraint violation" % session_id[:12]
+                )
+                return
 
             ad._emit(emit_agent_update(agent_id, "SYNCING", agent.project))
         finally:
@@ -4707,7 +4715,14 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             status=MessageStatus.COMPLETED,
         )
         db.add(msg)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Session already owned by another agent",
+            )
         db.refresh(agent)
         asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
         logger.info("Agent %s resumed (sync=%s, mode=%s)", agent.id, resumed_sync, resume_mode)

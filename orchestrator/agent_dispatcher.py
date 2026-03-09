@@ -4355,7 +4355,16 @@ Here are the day's conversations (with timestamps):
                 # Import existing turns as messages
                 self._import_turns_as_messages(db, agent.id, turns)
 
-                db.commit()
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.warning(
+                        "_auto_detect_cli_sessions: session %s already owned "
+                        "(UNIQUE violation), skipping pane %s",
+                        best_sid[:12], pane_id,
+                    )
+                    continue
                 agents_to_sync.append((agent.id, best_sid, proj.path))
                 self._emit(emit_agent_update(agent.id, agent.status.value, proj.name))
 
@@ -5049,7 +5058,18 @@ Here are the day's conversations (with timestamps):
             # Import existing turns
             self._import_turns_as_messages(db, new_agent.id, turns)
 
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                # UNIQUE constraint on session_id — another agent already
+                # owns this session.  Roll back and abort.
+                db.rollback()
+                logger.warning(
+                    "Successor spawn blocked: session %s already owned "
+                    "(UNIQUE violation), aborting for agent %s",
+                    new_sid[:12], old_agent_id,
+                )
+                return
             self._emit(emit_agent_update(new_agent.id, "SYNCING", project_name))
             self.start_session_sync(new_agent.id, new_sid, project_path)
 
@@ -5115,7 +5135,18 @@ Here are the day's conversations (with timestamps):
                 agent.model = detected_model
             self._add_system_message(db, agent_id, "CLI session continued (new context)")
             agent.last_message_at = _utcnow()
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                # UNIQUE constraint on session_id — another agent already
+                # owns this session.  Roll back and abort the rotation.
+                db.rollback()
+                logger.warning(
+                    "Session rotation blocked for agent %s: session %s "
+                    "already owned by another agent (UNIQUE violation)",
+                    agent_id, new_sid[:12],
+                )
+                return
             self._emit(emit_agent_update(agent_id, "SYNCING", agent.project))
             logger.info(
                 "Rotated agent %s session in-place: %s → %s",

@@ -68,12 +68,17 @@ class Task(Base):
     # New first-class fields
     title: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    project_name: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    project_name: Mapped[str | None] = mapped_column(
+        String(100), ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     priority: Mapped[int] = mapped_column(Integer, default=0)  # 0=normal, 1=high
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), nullable=False, default=TaskStatus.INBOX, index=True
     )
-    agent_id: Mapped[str | None] = mapped_column(String(12), ForeignKey("agents.id"), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True,
+    )
     worktree_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
@@ -110,7 +115,10 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
-    project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    project: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     mode: Mapped[AgentMode] = mapped_column(
         Enum(AgentMode), nullable=False, default=AgentMode.AUTO
@@ -120,7 +128,7 @@ class Agent(Base):
     )
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     worktree: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     cli_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     tmux_pane: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -132,8 +140,13 @@ class Agent(Base):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)
     skip_permissions: Mapped[bool] = mapped_column(Boolean, default=True)
     muted: Mapped[bool] = mapped_column(Boolean, default=False)
-    parent_id: Mapped[str | None] = mapped_column(String(12), nullable=True)
-    task_id: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True,
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(12), ForeignKey("tasks.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     is_subagent: Mapped[bool] = mapped_column(Boolean, default=False)
     claude_agent_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
@@ -143,7 +156,8 @@ class Message(Base):
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
     agent_id: Mapped[str] = mapped_column(
-        String(12), ForeignKey("agents.id"), nullable=False, index=True
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     role: Mapped[MessageRole] = mapped_column(
         Enum(MessageRole), nullable=False
@@ -181,7 +195,10 @@ class StarredSession(Base):
     __tablename__ = "starred_sessions"
 
     session_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    project: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
@@ -202,7 +219,10 @@ class ProgressInsight(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    project: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
     date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
