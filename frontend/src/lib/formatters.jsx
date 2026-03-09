@@ -361,13 +361,14 @@ function resolveFileUrl(rawPath, defaultProject) {
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 const VIDEO_EXTS = /\.(mp4|webm|mov)$/i;
 const DOC_EXTS = /\.(py|js|ts|jsx|tsx|html|css|md|txt|pdf|sh|bash|rb|go|rs|c|cpp|h|hpp|java|kt|swift|yaml|yml|toml|xml|sql|r|lua|pl|ex|exs|zig|nim|dart|scala|clj|hs|erl|elm)$/i;
-const IGNORE_EXTS = /\.(jsonl|log|csv|json|lock)$/i;
+const CSV_EXTS = /\.(csv)$/i;
+const IGNORE_EXTS = /\.(jsonl|log|json|lock)$/i;
 
 // All extensions the agent path scanner should match (media + doc)
-const AGENT_EXTS = /\.(png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|py|js|ts|jsx|tsx|html|css|md|txt|pdf|sh|bash|rb|go|rs|c|cpp|h|hpp|java|kt|swift|yaml|yml|toml|xml|sql|r|lua|pl|ex|exs|zig|nim|dart|scala|clj|hs|erl|elm|ply|obj|stl|glb|gltf)$/i;
+const AGENT_EXTS = /\.(png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv|py|js|ts|jsx|tsx|html|css|md|txt|pdf|sh|bash|rb|go|rs|c|cpp|h|hpp|java|kt|swift|yaml|yml|toml|xml|sql|r|lua|pl|ex|exs|zig|nim|dart|scala|clj|hs|erl|elm|ply|obj|stl|glb|gltf)$/i;
 
 // Compiled regexes for agent path detection
-const AGENT_EXT_LIST = "png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|py|js|ts|jsx|tsx|html|css|md|txt|pdf|sh|bash|rb|go|rs|c|cpp|h|hpp|java|kt|swift|yaml|yml|toml|xml|sql|r|lua|pl|ex|exs|zig|nim|dart|scala|clj|hs|erl|elm|ply|obj|stl|glb|gltf";
+const AGENT_EXT_LIST = "png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|csv|py|js|ts|jsx|tsx|html|css|md|txt|pdf|sh|bash|rb|go|rs|c|cpp|h|hpp|java|kt|swift|yaml|yml|toml|xml|sql|r|lua|pl|ex|exs|zig|nim|dart|scala|clj|hs|erl|elm|ply|obj|stl|glb|gltf";
 const RE_MD_IMAGE = new RegExp(`!\\[.*?\\]\\((\\S+?\\.(?:${AGENT_EXT_LIST}))\\)`, "gi");
 const RE_BACKTICK = new RegExp("`([^`]*/[^`]*\\.(?:" + AGENT_EXT_LIST + "))`", "gi");
 const RE_BARE_PATH = new RegExp("(?:^|[\\s(])([^\\s()\\[\\]!]*/[^\\s()\\[\\]]+\\.(?:" + AGENT_EXT_LIST + "))(?=[\\s),\\]]|$)", "gim");
@@ -384,6 +385,7 @@ export function stripAttachmentTags(text) {
 function classifyExt(filename) {
   if (IMAGE_EXTS.test(filename)) return "image";
   if (VIDEO_EXTS.test(filename)) return "video";
+  if (CSV_EXTS.test(filename)) return "csv";
   if (DOC_EXTS.test(filename)) return "doc";
   return "file";
 }
