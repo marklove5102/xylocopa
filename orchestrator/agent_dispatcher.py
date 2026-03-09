@@ -608,10 +608,12 @@ def _strip_agent_preamble(content: str) -> str:
 _INSIGHT_RE = re.compile(r"^\d+\.\s+(.+)", re.MULTILINE)
 
 
-def store_insights(db, project: str, date_str: str, section_text: str):
+def store_insights(db, project: str, date_str: str, section_text: str,
+                   agent_id: str | None = None):
     """Parse numbered insight lines from a summary section and store in DB + FTS5.
 
     Uses a separate DB session to avoid committing/rolling back the caller's transaction.
+    ``agent_id`` links insights to the originating agent (None for cross-agent summaries).
     """
     from models import ProgressInsight
     items = _INSIGHT_RE.findall(section_text)
@@ -631,7 +633,10 @@ def store_insights(db, project: str, date_str: str, section_text: str):
             ).first()
             if exists:
                 continue
-            row = ProgressInsight(project=project, date=date_str, content=content)
+            row = ProgressInsight(
+                project=project, date=date_str, content=content,
+                agent_id=agent_id,
+            )
             own_db.add(row)
             own_db.flush()  # assigns row.id
             try:
@@ -2881,7 +2886,7 @@ Here are the day's conversations (with timestamps):
                             # Condense to a single clean line (strip newlines, limit length)
                             clean_summary = " ".join(task.agent_summary[:500].split())
                             summary_line = f"1. {task.title[:80]}: {clean_summary}"
-                            store_insights(db, task.project_name or task.project, today_str, summary_line)
+                            store_insights(db, task.project_name or task.project, today_str, summary_line, agent_id=agent.id)
                         except Exception:
                             logger.debug("Failed to store task-completion insight for task %s", task.id, exc_info=True)
                 # If agent died without producing any output → FAILED, not REVIEW
