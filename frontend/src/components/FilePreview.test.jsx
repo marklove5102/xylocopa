@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import FileAttachments from "./FilePreview";
+import { ToastProvider } from "../contexts/ToastContext";
+
+/** Helper to render within ToastProvider (required by ActionButtons). */
+function renderWithProviders(ui) {
+  return render(<ToastProvider>{ui}</ToastProvider>);
+}
 
 describe("FileAttachments", () => {
   it("renders nothing for empty attachments", () => {
@@ -19,7 +25,7 @@ describe("ImagePreview (via FileAttachments)", () => {
     const attachments = [
       { path: "output/chart.png", resolvedUrl: "/api/files/proj/output/chart.png", type: "image", ext: "png" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", "/api/files/proj/output/chart.png");
     expect(img).toHaveAttribute("loading", "lazy");
@@ -30,7 +36,7 @@ describe("ImagePreview (via FileAttachments)", () => {
     const attachments = [
       { path: "output/broken.png", resolvedUrl: "/api/files/proj/output/broken.png", type: "image", ext: "png" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
     const img = screen.getByRole("img");
     fireEvent.error(img);
     await waitFor(() => {
@@ -42,7 +48,7 @@ describe("ImagePreview (via FileAttachments)", () => {
     const attachments = [
       { path: "output/photo.jpg", resolvedUrl: "/api/files/proj/output/photo.jpg", type: "image", ext: "jpg" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
 
     // Click the thumbnail image to open lightbox
     fireEvent.click(screen.getByRole("img"));
@@ -64,7 +70,7 @@ describe("VideoPreview (via FileAttachments)", () => {
     const attachments = [
       { path: "output/demo.mp4", resolvedUrl: "/api/files/proj/output/demo.mp4", type: "video", ext: "mp4" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", "/api/files/proj/output/demo.mp4.thumb.jpg");
     expect(img).toHaveAttribute("loading", "lazy");
@@ -75,7 +81,7 @@ describe("VideoPreview (via FileAttachments)", () => {
     const attachments = [
       { path: "output/broken.mp4", resolvedUrl: "/api/files/proj/output/broken.mp4", type: "video", ext: "mp4" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
     const img = screen.getByRole("img");
     fireEvent.error(img);
     await waitFor(() => {
@@ -93,7 +99,7 @@ describe("Mixed attachments", () => {
       { path: "output/vid.mp4", resolvedUrl: "/api/files/proj/output/vid.mp4", type: "video", ext: "mp4" },
       { path: "data/readme.txt", resolvedUrl: "/api/files/proj/data/readme.txt", type: "doc", ext: "txt" },
     ];
-    render(<FileAttachments attachments={attachments} />);
+    renderWithProviders(<FileAttachments attachments={attachments} />);
     // Image thumbnail + video thumbnail = 2 img elements
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.getByText("img.png")).toBeInTheDocument();
