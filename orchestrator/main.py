@@ -3963,6 +3963,9 @@ async def _launch_tmux_background(
         logger.warning("tmux launch failed for agent %s: %s", agent_id, reason)
 
     await _tmux_launch_sem.acquire()
+    # Register this pane so _detect_successor_session skips sessions
+    # belonging to this launching agent (prevents cross-agent theft).
+    ad._launching_panes[agent_id] = pane_id
     try:
         # Step 1: Wait for Claude's TUI to fully load (up to 30s).
         # Two phases:
@@ -4252,6 +4255,7 @@ async def _launch_tmux_background(
     finally:
         _tmux_launch_sem.release()
         ad._launch_tasks.pop(agent_id, None)
+        ad._launching_panes.pop(agent_id, None)
 
 
 @app.post("/api/agents/scan")
@@ -4853,9 +4857,7 @@ async def send_agent_message(
                 is_syncing_with_tmux = False
 
         if is_syncing_with_tmux:
-            from agent_dispatcher import _AGENTHIVE_PROMPT_MARKER
-            _tagged = f"{_AGENTHIVE_PROMPT_MARKER}\n{body.content}"
-            ok = send_tmux_message(agent.tmux_pane, _tagged)
+            ok = send_tmux_message(agent.tmux_pane, body.content)
             if not ok:
                 raise HTTPException(
                     status_code=500,
