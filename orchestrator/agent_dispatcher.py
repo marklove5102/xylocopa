@@ -2584,6 +2584,20 @@ Here are the day's conversations (with timestamps):
                 with open(progress_path, "w", encoding="utf-8") as f:
                     f.write(existing + separator + new_section + "\n")
                 logger.info("Auto-appended daily PROGRESS.md summary for %s", project_name)
+
+                # Commit immediately so git reset --hard from agents can't destroy it
+                try:
+                    subprocess.run(
+                        ["git", "add", "PROGRESS.md"],
+                        cwd=project_path, capture_output=True, timeout=10,
+                    )
+                    subprocess.run(
+                        ["git", "commit", "-m", f"[auto-summary] {summary_date} daily insights"],
+                        cwd=project_path, capture_output=True, timeout=10,
+                    )
+                    logger.info("Auto-committed PROGRESS.md for %s", project_name)
+                except Exception as e:
+                    logger.warning("Failed to git commit PROGRESS.md for %s: %s", project_name, e)
         except OSError as e:
             logger.warning("Failed to write PROGRESS.md for %s: %s", project_name, e)
 
@@ -3053,11 +3067,201 @@ Here are the day's conversations (with timestamps):
         else:
             parts.append("- Read PROGRESS.md in the project root (if it exists), focusing on entries relevant to this task — avoid repeating past mistakes")
         parts.append("\n## Guidelines")
-        parts.append("- Avoid dangerous/destructive operations (force push, drop tables, rm -rf, etc.)")
+        parts.append("- NEVER run: `git reset --hard`, `git clean -f`, `git checkout -- .`, `git push --force`, `rm -rf`")
+        parts.append("- NEVER modify files outside the project directory or run destructive DB operations")
+        parts.append("- If you need to reset a branch, use a worktree — do NOT touch the main working tree")
         parts.append("- Commit all changes with descriptive messages")
         parts.append("- Before your final message, append a short entry to PROGRESS.md with today's date, task title, and any lessons learned (gotchas, workarounds, or 'straightforward — no issues' if none)")
         parts.append("- Leave a summary of what was done as your final message")
         return "\n".join(parts)
+
+    def _build_planning_prompt(self, task: Task, db: Session | None = None) -> str:
+        """Build a planning-phase prompt that encourages exploration and Q&A."""
+        project_name = task.project_name or task.project
+
+        # Inject relevant insights from FTS5 RAG
+        insights_block = ""
+        if db and project_name:
+            try:
+                query_text = f"{task.title} {task.description or ''}"
+                insights = query_insights(db, project_name, query_text, limit=15, pad_recent=True)
+                if insights:
+                    insights_block = (
+                        "\n## Relevant Past Insights\n"
+                        + "\n".join(f"- {i}" for i in insights)
+                    )
+            except Exception:
+                logger.debug("Failed to query insights for planning task %s", task.id, exc_info=True)
+
+        return (
+            f"# Planning: {task.title}\n"
+            f"\n"
+            f"{task.description or '(no description provided)'}\n"
+            f"{insights_block}\n"
+            f"\n"
+            f"## Your Role\n"
+            f"You are a **planning agent**. Your goal is to thoroughly explore the codebase, "
+            f"understand the problem, and produce a detailed implementation plan. "
+            f"Do NOT write any code or make changes yet.\n"
+            f"\n"
+            f"## Process\n"
+            f"1. **Read CLAUDE.md** and PROGRESS.md to understand project conventions and recent work\n"
+            f"2. **Explore the codebase** — read relevant files, trace the full code flow, "
+            f"understand the architecture. Be thorough: check all related files, not just the obvious ones\n"
+            f"3. **Ask questions** if anything is unclear or if the task is ambiguous. "
+            f"Don't assume — ask early, ask often. The user is here to answer.\n"
+            f"4. **Identify risks** — what could go wrong? Are there edge cases? "
+            f"Will this break existing functionality?\n"
+            f"5. **Produce a plan** — when you have enough understanding, output a clear, "
+            f"step-by-step implementation plan\n"
+            f"\n"
+            f"## Plan Output Format\n"
+            f"When ready, present your plan as:\n"
+            f"```\n"
+            f"## Implementation Plan\n"
+            f"### Summary\n"
+            f"(1-2 sentence overview)\n"
+            f"\n"
+            f"### Files to Modify\n"
+            f"- `path/to/file.py` — what changes and why\n"
+            f"\n"
+            f"### Steps\n"
+            f"1. Step one (specific, actionable)\n"
+            f"2. Step two\n"
+            f"...\n"
+            f"\n"
+            f"### Risks & Edge Cases\n"
+            f"- Risk description and mitigation\n"
+            f"\n"
+            f"### Open Questions (if any)\n"
+            f"- Questions that still need answers before execution\n"
+            f"```\n"
+            f"\n"
+            f"## Safety Rules\n"
+            f"- Do NOT modify any code, commit, or push — planning only\n"
+            f"- Do NOT run destructive commands (`git reset --hard`, `rm -rf`, etc.)\n"
+            f"- You may run read-only commands (tests, builds, grep) to understand the codebase\n"
+        )
+
+    def _dispatch_planning_tasks(self, db: Session):
+        """Auto-create tmux planning agents for PLANNING tasks without agents."""
+        import secrets
+        import shlex
+        from main import _preflight_claude_project, _create_tmux_claude_session, _launch_tmux_background
+
+        tasks = (
+            db.query(Task)
+            .filter(
+                Task.status == TaskStatus.PLANNING,
+                Task.agent_id.is_(None),
+            )
+            .order_by(Task.created_at.asc())
+            .limit(3)
+            .all()
+        )
+        if not tasks:
+            return
+
+        for task in tasks:
+            proj = db.query(Project).filter(Project.name == task.project_name).first()
+            if not proj:
+                logger.warning("Planning task %s: project %s not found, skipping", task.id, task.project_name)
+                continue
+
+            # Check project capacity
+            active = (
+                db.query(Agent)
+                .filter(Agent.project == proj.name)
+                .filter(Agent.status.in_(ACTIVE_STATUSES))
+                .count()
+            )
+            if active >= proj.max_concurrent:
+                continue
+
+            try:
+                # Generate unique agent ID
+                for _ in range(20):
+                    agent_hex = secrets.token_hex(6)
+                    if db.get(Agent, agent_hex) is None:
+                        break
+                else:
+                    continue
+
+                model = task.model or proj.default_model or CC_MODEL
+                prompt = self._build_planning_prompt(task, db)
+
+                # Build tmux claude command (interactive, no -p)
+                from config import CLAUDE_BIN
+                cmd_parts = [
+                    CLAUDE_BIN,
+                    "--output-format", "stream-json", "--verbose",
+                    "--dangerously-skip-permissions",
+                ]
+                if model:
+                    cmd_parts += ["--model", model]
+                effort = task.effort or "high"
+                if effort:
+                    cmd_parts += ["--effort", effort]
+                claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+
+                # Create tmux session
+                tmux_session = f"ah-{agent_hex[:8]}"
+                _preflight_claude_project(proj.path)
+                pane_id = _create_tmux_claude_session(tmux_session, proj.path, claude_cmd)
+
+                # Create Agent record
+                agent = Agent(
+                    id=agent_hex,
+                    project=proj.name,
+                    name=f"Plan: {task.title[:80]}",
+                    mode=AgentMode.AUTO,
+                    status=AgentStatus.STARTING,
+                    model=model,
+                    cli_sync=True,
+                    tmux_pane=pane_id,
+                    effort=effort,
+                    skip_permissions=True,
+                    task_id=task.id,
+                    last_message_preview=f"Planning: {task.title[:60]}",
+                    last_message_at=_utcnow(),
+                )
+                db.add(agent)
+                db.flush()
+
+                # Link task → agent
+                task.agent_id = agent.id
+                task.started_at = _utcnow()
+
+                # Save prompt as completed message + prepare wrapped version
+                msg, launch_prompt, _ = self._prepare_dispatch(
+                    db, agent, proj, prompt,
+                    source="task",
+                    wrap_prompt=True,
+                )
+                msg.status = MessageStatus.COMPLETED
+                msg.completed_at = _utcnow()
+
+                db.commit()
+                db.refresh(agent)
+
+                # Schedule background launch: wait for TUI, send prompt, start sync
+                launch_task = asyncio.ensure_future(
+                    _launch_tmux_background(self, agent.id, pane_id, launch_prompt, proj.path)
+                )
+                self.track_launch_task(agent.id, launch_task)
+
+                from websocket import emit_task_update, emit_agent_update
+                self._emit(emit_task_update(
+                    task.id, task.status.value, task.project_name or "",
+                    title=task.title, agent_id=agent.id,
+                ))
+                self._emit(emit_agent_update(agent.id, AgentStatus.STARTING.value, proj.name))
+
+                logger.info("Planning task %s: launched tmux agent %s", task.id, agent.id)
+
+            except Exception:
+                db.rollback()
+                logger.exception("Failed to launch planning agent for task %s", task.id)
 
     def _harvest_task_completions(self, db: Session):
         """Check EXECUTING v2 tasks — if agent is done, move to REVIEW."""
@@ -3281,7 +3485,10 @@ Here are the day's conversations (with timestamps):
         # 0pre. Check scheduled tasks (notify_at reminders + dispatch_at auto-dispatch)
         self._check_scheduled_tasks(db)
 
-        # 0a. Dispatch PENDING v2 tasks → create agents
+        # 0a-1. Dispatch PLANNING v2 tasks → create planning agents (tmux)
+        self._dispatch_planning_tasks(db)
+
+        # 0a-2. Dispatch PENDING v2 tasks → create execution agents
         self._dispatch_pending_tasks(db)
 
         # 0b. Harvest v2 task completions (agent done → REVIEW)
@@ -3543,7 +3750,10 @@ Here are the day's conversations (with timestamps):
                             trigger_msg
                             and trigger_msg.source == "plan_continue"
                         )
-                        if not is_already_followup:
+                        # Don't auto-continue planning agents — their plan needs user review
+                        _linked_task = db.get(Task, agent.task_id) if agent.task_id else None
+                        is_planning_agent = _linked_task and _linked_task.status == TaskStatus.PLANNING
+                        if not is_already_followup and not is_planning_agent:
                             follow_up = Message(
                                 agent_id=agent.id,
                                 role=MessageRole.USER,
@@ -4210,11 +4420,23 @@ Here are the day's conversations (with timestamps):
                 f"{items}"
             )
 
+        safety_rules = (
+            "\n## Safety Rules (mandatory — violations cause data loss)\n"
+            "- NEVER run `git reset --hard`, `git clean -f`, `git checkout -- .`, or `git restore .` on the main repo\n"
+            "- NEVER run `git push --force` or `git push -f`\n"
+            "- NEVER run `rm -rf` on project directories or important files\n"
+            "- NEVER run `DROP TABLE`, `TRUNCATE`, or destructive DB operations\n"
+            "- NEVER modify files outside the project directory\n"
+            "- If you need to reset a branch, use a worktree — do NOT touch the main working tree\n"
+            "- Always check `git status` before any destructive git operation\n"
+        )
+
         return (
             f"You are working in project: {project.display_name}\n"
             f"Project path: {project.path}\n"
             f"\n"
             f"First read the project's CLAUDE.md to understand project conventions.\n"
+            f"{safety_rules}\n"
             f"{history_block}\n"
             f"{user_message}"
             f"{insights_block}\n\n"
@@ -5371,11 +5593,18 @@ Here are the day's conversations (with timestamps):
                 worktree=wt,
                 muted=old_agent.muted,
                 task_id=old_agent.task_id,
+                skip_permissions=old_agent.skip_permissions,
                 last_message_preview=agent_name,
                 last_message_at=_utcnow(),
             )
             db.add(new_agent)
             db.flush()
+
+            # Update task.agent_id so harvest tracks the new agent
+            if old_agent.task_id:
+                _linked_task = db.get(Task, old_agent.task_id)
+                if _linked_task:
+                    _linked_task.agent_id = new_agent.id
 
             # Import existing turns
             self._import_turns_as_messages(db, new_agent.id, turns)

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import ErrorAlert from "../../components/ErrorAlert";
 import { projectBadgeColor, modelDisplayName, MODEL_OPTIONS } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
@@ -19,6 +20,8 @@ const PRIORITY_PICKER = [
 ];
 
 function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand, onRefresh }) {
+  const navigate = useNavigate();
+  const subState = task.planning_status || (!task.agent_id ? "queued" : "planning");
   const projColor = task.project_name ? projectBadgeColor(task.project_name) : "";
   const isHigh = task.priority >= 1;
   const isExpanded = expanded && !selecting;
@@ -58,7 +61,8 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
 
   const handleClick = () => {
     if (selecting) onToggle?.(task.id);
-    else if (!isExpanded) onExpand?.(task.id);
+    else if (isExpanded) onExpand?.(null);
+    else onExpand?.(task.id);
   };
 
   const update = async (field, value) => {
@@ -83,9 +87,34 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
               }`}>
                 {task.title}
               </p>
-              <span className="text-[11px] text-faint shrink-0 mt-0.5">
-                {relativeTime(task.created_at)}
-              </span>
+              <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                {subState === "queued" ? (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-faint">
+                    Queued
+                  </span>
+                ) : subState === "needs_answer" ? (
+                  <button type="button"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
+                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 transition-colors animate-pulse">
+                    Needs Answer
+                  </button>
+                ) : subState === "needs_approval" ? (
+                  <button type="button"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
+                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-500 hover:bg-green-500/25 transition-colors">
+                    Review Plan
+                  </button>
+                ) : (
+                  <button type="button"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
+                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors">
+                    Planning...
+                  </button>
+                )}
+                <span className="text-[11px] text-faint">
+                  {relativeTime(task.created_at)}
+                </span>
+              </div>
             </div>
 
             {/* Description — inline editable when expanded */}
