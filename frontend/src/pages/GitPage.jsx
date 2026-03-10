@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useId } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
@@ -14,6 +14,81 @@ import {
 } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { useToast } from "../contexts/ToastContext";
+// --- Merge dropdown (single ghost button → two plain-text options) ---
+function MergeDropdown({ branchName, currentName, isMerging, disabled, onMerge }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const id = useId();
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    function handleKey(e) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [open]);
+
+  if (isMerging) {
+    return (
+      <span className="ml-auto flex items-center gap-1 text-xs text-dim">
+        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        Merging...
+      </span>
+    );
+  }
+
+  return (
+    <span className="ml-auto relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        disabled={disabled}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={id}
+        className="px-2 py-0.5 rounded-full text-xs font-medium transition-colors border border-edge text-label hover:border-body hover:text-body disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Merge…
+      </button>
+
+      {open && (
+        <div
+          id={id}
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-30 min-w-[220px] rounded-lg bg-elevated border border-edge shadow-lg py-1 animate-in fade-in slide-in-from-top-1 duration-100"
+        >
+          <button
+            role="menuitem"
+            className="w-full text-left px-3 py-2 text-xs text-body hover:bg-hover transition-colors"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onMerge(branchName, "into-current"); }}
+          >
+            Merge <span className="font-mono font-medium">{branchName}</span> → <span className="font-mono font-medium">{currentName}</span>
+          </button>
+          <button
+            role="menuitem"
+            className="w-full text-left px-3 py-2 text-xs text-body hover:bg-hover transition-colors"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onMerge(branchName, "into-branch"); }}
+          >
+            Merge <span className="font-mono font-medium">{currentName}</span> → <span className="font-mono font-medium">{branchName}</span>
+          </button>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export default function GitPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
 
@@ -410,46 +485,13 @@ export default function GitPage({ theme, onToggleTheme }) {
                     )}
 
                     {!isCurrent && !isCheckingOut && (
-                      <span className="ml-auto flex items-center gap-1">
-                        {/* Merge INTO current: branch → current */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleMerge(branch.name, "into-current"); }}
-                          disabled={!!mergingBranch}
-                          title={`Merge ${branch.name} → ${currentName}`}
-                          className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1 ${
-                            isMerging
-                              ? "bg-green-400 text-white cursor-wait dark:bg-green-700/50 dark:text-green-300"
-                              : "bg-green-600 text-white hover:bg-green-700 dark:bg-green-600 dark:text-white dark:hover:bg-green-500"
-                          } disabled:opacity-50 disabled:cursor-not-allowed`}
-                        >
-                          {isMerging ? (
-                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                          ) : (
-                            /* Arrow pointing right-to-left: branch → current */
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5m0 0l5-5m-5 5l5 5" />
-                            </svg>
-                          )}
-                          Merge
-                        </button>
-
-                        {/* Merge current INTO branch: current → branch */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleMerge(branch.name, "into-branch"); }}
-                          disabled={!!mergingBranch}
-                          title={`Merge ${currentName} → ${branch.name}`}
-                          className="px-2 py-0.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1 bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-600 dark:text-white dark:hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {/* Arrow pointing left-to-right: current → branch */}
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m0 0l-5-5m5 5l-5 5" />
-                          </svg>
-                          Merge
-                        </button>
-                      </span>
+                      <MergeDropdown
+                        branchName={branch.name}
+                        currentName={currentName}
+                        isMerging={isMerging}
+                        disabled={!!mergingBranch}
+                        onMerge={handleMerge}
+                      />
                     )}
                   </div>
                 );
