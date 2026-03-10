@@ -318,11 +318,15 @@ describe("Branch merge", () => {
       expect(screen.getByText("feature-x")).toBeInTheDocument();
     });
 
-    // The Merge button next to feature-x
-    const mergeBtn = screen.getAllByText("Merge").find(
+    // Open the Merge… dropdown, then pick the first option
+    const mergeBtn = screen.getAllByText("Merge…").find(
       (el) => el.tagName === "BUTTON"
     );
     fireEvent.click(mergeBtn);
+
+    // Click the first dropdown option (merge branch → current)
+    const menuItems = screen.getAllByRole("menuitem");
+    fireEvent.click(menuItems[0]);
 
     await waitFor(() => {
       expect(createAgent).toHaveBeenCalledTimes(1);
