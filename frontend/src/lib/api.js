@@ -235,6 +235,8 @@ export const fetchGitStatus = (project) =>
   request(`/api/git/${e(project)}/status`);
 export const fetchGitWorktrees = (project) =>
   request(`/api/git/${e(project)}/worktrees`);
+export const checkoutBranch = (project, branch) =>
+  request(`/api/git/${e(project)}/checkout/${e(branch)}`, { method: "POST" });
 // --- System ---
 export const fetchSystemStats = () => request("/api/system/stats");
 export const fetchStorageStats = () => request("/api/system/storage");

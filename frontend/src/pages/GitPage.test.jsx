@@ -18,6 +18,7 @@ vi.mock("../lib/api", () => ({
   fetchGitBranches: vi.fn(),
   fetchGitStatus: vi.fn(),
   fetchGitWorktrees: vi.fn(),
+  checkoutBranch: vi.fn(),
   createAgent: vi.fn(),
 }));
 
@@ -27,6 +28,7 @@ import {
   fetchGitBranches,
   fetchGitStatus,
   fetchGitWorktrees,
+  checkoutBranch,
   createAgent,
 } from "../lib/api";
 
