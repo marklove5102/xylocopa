@@ -18,7 +18,7 @@ export default function DoneView({ tasks, loading, expandedTaskId, onExpandTask,
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {completedCount > 0 && (
         <div className="flex items-center gap-2 px-1 py-2 text-sm text-green-500">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

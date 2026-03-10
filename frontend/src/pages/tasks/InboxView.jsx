@@ -19,7 +19,7 @@ export default function InboxView({ tasks, loading, selectedTaskId, onSelectTask
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {sorted.map((task) => (
         <InboxCard
           key={task.id}
