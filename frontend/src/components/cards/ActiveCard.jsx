@@ -2,9 +2,8 @@ import { memo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { elapsedDisplay } from "../../lib/formatters";
 import CardShell, { cardPadding } from "./CardShell";
-import TaskExpandedContent from "./TaskExpandedContent";
 
-export default memo(function ActiveCard({ task, selecting, selected, onToggle, onCancel, onChat, expanded, onExpand, onRefresh }) {
+export default memo(function ActiveCard({ task, selecting, selected, onToggle }) {
   const navigate = useNavigate();
   const [elapsed, setElapsed] = useState(task.elapsed_seconds || 0);
 
@@ -15,15 +14,15 @@ export default memo(function ActiveCard({ task, selecting, selected, onToggle, o
   }, [task.elapsed_seconds]);
 
   const handleClick = () => {
-    if (selecting) onToggle?.(task.id);
-    else if (!(expanded && !selecting)) onExpand?.(task.id);
+    if (selecting) { onToggle?.(task.id); return; }
+    if (task.agent_id) navigate(`/agents/${task.agent_id}`);
   };
 
   return (
     <div className="relative">
-      <CardShell expanded={expanded} selecting={selecting} selected={selected}>
+      <CardShell selecting={selecting} selected={selected}>
         <div
-          className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${cardPadding(expanded, selecting)}`}
+          className={`flex items-start gap-3 px-5 cursor-pointer ${cardPadding(false, selecting)}`}
           onClick={handleClick}
           role="button"
           tabIndex={0}
@@ -55,8 +54,6 @@ export default memo(function ActiveCard({ task, selecting, selected, onToggle, o
           </div>
         </div>
       </div>
-
-        {!selecting && expanded && <TaskExpandedContent task={task} onRefresh={onRefresh} onCollapse={() => onExpand?.(task.id)} />}
       </CardShell>
     </div>
   );

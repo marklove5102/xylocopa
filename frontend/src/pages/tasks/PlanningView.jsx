@@ -1,90 +1,34 @@
-import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import ErrorAlert from "../../components/ErrorAlert";
-import { projectBadgeColor, modelDisplayName, MODEL_OPTIONS } from "../../lib/constants";
+import { projectBadgeColor, modelDisplayName } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
-import { updateTaskV2 } from "../../lib/api";
 import CardShell, { cardPadding } from "../../components/cards/CardShell";
-import TagPicker from "../../components/cards/TagPicker";
-import TaskExpandedContent from "../../components/cards/TaskExpandedContent";
 
-const MODEL_PICKER = MODEL_OPTIONS.map(m => ({ value: m.value, label: m.label }));
-const EFFORT_PICKER = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Med" },
-  { value: "high", label: "High" },
-];
-const PRIORITY_PICKER = [
-  { value: 0, label: "Normal" },
-  { value: 1, label: "High" },
-];
-
-function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand, onRefresh }) {
+function PlanningCard({ task, selecting, selected, onToggle }) {
   const navigate = useNavigate();
   const subState = task.planning_status || (!task.agent_id ? "queued" : "planning");
   const projColor = task.project_name ? projectBadgeColor(task.project_name) : "";
   const isHigh = task.priority >= 1;
-  const isExpanded = expanded && !selecting;
   const savedDesc = task.description || "";
   const preview = savedDesc && savedDesc !== task.title ? savedDesc : task.project_name || null;
 
-  // --- inline description editing ---
-  const [editing, setEditing] = useState(false);
-  const editRef = useRef(null);
-
-  useEffect(() => { if (!isExpanded) setEditing(false); }, [isExpanded]);
-
-  const startEditing = (e) => {
-    e.stopPropagation();
-    if (editing) return;
-    setEditing(true);
-    requestAnimationFrame(() => {
-      const el = editRef.current;
-      if (!el) return;
-      el.focus();
-      const sel = window.getSelection();
-      sel.selectAllChildren(el);
-      sel.collapseToEnd();
-    });
-  };
-
-  const saveDesc = useCallback(async () => {
-    const el = editRef.current;
-    if (!el) return;
-    const text = el.innerText.trim();
-    setEditing(false);
-    if (text !== savedDesc.trim()) {
-      await updateTaskV2(task.id, { description: text || null });
-      onRefresh?.();
-    }
-  }, [task.id, savedDesc, onRefresh]);
-
   const handleClick = () => {
-    if (selecting) onToggle?.(task.id);
-    else if (isExpanded) onExpand?.(null);
-    else onExpand?.(task.id);
-  };
-
-  const update = async (field, value) => {
-    await updateTaskV2(task.id, { [field]: value });
-    onRefresh?.();
+    if (selecting) { onToggle?.(task.id); return; }
+    if (task.agent_id) navigate(`/agents/${task.agent_id}`);
   };
 
   return (
     <div className="relative">
-      <CardShell expanded={expanded} selecting={selecting} selected={selected}>
+      <CardShell selecting={selecting} selected={selected}>
         <div
-          className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${cardPadding(expanded, selecting)}`}
+          className={`flex items-start gap-3 px-5 cursor-pointer ${cardPadding(false, selecting)}`}
           onClick={handleClick}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleClick(); }}
         >
-          <div className={`flex-1 min-w-0 ${isExpanded ? "flex flex-col min-h-[160px]" : ""}`}>
+          <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
-              <p className={`text-base font-semibold leading-snug transition-all duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${
-                isExpanded ? "text-heading whitespace-pre-wrap" : "text-heading truncate"
-              }`}>
+              <p className="text-base font-semibold leading-snug text-heading truncate">
                 {task.title}
               </p>
               <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
@@ -93,23 +37,17 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
                     Queued
                   </span>
                 ) : subState === "needs_answer" ? (
-                  <button type="button"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
-                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 transition-colors animate-pulse">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 animate-pulse">
                     Needs Answer
-                  </button>
+                  </span>
                 ) : subState === "needs_approval" ? (
-                  <button type="button"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
-                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-500 hover:bg-green-500/25 transition-colors">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-500">
                     Review Plan
-                  </button>
+                  </span>
                 ) : (
-                  <button type="button"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
-                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-500">
                     Planning...
-                  </button>
+                  </span>
                 )}
                 <span className="text-[11px] text-faint">
                   {relativeTime(task.created_at)}
@@ -117,91 +55,40 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
               </div>
             </div>
 
-            {/* Description — inline editable when expanded */}
-            {isExpanded ? (
-              <div className="flex-1 mt-1.5 cursor-text" onClick={startEditing}>
-                <div
-                  ref={editRef}
-                  contentEditable={editing}
-                  suppressContentEditableWarning
-                  onBlur={saveDesc}
-                  className={`text-sm leading-relaxed outline-none whitespace-pre-wrap ${
-                    editing ? "text-body" : savedDesc ? "text-dim" : "text-faint/40"
-                  }`}
-                >
-                  {savedDesc || (editing ? "" : "Tap to add description...")}
-                </div>
-              </div>
-            ) : (
-              preview && (
-                <p className="text-sm text-dim leading-relaxed mt-1.5 line-clamp-2">
-                  {preview.slice(0, 200)}
-                </p>
-              )
+            {preview && (
+              <p className="text-sm text-dim leading-relaxed mt-1.5 line-clamp-2">
+                {preview.slice(0, 200)}
+              </p>
             )}
 
-            {isExpanded ? (
-              <div className="flex flex-wrap items-center gap-1.5 mt-auto">
-                {task.project_name && (
-                  <span className={`text-[11px] font-medium rounded-full px-2 py-0.5 ${projColor}`}>{task.project_name}</span>
-                )}
-                {task.model && (
-                  <TagPicker options={MODEL_PICKER} value={task.model} onSelect={(v) => update("model", v)}
-                    className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-elevated text-dim cursor-pointer active:scale-90 transition-transform">
-                    {modelDisplayName(task.model)}
-                  </TagPicker>
-                )}
-                {task.effort && (
-                  <TagPicker options={EFFORT_PICKER} value={task.effort} onSelect={(v) => update("effort", v)}
-                    className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim uppercase cursor-pointer active:scale-90 transition-transform">
-                    {task.effort[0]}
-                  </TagPicker>
-                )}
-                <TagPicker options={PRIORITY_PICKER} value={task.priority >= 1 ? 1 : 0} onSelect={(v) => update("priority", v)}
-                  className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full cursor-pointer active:scale-90 transition-transform ${
-                    isHigh ? "bg-amber-500/15 text-amber-500 dark:text-amber-400" : "bg-elevated text-faint"
-                  }`}>
-                  {isHigh ? "H" : "N"}
-                </TagPicker>
-                {task.notify_at && (
-                  <span className="text-[11px] text-amber-500 dark:text-amber-400 flex items-center gap-0.5">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {relativeTime(task.notify_at)}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                {task.project_name && (
-                  <span className={`text-[11px] font-medium rounded-full px-2 py-0.5 ${projColor}`}>{task.project_name}</span>
-                )}
-                {task.model && (
-                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-elevated text-dim">
-                    {modelDisplayName(task.model)}
-                  </span>
-                )}
-                {task.effort && (
-                  <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim uppercase">
-                    {task.effort[0]}
-                  </span>
-                )}
-                {isHigh && (
-                  <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-                    H
-                  </span>
-                )}
-                {task.notify_at && (
-                  <span className="text-[11px] text-amber-500 dark:text-amber-400 flex items-center gap-0.5">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {relativeTime(task.notify_at)}
-                  </span>
-                )}
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+              {task.project_name && (
+                <span className={`text-[11px] font-medium rounded-full px-2 py-0.5 ${projColor}`}>{task.project_name}</span>
+              )}
+              {task.model && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-elevated text-dim">
+                  {modelDisplayName(task.model)}
+                </span>
+              )}
+              {task.effort && (
+                <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim uppercase">
+                  {task.effort[0]}
+                </span>
+              )}
+              {isHigh && (
+                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
+                  H
+                </span>
+              )}
+              {task.notify_at && (
+                <span className="text-[11px] text-amber-500 dark:text-amber-400 flex items-center gap-0.5">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {relativeTime(task.notify_at)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </CardShell>
@@ -209,7 +96,7 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
   );
 }
 
-export default function PlanningView({ tasks, loading, selecting, selected, onToggle, expandedTaskId, onExpandTask, onRefresh }) {
+export default function PlanningView({ tasks, loading, selecting, selected, onToggle }) {
   const sorted = [...tasks].sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
     return new Date(a.created_at) - new Date(b.created_at);
@@ -236,9 +123,6 @@ export default function PlanningView({ tasks, loading, selecting, selected, onTo
           selecting={selecting}
           selected={selected.has(task.id)}
           onToggle={onToggle}
-          expanded={expandedTaskId === task.id}
-          onExpand={onExpandTask}
-          onRefresh={onRefresh}
         />
       ))}
     </div>
