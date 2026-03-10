@@ -1,12 +1,7 @@
-import useAsyncHandler from "../../hooks/useAsyncHandler";
-import ErrorAlert from "../../components/ErrorAlert";
 import QueueCard from "../../components/cards/QueueCard";
 import ActiveCard from "../../components/cards/ActiveCard";
-import { cancelTask } from "../../lib/api";
 
 export default function ExecutingView({ tasks, loading, onRefresh, selecting, selected, onToggle, expandedTaskId, onExpandTask }) {
-  const { error, setError, handle } = useAsyncHandler();
-
   const active = tasks
     .filter((t) => t.status === "EXECUTING")
     .sort((a, b) => new Date(a.started_at || a.created_at) - new Date(b.started_at || b.created_at));
@@ -32,8 +27,6 @@ export default function ExecutingView({ tasks, loading, onRefresh, selecting, se
 
   return (
     <div className="space-y-3">
-      <ErrorAlert error={error} onDismiss={() => setError(null)} />
-
       {active.length > 0 && (
         <>
           <div className="flex items-center gap-2 px-1 pt-1">
@@ -50,10 +43,6 @@ export default function ExecutingView({ tasks, loading, onRefresh, selecting, se
               selecting={selecting}
               selected={selected.has(task.id)}
               onToggle={onToggle}
-              expanded={expandedTaskId === task.id}
-              onExpand={onExpandTask}
-              onRefresh={onRefresh}
-              onCancel={(t) => handle(t.id, () => cancelTask(t.id).then(() => onRefresh?.()), "Cancel failed")}
             />
           ))}
         </>
