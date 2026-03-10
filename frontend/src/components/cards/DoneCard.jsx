@@ -38,9 +38,11 @@ export default memo(function DoneCard({ task, selecting, selected, onToggle, exp
         </div>
       )}
       <div
-        className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden cursor-pointer transition-all ${
-          selecting && selected ? "ring-1 ring-cyan-500" : ""
-        }`}
+        className={`w-full text-left rounded-2xl bg-surface overflow-hidden cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
+          expanded && !selecting
+            ? "shadow-lg scale-[1.02] ring-1 ring-cyan-500/20 z-10"
+            : "shadow-card scale-100"
+        } ${selecting && selected ? "ring-1 ring-cyan-500" : ""}`}
         onClick={handleClick}
         role="button"
         tabIndex={0}
