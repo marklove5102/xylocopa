@@ -1,4 +1,4 @@
-import InboxCard from "../../components/cards/InboxCard";
+import TaskRow from "../../components/cards/TaskRow";
 
 export default function InboxView({ tasks, loading, selecting, selected, onToggle, expandedTaskId, onExpandTask, onRefresh }) {
   const sorted = [...tasks].sort((a, b) => {
@@ -19,9 +19,9 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
   }
 
   return (
-    <div className="space-y-3">
+    <div className="divide-y divide-divider">
       {sorted.map((task) => (
-        <InboxCard
+        <TaskRow
           key={task.id}
           task={task}
           selecting={selecting}
