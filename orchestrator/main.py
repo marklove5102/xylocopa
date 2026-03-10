@@ -5384,6 +5384,21 @@ async def git_merge(project: str, branch: str, request: Request, db: Session = D
     return result
 
 
+@app.post("/api/git/{project}/checkout/{branch:path}")
+async def git_checkout(project: str, branch: str, request: Request, db: Session = Depends(get_db)):
+    """Checkout a branch for a project."""
+    proj = db.get(Project, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    gm = getattr(request.app.state, "git_manager", None)
+    if not gm:
+        raise HTTPException(status_code=503, detail="Git manager not available")
+    result = gm.checkout(proj.path, branch)
+    if result.startswith("ERROR:"):
+        raise HTTPException(status_code=409, detail=result)
+    return {"success": True, "branch": branch, "message": result}
+
+
 # ---- Files ----
 
 def _serve_file_with_range(full_path: str, media_type: str, request: Request):

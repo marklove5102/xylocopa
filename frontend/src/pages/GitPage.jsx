@@ -9,6 +9,7 @@ import {
   fetchGitBranches,
   fetchGitStatus,
   fetchGitWorktrees,
+  checkoutBranch,
   createAgent,
 } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
@@ -30,6 +31,7 @@ export default function GitPage({ theme, onToggleTheme }) {
   const [loadingWorktrees, setLoadingWorktrees] = useState(false);
   const [mergingBranch, setMergingBranch] = useState(null);
   const [mergingAll, setMergingAll] = useState(false);
+  const [checkingOut, setCheckingOut] = useState(null);
   const [error, setError] = useState(null);
   const toast = useToast();
   const addToast = useCallback((message, type) => type === "error" ? toast.error(message) : toast.success(message), [toast]);
@@ -108,20 +110,28 @@ export default function GitPage({ theme, onToggleTheme }) {
   }, [selectedProject]);
 
   // --- Merge handler (spawns an agent) ---
+  // direction: "into-current" = merge branch into current, "into-branch" = merge current into branch
   const handleMerge = useCallback(
-    async (branchName) => {
+    async (branchName, direction = "into-current") => {
       if (!selectedProject || mergingBranch) return;
       setMergingBranch(branchName);
       try {
+        const currentBranch = branches.find((b) => b.current)?.name || "current branch";
+        const prompt =
+          direction === "into-current"
+            ? `Merge the branch "${branchName}" into the current branch (${currentBranch}). ` +
+              `Steps: 1) git fetch origin, 2) git merge ${branchName} --no-edit. ` +
+              `If there are merge conflicts, resolve them intelligently by reading both versions and picking the correct resolution. ` +
+              `After resolving, stage and commit. Report the result.`
+            : `Merge the current branch (${currentBranch}) into "${branchName}". ` +
+              `Steps: 1) git fetch origin, 2) git checkout ${branchName}, 3) git merge ${currentBranch} --no-edit. ` +
+              `If there are merge conflicts, resolve them intelligently by reading both versions and picking the correct resolution. ` +
+              `After resolving, stage and commit. Then checkout back to ${currentBranch}. Report the result.`;
         const agent = await createAgent({
           project: selectedProject,
           mode: "AUTO",
           skip_permissions: true,
-          prompt:
-            `Merge the branch "${branchName}" into the current branch. ` +
-            `Steps: 1) git fetch origin, 2) git merge ${branchName} --no-edit. ` +
-            `If there are merge conflicts, resolve them intelligently by reading both versions and picking the correct resolution. ` +
-            `After resolving, stage and commit. Report the result.`,
+          prompt,
         });
         navigate(`/agents/${agent.id}`);
       } catch (err) {
@@ -130,7 +140,31 @@ export default function GitPage({ theme, onToggleTheme }) {
         setMergingBranch(null);
       }
     },
-    [selectedProject, mergingBranch, addToast, navigate]
+    [selectedProject, mergingBranch, branches, addToast, navigate]
+  );
+
+  // --- Checkout handler ---
+  const handleCheckout = useCallback(
+    async (branchName) => {
+      if (!selectedProject || checkingOut) return;
+      setCheckingOut(branchName);
+      try {
+        await checkoutBranch(selectedProject, branchName);
+        addToast(`Switched to ${branchName}`, "success");
+        // Refresh branches and status
+        const [branchRes, statusRes] = await Promise.allSettled([
+          fetchGitBranches(selectedProject).catch(() => []),
+          fetchGitStatus(selectedProject).catch(() => null),
+        ]);
+        setBranches(branchRes.status === "fulfilled" ? branchRes.value : []);
+        setStatus(statusRes.status === "fulfilled" ? statusRes.value : null);
+      } catch (err) {
+        addToast(`Checkout error: ${err.message}`, "error");
+      } finally {
+        setCheckingOut(null);
+      }
+    },
+    [selectedProject, checkingOut, addToast]
   );
 
   // --- Merge All worktrees handler ---
@@ -317,18 +351,22 @@ export default function GitPage({ theme, onToggleTheme }) {
           ) : branches.length === 0 ? (
             <p className="text-sm text-dim">No branches found.</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="space-y-1.5">
               {branches.map((branch) => {
                 const isCurrent = branch.current;
                 const isMerging = mergingBranch === branch.name;
+                const isCheckingOut = checkingOut === branch.name;
+                const currentName = branches.find((b) => b.current)?.name || "current";
                 return (
                   <div
                     key={branch.name}
-                    className={`flex items-center gap-2 rounded-full text-sm px-3 py-1.5 border transition-colors ${
+                    onDoubleClick={() => !isCurrent && handleCheckout(branch.name)}
+                    className={`flex items-center gap-2 rounded-lg text-sm px-3 py-2 border transition-colors ${
                       isCurrent
                         ? "bg-cyan-50 border-cyan-400 text-heading dark:bg-cyan-600/20 dark:border-cyan-500/50 dark:text-cyan-300"
-                        : "bg-input border-edge text-heading"
+                        : "bg-input border-edge text-heading cursor-pointer hover:border-cyan-400/50 dark:hover:border-cyan-500/30"
                     }`}
+                    title={isCurrent ? "Current branch" : "Double-click to checkout"}
                   >
                     {/* Branch icon */}
                     <svg
@@ -361,43 +399,57 @@ export default function GitPage({ theme, onToggleTheme }) {
                       </svg>
                     )}
 
-                    {!isCurrent && (
-                      <button
-                        onClick={() => handleMerge(branch.name)}
-                        disabled={!!mergingBranch}
-                        className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                          isMerging
-                            ? "bg-cyan-400 text-white cursor-wait dark:bg-cyan-700/50 dark:text-cyan-300"
-                            : "bg-cyan-600 text-white hover:bg-cyan-700 dark:bg-cyan-600 dark:text-white dark:hover:bg-cyan-500"
-                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      >
-                        {isMerging ? (
-                          <span className="flex items-center gap-1">
-                            <svg
-                              className="w-3 h-3 animate-spin"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              />
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                              />
+                    {isCheckingOut && (
+                      <span className="ml-auto flex items-center gap-1 text-xs text-dim">
+                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Switching...
+                      </span>
+                    )}
+
+                    {!isCurrent && !isCheckingOut && (
+                      <span className="ml-auto flex items-center gap-1">
+                        {/* Merge INTO current: branch → current */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleMerge(branch.name, "into-current"); }}
+                          disabled={!!mergingBranch}
+                          title={`Merge ${branch.name} → ${currentName}`}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1 ${
+                            isMerging
+                              ? "bg-green-400 text-white cursor-wait dark:bg-green-700/50 dark:text-green-300"
+                              : "bg-green-600 text-white hover:bg-green-700 dark:bg-green-600 dark:text-white dark:hover:bg-green-500"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {isMerging ? (
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                             </svg>
-                            Merging
-                          </span>
-                        ) : (
-                          "Merge"
-                        )}
-                      </button>
+                          ) : (
+                            /* Arrow pointing right-to-left: branch → current */
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5m0 0l5-5m-5 5l5 5" />
+                            </svg>
+                          )}
+                          Merge
+                        </button>
+
+                        {/* Merge current INTO branch: current → branch */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleMerge(branch.name, "into-branch"); }}
+                          disabled={!!mergingBranch}
+                          title={`Merge ${currentName} → ${branch.name}`}
+                          className="px-2 py-0.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1 bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-600 dark:text-white dark:hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {/* Arrow pointing left-to-right: current → branch */}
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m0 0l-5-5m5 5l-5 5" />
+                          </svg>
+                          Merge
+                        </button>
+                      </span>
                     )}
                   </div>
                 );
