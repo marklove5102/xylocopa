@@ -516,3 +516,31 @@ Priority-ranked architectural gaps:
 23. Semantic RAG with `sentence-transformers/all-MiniLM-L6-v2` implemented and benchmarked (+28% precision, +38% recall) but shelved to `feature/semantic-rag` branch — PyTorch ~2GB dependency contradicts the lightweight self-hosted tool positioning.
 24. Lightweight FTS5 RAG (`store_insights`, `query_insights`, `ProgressInsight` model, backfill endpoint) cherry-picked back to master as the production RAG solution — zero extra dependencies, uses SQLite's built-in full-text search with 7-day recency boost.
 25. Release readiness assessment: with Tasks page disabled, remaining modules (Projects, Agents, Git, Monitor, Split Screen) are complete enough to ship; P0 blockers are screenshots/demo GIF for README, `install.sh` script, complete `.env.example`, and macOS compatibility (code depends on `/proc/meminfo`).
+
+
+## 2026-03-08 — Daily Insights
+1. Backend thumbnail system added: `/api/thumbs/{project}/{path}` endpoint generates max-1200px JPEG thumbnails (quality 80) via Pillow, cached in `.thumbcache/` directories — 35MB PNG → 275KB JPEG (127x compression), first generation ~1s, cached serves in 2ms.
+2. Initial thumbnail size of 400px was too blurry for fullscreen lightbox on phones — increased to 1200px (230-275KB) which is sharp enough on any phone screen while still loading fast.
+3. `resolveFileUrl()` in `formatters.jsx` didn't handle `.agenthive/uploads/` paths — user-uploaded images echoed in agent messages routed to `/api/files/{project}/...` → 404; fixed with `uploadMatch` branch routing to `/api/uploads/`.
+4. `ImagePreview` error handling redesigned from single `error` state (silently hid image) to two-stage: `thumbFailed` → try full-res `src` → then show error UI with Retry button.
+5. Lightbox progressive loading: shows 1200px thumbnail immediately, preloads full-res via `new Image()` in background, auto-swaps when loaded; if full-res never loads, user still sees usable thumbnail.
+6. iOS Safari PWA completely ignores `<a download>` attribute and programmatic `a.click()` — the only reliable download method is `navigator.share({ files: [file] })` which opens the native share sheet for "Save Image".
+7. `window.open` in PWA standalone mode opens Safari in a new tab where self-signed certs aren't accepted — results in white screen; must stay within PWA browsing context.
+8. Download strategy by platform: iOS PWA standalone (detected via `(display-mode: standalone)` + `ontouchend`) → `navigator.share`; desktop/Android → blob URL + `<a download>`; fallback → `window.location.href` with `Content-Disposition: attachment`.
+9. `permanently_delete_agent()` had file-before-DB ordering bug — deleted files first, then if `db.commit()` failed, files were gone but DB still referenced them; fixed to commit DB first.
+10. `Message.agent_id` and `Task.agent_id` ForeignKey missing `ondelete="CASCADE"` — deleting an Agent without first deleting Messages triggers constraint error.
+11. `evict_session()` had no worktree support — didn't clean worktree session cache directories, causing disk leak; also lacked try/except around `os.unlink`/`shutil.rmtree`.
+12. 10+ code paths set `agent.status = AgentStatus.STOPPED` but only 2-3 called `tmux kill-session` — created `_kill_agent_tmux()` helper and added it to all stop sites.
+13. `orphan_cleanup.py` only cleaned JSONL files and logs, never checked tmux sessions — added `ah-*` pattern scanning against DB to detect and kill orphan tmux sessions.
+14. SYNCING agent with `tmux_pane` skipped stale check due to `elif` in `_reap_dead_agents` — Claude CLI idle at prompt counted as "alive" forever; fixed by adding session file freshness check even when pane is alive.
+15. `send_tmux_message` Ink TUI timing: Escape/C-a/C-k control sequences are treated as literal text by Claude CLI's Ink TUI (regression); reverted to C-u only, kept increased delays (0.05s → 0.2s) and Enter retry logic.
+16. Auto-summary March 7 bug confirmed: trigger fires at UTC midnight (16:00 PST) but queried "today UTC" (empty) instead of "yesterday UTC"; fix in `05ee345` added `target_date=yesterday` but March 7 data required manual backfill from backup DB.
+17. RAG insights not injected on initial agent launch: `create_agent` → `_launch_tmux_background` bypassed `_build_agent_prompt` entirely — first message never got RAG; fixed by calling `_build_agent_prompt` before launch.
+18. Five independent message dispatch paths (`launch_tmux_agent`, `create_agent` non-tmux, `send_agent_message` direct, `_dispatch_tmux_pending`, `_dispatch_pending_messages`) each independently handled RAG, message creation, and prompt wrapping — consolidated into single `_prepare_dispatch` method.
+19. `_AGENTHIVE_PROMPT_MARKER` (`<!-- agenthive-prompt -->`) embedded in wrapped prompts prevents sync loop from re-importing them as duplicate USER messages — replaces fragile string-prefix matching.
+20. Codebase fragmentation audit found 10 anti-patterns: 18 agent-stop paths, 5 message-failure paths, 24 direct task-status assignments, 11 session/pane clearing paths, inconsistent WS broadcasts — each with different side effects.
+21. Four consolidation refactors completed via parallel worktree agents: `stop_agent_cleanup()` (26 inline stops → 1), `_fail_message()`/`_fail_pending_messages()` (5 FAILED paths → 2), `TaskStateMachine.transition()` (24 assignments → validated transitions with auto-timestamps), `_clear_agent_session()`/`_clear_agent_pane()` (18 clears → 2 with consistent notification).
+22. Critical silent-hang bug fixed: max-retries-exhausted path in `_reap_dead_agents` cleared `session_id` with zero notification (no system message, no WS emit) — agent appeared frozen in UI indefinitely.
+23. `orchestrator/utils.py` created to deduplicate `utcnow()` (5 identical copies across models/dispatcher/agent_dispatcher/task_state/main) and `truncate()` (2 copies).
+24. Frontend deduplication: `useAsyncHandler` hook replaced 9 identical async handler patterns; `ErrorAlert` component replaced 4 identical error banners; `ReviewCard` ternary chains replaced with lookup map.
+25. Backup system made configurable: `BACKUP_ENABLED` toggle and `BACKUP_DIR` custom path in `.env`/`config.py`; Monitor page got Backup card with snapshot count, total size display, and "Purge all" button.
