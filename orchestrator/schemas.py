@@ -103,6 +103,7 @@ class TaskOut(BaseModel):
     completed_at: datetime | None = None
     last_agent_message: str | None = None
     elapsed_seconds: int | None = None
+    planning_status: str | None = None  # queued | planning | needs_answer | needs_approval
 
     model_config = {"from_attributes": True}
 

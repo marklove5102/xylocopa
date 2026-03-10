@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Bell, BellOff } from "lucide-react";
-import { fetchTasksV2, fetchTaskCounts, updateNotificationSettings, dispatchTask, cancelTask, updateTaskV2 } from "../lib/api";
+import { useNavigate } from "react-router-dom";
+import { Bell, BellOff, Sparkles } from "lucide-react";
+import { fetchTasksV2, fetchTaskCounts, updateNotificationSettings, dispatchTask, cancelTask, updateTaskV2, batchProcessTasks } from "../lib/api";
 import { TASK_PERSPECTIVE_TABS } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
@@ -40,6 +41,7 @@ const MOVE_OPTIONS = {
 };
 
 export default function TasksPage({ theme, onToggleTheme }) {
+  const navigate = useNavigate();
   const [rawPerspective, setRawPerspective] = useDraft("ui:tasks-v2:perspective", "INBOX");
   // Migrate stale localStorage values from old QUEUE/ACTIVE tabs
   const perspective = (rawPerspective === "QUEUE" || rawPerspective === "ACTIVE") ? "EXECUTING" : rawPerspective;
@@ -271,6 +273,26 @@ export default function TasksPage({ theme, onToggleTheme }) {
     }
   }, [selected, actionLoading, exitSelectMode, showToast, onRefresh]);
 
+  // --- AI batch process ---
+  const [batchProcessing, setBatchProcessing] = useState(false);
+
+  const handleBatchProcess = useCallback(async () => {
+    if (batchProcessing) return;
+    setBatchProcessing(true);
+    try {
+      const res = await batchProcessTasks();
+      if (res.agent_id) {
+        navigate(`/agents/${res.agent_id}`);
+      } else {
+        showToast(res.message || "No tasks to process");
+      }
+    } catch (err) {
+      showToast(`Batch process failed: ${err.message}`, "error");
+    } finally {
+      setBatchProcessing(false);
+    }
+  }, [batchProcessing, showToast, navigate]);
+
   const ViewComponent = {
     INBOX: InboxView,
     PLANNING: PlanningView,
@@ -319,6 +341,21 @@ export default function TasksPage({ theme, onToggleTheme }) {
             active={perspective}
             onChange={setPerspective}
             counts={counts}
+            rightAction={perspective === "INBOX" && (counts?.INBOX ?? 0) > 0 ? (
+              <button
+                type="button"
+                onClick={handleBatchProcess}
+                disabled={batchProcessing}
+                title="AI batch process — refine prompts & move to Planning"
+                className={`min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all shadow-sm ${
+                  batchProcessing
+                    ? "bg-cyan-500 text-white animate-pulse shadow-cyan-500/30"
+                    : "bg-gradient-to-br from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 active:scale-95"
+                }`}
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
+            ) : undefined}
           />
         ) : (
           <div className="flex items-center justify-between px-4 pb-2">

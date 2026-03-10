@@ -2925,24 +2925,64 @@ async def list_tasks_v2(
         q = q.filter(Task.project_name == project)
     tasks = q.order_by(Task.created_at.desc()).limit(limit).all()
 
-    # Enrich EXECUTING tasks with agent info
+    # Enrich EXECUTING and PLANNING tasks with agent info
     results = []
-    executing_agent_ids = [t.agent_id for t in tasks if t.status == TaskStatus.EXECUTING and t.agent_id]
+    enrich_statuses = (TaskStatus.EXECUTING, TaskStatus.PLANNING)
+    enrich_agent_ids = [t.agent_id for t in tasks if t.status in enrich_statuses and t.agent_id]
     agent_map = {}
-    if executing_agent_ids:
-        agents = db.query(Agent).filter(Agent.id.in_(executing_agent_ids)).all()
+    if enrich_agent_ids:
+        agents = db.query(Agent).filter(Agent.id.in_(enrich_agent_ids)).all()
         agent_map = {a.id: a for a in agents}
+
+    # For planning tasks, fetch last agent message to derive interactive state
+    planning_agent_ids = [a_id for a_id in enrich_agent_ids if any(
+        t.agent_id == a_id and t.status == TaskStatus.PLANNING for t in tasks
+    )]
+    # Get last message with interactive meta for planning agents
+    planning_interactive: dict[str, str | None] = {}
+    if planning_agent_ids:
+        for aid in planning_agent_ids:
+            last_msg = (
+                db.query(Message)
+                .filter(Message.agent_id == aid, Message.role == MessageRole.AGENT)
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+            if last_msg and last_msg.meta_json:
+                try:
+                    meta = json.loads(last_msg.meta_json)
+                    items = meta.get("interactive", [])
+                    has_ask = any(i.get("type") == "ask_user_question" and not i.get("answer") for i in items)
+                    has_plan = any(i.get("type") == "exit_plan_mode" for i in items)
+                    if has_ask:
+                        planning_interactive[aid] = "needs_answer"
+                    elif has_plan:
+                        planning_interactive[aid] = "needs_approval"
+                except (json.JSONDecodeError, AttributeError):
+                    pass
 
     now = datetime.now(timezone.utc)
     for t in tasks:
         out = TaskOut.model_validate(t)
-        if t.status == TaskStatus.EXECUTING and t.agent_id:
+        if t.status in enrich_statuses and t.agent_id:
             agent = agent_map.get(t.agent_id)
             if agent and agent.last_message_preview:
                 out.last_agent_message = agent.last_message_preview[:200]
             if t.started_at:
                 started = t.started_at if t.started_at.tzinfo else t.started_at.replace(tzinfo=timezone.utc)
                 out.elapsed_seconds = int((now - started).total_seconds())
+        # Derive planning sub-state
+        if t.status == TaskStatus.PLANNING:
+            if not t.agent_id:
+                out.planning_status = "queued"
+            elif t.agent_id in planning_interactive:
+                out.planning_status = planning_interactive[t.agent_id]
+            else:
+                agent = agent_map.get(t.agent_id)
+                if agent and agent.status == AgentStatus.IDLE:
+                    out.planning_status = "needs_approval"
+                else:
+                    out.planning_status = "planning"
         results.append(out)
     return results
 
@@ -2967,6 +3007,77 @@ async def get_task_v2(task_id: str, db: Session = Depends(get_db)):
         retry_context=task.retry_context,
         conversation=conversation,
     )
+
+
+@app.post("/api/v2/tasks/batch-process")
+async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
+    """Spawn an agent to triage inbox tasks: refine prompts, assign projects, move to planning."""
+    inbox_tasks = (
+        db.query(Task)
+        .filter(Task.status == TaskStatus.INBOX)
+        .order_by(Task.sort_order, Task.created_at.desc())
+        .all()
+    )
+    if not inbox_tasks:
+        raise HTTPException(400, "No inbox tasks to process")
+
+    # Gather available projects
+    projects = db.query(Project).filter(Project.archived == False).all()
+    project_list = [{"name": p.name, "display_name": getattr(p, "display_name", None) or p.name,
+                     "description": getattr(p, "description", None) or ""} for p in projects]
+
+    tasks_data = [{"id": t.id, "title": t.title or "", "description": t.description or "",
+                   "project_name": t.project_name or None} for t in inbox_tasks]
+
+    # Pick first available project as agent host (prefer cc-orchestrator)
+    host_project = "cc-orchestrator"
+    if not db.get(Project, host_project):
+        host_project = projects[0].name if projects else None
+    if not host_project:
+        raise HTTPException(400, "No projects available to host the agent")
+
+    # Build the agent prompt with API instructions
+    api_base = "http://localhost:8080"
+    prompt = f"""You are a task triage assistant for AgentHive. Analyze the inbox tasks below, then update each one via the local API.
+
+FOR EACH TASK:
+1. **Title**: Rewrite to be clear, specific, and actionable (<80 chars). Keep good titles unchanged.
+2. **Description**: Focus on making the problem definition crystal clear — what is the current behavior, what is the desired outcome, and why it matters. Do NOT add implementation steps or technical solutions; that's the executing agent's job. Preserve existing good content. Keep the original language.
+3. **Project**: If project_name is null, assign the best-matching project. If none fits, leave null.
+4. **Move to Planning**: If the task has enough detail AND a project, move it to the PLANNING queue.
+
+AVAILABLE PROJECTS:
+{json.dumps(project_list, ensure_ascii=False, indent=2)}
+
+INBOX TASKS:
+{json.dumps(tasks_data, ensure_ascii=False, indent=2)}
+
+HOW TO UPDATE:
+- Update a task: curl -s -X PUT {api_base}/api/v2/tasks/TASK_ID -H "Content-Type: application/json" -d '{{"title":"...","description":"...","project_name":"..."}}'
+- Move to planning: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/plan
+
+SAFETY RULES:
+- You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/plan (move to planning)
+- Do NOT call any other endpoints (no /api/agents/*, /api/git/*, /api/projects/*, DELETE endpoints, etc.)
+- Do NOT run git commands, modify files, or execute any destructive operations
+
+INSTRUCTIONS:
+1. First, analyze all tasks and present a summary table of your proposed changes (title, project assignment, ready status)
+2. If anything is ambiguous — unclear intent, multiple possible projects, vague descriptions that could go different directions — ask the user to clarify before proceeding. Don't guess on important decisions.
+3. Ask the user to confirm before applying changes
+4. After confirmation, execute the curl commands to update each task
+5. Report a final summary of what was changed and moved"""
+
+    # Create the agent via the same flow as POST /api/agents
+    body = AgentCreate(
+        project=host_project,
+        prompt=prompt,
+        mode=AgentMode.AUTO,
+        skip_permissions=True,
+        timeout_seconds=600,
+    )
+    agent = await create_agent(body, request, db)
+    return {"ok": True, "agent_id": agent.id}
 
 
 @app.put("/api/v2/tasks/reorder")
@@ -3023,7 +3134,7 @@ async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(g
 
 
 @app.post("/api/v2/tasks/{task_id}/plan", response_model=TaskOut)
-async def plan_task_v2(task_id: str, db: Session = Depends(get_db)):
+async def plan_task_v2(task_id: str, request: Request, db: Session = Depends(get_db)):
     """Move task from INBOX to PLANNING. Requires project_name."""
     task = db.get(Task, task_id)
     if not task:
@@ -3036,6 +3147,46 @@ async def plan_task_v2(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(409, str(e))
     db.commit()
     db.refresh(task)
+
+    # Auto-spawn a planning agent for this task
+    planning_prompt = f"""You are a planning agent for the task: "{task.title}"
+
+Task description:
+{task.description or "(no description)"}
+
+Project: {task.project_name}
+
+YOUR JOB:
+1. Explore the project codebase to understand the current state relevant to this task
+2. If anything about the task is unclear or ambiguous, ask the user using the AskUserQuestion tool — do NOT guess on important decisions
+3. Produce a clear, detailed implementation plan. Focus on WHAT needs to change and WHERE, not step-by-step code
+
+YOUR PLAN MUST INCLUDE:
+- Files that need to be modified or created
+- What changes are needed in each file (high level)
+- Testing strategy: what tests to add or update, how to verify the changes work
+- Any dependencies, risks, or edge cases to consider
+- Estimated complexity (small/medium/large)
+
+IMPORTANT:
+- You MUST finish by calling ExitPlanMode with your complete plan, regardless of whether you had questions
+- Do NOT implement anything — only plan
+- Do NOT skip the plan even if the task seems simple — always produce a plan for review
+- Testing is NOT optional — every plan must include a concrete testing section"""
+
+    body = AgentCreate(
+        project=task.project_name,
+        prompt=planning_prompt,
+        mode=AgentMode.AUTO,
+        skip_permissions=True,
+        timeout_seconds=900,
+    )
+    agent = await create_agent(body, request, db)
+    agent.task_id = task.id  # Link agent to task
+    task.agent_id = agent.id  # Link task to agent
+    db.commit()
+    db.refresh(task)
+
     asyncio.ensure_future(emit_task_update(
         task.id, task.status.value, task.project_name or "",
         title=task.title,
@@ -3289,6 +3440,10 @@ async def verify_task(task_id: str, request: Request, db: Session = Depends(get_
         context_parts.append(f"The changes are on branch `{task.branch_name}`.")
         context_parts.append(f"Use `git diff main...{task.branch_name}` to see the full diff.")
 
+    context_parts.append(f"\n## Safety Rules (mandatory)")
+    context_parts.append("- You are a READ-ONLY verifier. Do NOT commit, push, or modify any source code.")
+    context_parts.append("- NEVER run: `git reset --hard`, `git push --force`, `rm -rf`, or any destructive operation")
+    context_parts.append("- If you find issues, REPORT them — do NOT attempt to fix them")
     context_parts.append(f"\n## Your Verification Checklist")
     context_parts.append("1. Read the diff / changed files to understand what was modified")
     context_parts.append("2. Check if the changes match the task requirements")
@@ -5311,6 +5466,31 @@ async def answer_agent_interactive(
             patched = _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
             if not patched:
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
+
+        # --- Planning agent: transition task PLANNING → EXECUTING on approve ---
+        if effective_index in (0, 1, 2) and agent.task_id:
+            _task = db.get(Task, agent.task_id)
+            if _task and _task.status == TaskStatus.PLANNING:
+                try:
+                    # Atomic double-transition so _dispatch_pending_tasks never sees PENDING
+                    TaskStateMachine.transition(_task, TaskStatus.PENDING)
+                    TaskStateMachine.transition(_task, TaskStatus.EXECUTING)
+                    _task.started_at = _utcnow()
+                    # Option 2 (manual approval): disable skip_permissions
+                    if effective_index == 2:
+                        agent.skip_permissions = False
+                        _task.skip_permissions = False
+                    db.commit()
+                    asyncio.ensure_future(emit_task_update(
+                        _task.id, _task.status.value, _task.project_name or "",
+                        title=_task.title, agent_id=agent.id,
+                    ))
+                    logger.info(
+                        "Planning task %s → EXECUTING (option %d, agent %s)",
+                        _task.id, effective_index, agent.id,
+                    )
+                except (InvalidTransitionError, Exception) as e:
+                    logger.warning("Failed to transition planning task %s: %s", _task.id, e)
 
         return {"detail": "ok", "keys_sent": len(keys) if has_tmux else 0, "prompt_type": prompt_type, "auto_approved": not has_tmux}
 

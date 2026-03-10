@@ -161,7 +161,16 @@ class GitManager:
         return self._run_git(project_path, ["checkout", ref])
 
     def reset_hard(self, project_path: str, commit: str) -> str:
-        """Reset current branch to a specific commit."""
+        """Reset current branch to a specific commit.
+
+        Stashes uncommitted PROGRESS.md changes before reset to prevent
+        auto-summary data loss.
+        """
+        # Guard: stash uncommitted PROGRESS.md before destructive reset
+        status = self._run_git(project_path, ["status", "--porcelain", "--", "PROGRESS.md"])
+        if status.strip() and not status.startswith("ERROR:"):
+            logger.warning("reset_hard: stashing uncommitted PROGRESS.md in %s", project_path)
+            self._run_git(project_path, ["stash", "push", "-m", "auto-stash PROGRESS.md before reset", "--", "PROGRESS.md"])
         return self._run_git(project_path, ["reset", "--hard", commit])
 
     def get_diff(self, project_path: str, ref: str = "HEAD") -> str:
