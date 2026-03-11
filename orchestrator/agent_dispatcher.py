@@ -3177,9 +3177,6 @@ Here are the day's conversations (with timestamps):
         else:
             parts.append("- Read PROGRESS.md in the project root (if it exists), focusing on entries relevant to this task — avoid repeating past mistakes")
         parts.append("\n## Guidelines")
-        parts.append("- NEVER run: `git reset --hard`, `git clean -f`, `git checkout -- .`, `git push --force`, `rm -rf`")
-        parts.append("- NEVER modify files outside the project directory or run destructive DB operations")
-        parts.append("- If you need to reset a branch, use a worktree — do NOT touch the main working tree")
         parts.append("- Commit all changes with descriptive messages")
         parts.append("- Before your final message, append a short entry to PROGRESS.md with today's date, task title, and any lessons learned (gotchas, workarounds, or 'straightforward — no issues' if none)")
         parts.append("- Leave a summary of what was done as your final message")
@@ -4497,23 +4494,16 @@ Here are the day's conversations (with timestamps):
                 f"{items}"
             )
 
-        safety_rules = (
-            "\n## Safety Rules (mandatory — violations cause data loss)\n"
-            "- NEVER run `git reset --hard`, `git clean -f`, `git checkout -- .`, or `git restore .` on the main repo\n"
-            "- NEVER run `git push --force` or `git push -f`\n"
-            "- NEVER run `rm -rf` on project directories or important files\n"
-            "- NEVER run `DROP TABLE`, `TRUNCATE`, or destructive DB operations\n"
-            "- NEVER modify files outside the project directory\n"
-            "- If you need to reset a branch, use a worktree — do NOT touch the main working tree\n"
-            "- Always check `git status` before any destructive git operation\n"
-        )
+        # Safety rules (git reset --hard, rm -rf, etc.) are enforced by
+        # the PreToolUse hook (orchestrator/hooks/pretooluse-safety.sh),
+        # not by prompt instructions.
 
         return (
             f"You are working in project: {project.display_name}\n"
             f"Project path: {project.path}\n"
             f"\n"
             f"First read the project's CLAUDE.md to understand project conventions.\n"
-            f"{safety_rules}\n"
+            f"\n"
             f"{history_block}\n"
             f"{user_message}"
             f"{insights_block}\n\n"
