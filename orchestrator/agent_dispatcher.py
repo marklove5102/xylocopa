@@ -5962,18 +5962,24 @@ Here are the day's conversations (with timestamps):
                         )
                         _hook_flush_ready.discard(agent_id)
                         db_push = SessionLocal()
+                        _notify_decision = "SKIP (no agent)"
                         try:
                             ag_push = db_push.get(Agent, agent_id)
                             if ag_push:
                                 self._refresh_pane_attached()
                                 from notify import notify
-                                notify("message", agent_id,
+                                _notify_decision = notify("message", agent_id,
                                        _sync_agent_name or f"Agent {agent_id[:8]}",
                                        pending_push_body, f"/agents/{agent_id}",
                                        muted=ag_push.muted,
                                        in_use=self._is_agent_in_use(agent_id, ag_push.tmux_pane))
                         finally:
                             db_push.close()
+                        self._emit({"type": "notification_debug",
+                                    "agent_id": agent_id,
+                                    "decision": _notify_decision,
+                                    "channel": "message",
+                                    "body": pending_push_body[:60]})
                         pending_push_body = ""
                         pending_push_idle = 0
                 # Periodically check if we should still be syncing
@@ -6384,6 +6390,11 @@ Here are the day's conversations (with timestamps):
                     self._emit(emit_agent_update(
                         agent.id, agent.status.value, agent.project
                     ))
+                    _new_roles = [r for r, *_ in new_turns]
+                    logger.info(
+                        "Synced %d new turns for agent %s (roles=%s)",
+                        len(new_turns), agent_id, _new_roles,
+                    )
                     self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
 
                     # Defer push notification until response stabilizes
@@ -6393,7 +6404,7 @@ Here are the day's conversations (with timestamps):
                         if _r == "assistant":
                             pending_push_body = _c[:120]
                             pending_push_idle = 0
-                            logger.debug(
+                            logger.info(
                                 "push: pending set (new assistant turn) for %s: %s",
                                 agent_id, pending_push_body[:50],
                             )
@@ -6401,16 +6412,11 @@ Here are the day's conversations (with timestamps):
                         if _r == "system":
                             pending_push_body = _c[:120]
                             pending_push_idle = 0
-                            logger.debug(
+                            logger.info(
                                 "push: pending set (new system turn) for %s: %s",
                                 agent_id, pending_push_body[:50],
                             )
                             break
-
-                    logger.info(
-                        "Synced %d new turns for agent %s",
-                        len(new_turns), agent_id,
-                    )
 
                     # Generate video thumbnails for new assistant turns
                     for _r, _c, *_ in new_turns:
@@ -6480,18 +6486,24 @@ Here are the day's conversations (with timestamps):
                         agent_id, pending_push_body[:50],
                     )
                     db_push = SessionLocal()
+                    _notify_decision = "SKIP (no agent)"
                     try:
                         ag_push = db_push.get(Agent, agent_id)
                         if ag_push:
                             self._refresh_pane_attached()
                             from notify import notify
-                            notify("message", agent_id,
+                            _notify_decision = notify("message", agent_id,
                                    _sync_agent_name or f"Agent {agent_id[:8]}",
                                    pending_push_body, f"/agents/{agent_id}",
                                    muted=ag_push.muted,
                                    in_use=self._is_agent_in_use(agent_id, ag_push.tmux_pane))
                     finally:
                         db_push.close()
+                    self._emit({"type": "notification_debug",
+                                "agent_id": agent_id,
+                                "decision": _notify_decision,
+                                "channel": "message",
+                                "body": pending_push_body[:60]})
                     pending_push_body = ""
 
                 # Process is dead — transition to STOPPED
@@ -6519,10 +6531,15 @@ Here are the day's conversations (with timestamps):
                         self._emit(emit_new_message(agent.id, sys_msg.id, _sync_agent_name, _sync_project))
 
                         from notify import notify
-                        notify("task_complete", agent_id,
+                        _tc_decision = notify("task_complete", agent_id,
                                f"\u2705 {_sync_agent_name or agent_id[:8]}",
                                "CLI session ended — sync complete",
                                f"/agents/{agent_id}")
+                        self._emit({"type": "notification_debug",
+                                    "agent_id": agent_id,
+                                    "decision": _tc_decision,
+                                    "channel": "task_complete",
+                                    "body": "session ended"})
                 finally:
                     db.close()
                 break

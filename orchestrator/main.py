@@ -597,9 +597,21 @@ async def test_notify(request: Request):
         in_use = in_use_param.lower() == "true"
 
     from notify import notify
-    notify(channel, agent_id, "AgentHive Test",
+    decision = notify(channel, agent_id, "AgentHive Test",
            f"Test via {channel} (muted={muted}, in_use={in_use})",
            "/agents", muted=muted, in_use=in_use)
+
+    # Emit debug bubble to frontend
+    from websocket import ws_manager
+    import asyncio
+    try:
+        asyncio.get_event_loop().create_task(ws_manager.broadcast(
+            "notification_debug",
+            {"agent_id": agent_id, "decision": decision,
+             "channel": channel, "body": f"test ({decision})"}
+        ))
+    except Exception:
+        pass
 
     return {
         "channel": channel,
@@ -609,6 +621,7 @@ async def test_notify(request: Request):
         "ws_viewed": ws_viewed,
         "pane_attached": pane_attached,
         "tmux_pane": pane,
+        "decision": decision,
         "routed_through": "notify()",
     }
 
@@ -3883,12 +3896,17 @@ async def hook_agent_stop(request: Request):
     # If new JSONL growth follows (tool result), the sync loop clears
     # this flag — preventing mid-conversation false positives.
     _hook_flush_ready.add(agent_id)
+    logger.info(
+        "hook_agent_stop: agent=%s summary_len=%d flush_ready=True",
+        agent_id[:8], len(summary),
+    )
 
     # Clear generating state immediately — the Stop hook is a deterministic
     # signal that Claude finished this turn.  This emits agent_stream_end
     # over WebSocket, which flushes deferred browser notifications.
     ad = getattr(app.state, "agent_dispatcher", None)
     if ad and agent_id in ad._generating_agents:
+        logger.info("hook_agent_stop: clearing generating state for %s", agent_id[:8])
         ad._stop_generating(agent_id)
 
     return {}
