@@ -81,9 +81,21 @@ function shouldSuppressNotification(agentId, allowRepeat = false) {
 }
 
 function showNativeNotification(eventType, agentId, title, body, allowRepeat = false) {
-  if (shouldSuppressNotification(agentId, allowRepeat)) return;
+  if (shouldSuppressNotification(agentId, allowRepeat)) {
+    console.debug(
+      "[notif] SUPPRESSED %s for %s — viewing=%s visible=%s muted=%s already=%s",
+      eventType, agentId?.slice(0, 8),
+      _viewingAgents.has(agentId), document.visibilityState,
+      isAgentMuted(agentId), _notifiedAgents.has(agentId),
+    );
+    return;
+  }
   if (agentId) _notifiedAgents.add(agentId);
 
+  console.debug(
+    "[notif] SHOW %s for %s: %s — %s",
+    eventType, agentId?.slice(0, 8), title, body,
+  );
   try {
     const tag = `${eventType}-${agentId || "unknown"}`;
     const n = new Notification(title, { body, tag, renotify: true });
@@ -106,6 +118,11 @@ function clearPendingNotification(agentId) {
 function flushPendingNotification(agentId) {
   const pending = _pendingMessageNotifications.get(agentId);
   if (!pending) return;
+  const elapsed = Date.now() - (pending.deferredAt || Date.now());
+  console.debug(
+    "[notif] FLUSH pending for %s after %dms: %s",
+    agentId?.slice(0, 8), elapsed, pending.body,
+  );
   clearPendingNotification(agentId);
   showNativeNotification("new_message", agentId, pending.title, pending.body);
 }
@@ -119,9 +136,17 @@ function schedulePendingFlush(agentId, delayMs) {
     if (!pending) return;
     const elapsed = Date.now() - (pending.deferredAt || Date.now());
     if (_streamingAgents.has(agentId) && elapsed < PENDING_FLUSH_MAX_WAIT_MS) {
+      console.debug(
+        "[notif] timer: %s still streaming after %dms — retry in %dms",
+        agentId?.slice(0, 8), elapsed, PENDING_FLUSH_RETRY_MS,
+      );
       schedulePendingFlush(agentId, PENDING_FLUSH_RETRY_MS);
       return;
     }
+    console.debug(
+      "[notif] timer: FLUSH for %s (streaming=%s elapsed=%dms)",
+      agentId?.slice(0, 8), _streamingAgents.has(agentId), elapsed,
+    );
     _streamingAgents.delete(agentId);
     flushPendingNotification(agentId);
   }, delayMs);
@@ -157,19 +182,35 @@ export function showBrowserNotification(event) {
   if (event.type === "agent_stream_end") {
     if (!agentId) return;
     _streamingAgents.delete(agentId);
+    console.debug(
+      "[notif] agent_stream_end for %s — pending=%s",
+      agentId?.slice(0, 8), _pendingMessageNotifications.has(agentId),
+    );
     flushPendingNotification(agentId);
     return;
   }
 
   if (event.type === "new_message") {
-    if (!isAgentNotificationsEnabled()) return;
-    if (shouldSuppressNotification(agentId)) return;
+    if (!isAgentNotificationsEnabled()) {
+      console.debug("[notif] new_message for %s — SKIP (global off)", agentId?.slice(0, 8));
+      return;
+    }
+    if (shouldSuppressNotification(agentId)) {
+      console.debug(
+        "[notif] new_message for %s — SKIP (suppressed) viewing=%s visible=%s muted=%s already=%s",
+        agentId?.slice(0, 8), _viewingAgents.has(agentId), document.visibilityState,
+        isAgentMuted(agentId), _notifiedAgents.has(agentId),
+      );
+      return;
+    }
     const title = d.agent_name || `Agent ${agentId?.slice(0, 8)}`;
     const body = d.project ? `New message (${d.project})` : "New message";
     if (agentId && _streamingAgents.has(agentId)) {
+      console.debug("[notif] new_message for %s — DEFER (streaming)", agentId?.slice(0, 8));
       deferPendingNotification(agentId, { title, body });
       return;
     }
+    console.debug("[notif] new_message for %s — IMMEDIATE (not streaming)", agentId?.slice(0, 8));
     showNativeNotification(event.type, agentId, title, body);
     return;
   }
