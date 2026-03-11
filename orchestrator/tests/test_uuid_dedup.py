@@ -636,7 +636,14 @@ class TestSessionOwnerSidecar:
         sid = "test-session-123"
         agent_id = "agent-abc"
         _write_session_owner(str(tmp_path), sid, agent_id)
-        assert _read_session_owner(str(tmp_path), sid) == agent_id
+        result = _read_session_owner(str(tmp_path), sid)
+        assert result == {"agent_id": agent_id}
+
+    def test_write_and_read_owner_with_slug(self, tmp_path):
+        sid = "test-session-slug"
+        _write_session_owner(str(tmp_path), sid, "agent-abc", slug="fix-bug")
+        result = _read_session_owner(str(tmp_path), sid)
+        assert result == {"agent_id": "agent-abc", "slug": "fix-bug"}
 
     def test_read_missing_returns_none(self, tmp_path):
         assert _read_session_owner(str(tmp_path), "nonexistent") is None
@@ -645,7 +652,16 @@ class TestSessionOwnerSidecar:
         sid = "test-session-456"
         _write_session_owner(str(tmp_path), sid, "agent-old")
         _write_session_owner(str(tmp_path), sid, "agent-new")
-        assert _read_session_owner(str(tmp_path), sid) == "agent-new"
+        result = _read_session_owner(str(tmp_path), sid)
+        assert result == {"agent_id": "agent-new"}
+
+    def test_legacy_plain_text_format(self, tmp_path):
+        """Legacy .owner files contain just the agent_id as plain text."""
+        sid = "test-legacy"
+        path = tmp_path / f"{sid}.owner"
+        path.write_text("agent-legacy")
+        result = _read_session_owner(str(tmp_path), sid)
+        assert result == {"agent_id": "agent-legacy"}
 
     def test_is_wrapped_prompt_new_format(self):
         """New prompts start with 'You are working in project:'."""

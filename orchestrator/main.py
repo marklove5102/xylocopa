@@ -4043,9 +4043,16 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     if worktree == "auto" and prompt:
         worktree = _generate_worktree_name_local(prompt)
 
+    # Pre-generate session UUID so we can pre-write the .owner sidecar
+    # BEFORE launching Claude.  This ensures the session has identity
+    # from the very first moment the JSONL file appears.
+    import uuid as _uuid
+    pre_session_id = str(_uuid.uuid4())
+
     # Build the claude command in INTERACTIVE mode (no -p, so the user
     # gets the full TUI and can attach via tmux).
     cmd_parts = [CLAUDE_BIN,
+                  "--session-id", pre_session_id,
                   "--output-format", "stream-json", "--verbose"]
     if skip_permissions:
         cmd_parts.append("--dangerously-skip-permissions")
@@ -4056,6 +4063,14 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     if worktree:
         cmd_parts += ["--worktree", worktree]
     claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+
+    # Pre-write .owner sidecar before launching Claude.
+    # Slug is unknown at this point — will be backfilled by the sync loop.
+    from agent_dispatcher import _write_session_owner
+    from session_cache import session_source_dir
+    _sdir = session_source_dir(proj.path)
+    os.makedirs(_sdir, exist_ok=True)
+    _write_session_owner(_sdir, pre_session_id, agent_hex)
 
     # Pre-accept the project trust dialog in ~/.claude.json so Claude
     # doesn't show the "Is this a project you trust?" prompt that blocks
@@ -4137,7 +4152,10 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # detect session JSONL, and start sync.
     if ad and launch_prompt:
         launch_task = asyncio.ensure_future(
-            _launch_tmux_background(ad, agent.id, pane_id, launch_prompt, proj.path)
+            _launch_tmux_background(
+                ad, agent.id, pane_id, launch_prompt, proj.path,
+                pre_session_id=pre_session_id,
+            )
         )
         ad.track_launch_task(agent.id, launch_task)
 
@@ -4150,6 +4168,7 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
 
 async def _launch_tmux_background(
     ad, agent_id: str, pane_id: str, prompt: str, project_path: str,
+    pre_session_id: str | None = None,
 ):
     """Background task for tmux agent launch.
 
@@ -4298,17 +4317,23 @@ async def _launch_tmux_background(
             return False
 
         def _scan_for_session_jsonl(owned_sids: set, pane_pid: int | None) -> str | None:
-            """Scan session dirs for the JSONL created by our launch.
+            """Find the JSONL created by our launch.
 
-            Tiers:
-              0. /proc/{pid}/fd scan (works if Claude keeps JSONL open)
-              1. Debug-log PID match (legacy Claude Code <2.1.71)
-              2. mtime fallback — newest unowned JSONL created after launch
-                 (Claude Code >=2.1.71 which has no debug logs and doesn't
-                 keep session JSONL fds open)
+            If pre_session_id was provided (pre-generated UUID passed to
+            Claude via --session-id), just check for that specific file.
+            Falls back to legacy scanning for backward compat.
             """
+            # Fast path: we know exactly which session file to expect
+            if pre_session_id:
+                for sdir in dict.fromkeys([session_dir, base_session_dir]):
+                    if not os.path.isdir(sdir):
+                        continue
+                    fpath = os.path.join(sdir, f"{pre_session_id}.jsonl")
+                    if os.path.exists(fpath):
+                        return pre_session_id
+
+            # Legacy fallback: scan for newest unowned JSONL
             if pane_pid:
-                # Tier 0: Direct OS check — which JSONL does this process have open?
                 sid = _detect_pid_session_jsonl(pane_pid)
                 if sid and sid not in owned_sids:
                     return sid
@@ -4323,12 +4348,6 @@ async def _launch_tmux_background(
                     sid = fname.replace(".jsonl", "")
                     if sid in owned_sids:
                         continue
-                    # Tier 1: debug-log PID match
-                    if pane_pid:
-                        session_pid = _get_session_pid(sid)
-                        if session_pid == pane_pid:
-                            return sid
-                    # Tier 2: collect candidates for mtime fallback
                     fpath = os.path.join(sdir, fname)
                     try:
                         mtime = os.path.getmtime(fpath)
