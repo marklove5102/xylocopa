@@ -339,6 +339,40 @@ def _read_session_owner(session_dir: str, sid: str) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
 
+def _write_unlinked_entry(
+    session_id: str,
+    cwd: str,
+    transcript_path: str = "",
+    model: str | None = None,
+    tmux_pane: str | None = None,
+    project_name: str | None = None,
+):
+    """Write an unlinked session entry for user confirmation in the UI.
+
+    Creates a JSON file in the unlinked-sessions directory (under BACKUP_DIR)
+    so that the frontend can display it and the user can confirm (adopt) it.
+    """
+    from config import BACKUP_DIR
+    udir = os.path.join(BACKUP_DIR, "unlinked-sessions")
+    os.makedirs(udir, exist_ok=True)
+    entry_path = os.path.join(udir, f"{session_id}.json")
+    if os.path.isfile(entry_path):
+        return  # Already registered — don't overwrite
+    try:
+        with open(entry_path, "w") as f:
+            json.dump({
+                "session_id": session_id,
+                "cwd": cwd,
+                "transcript_path": transcript_path,
+                "model": model,
+                "tmux_pane": tmux_pane,
+                "project_name": project_name,
+                "timestamp": _time.time(),
+            }, f)
+    except OSError:
+        pass
+
+
 # Image metadata injected by Claude Code's Read tool — internal only, hide from UI
 _IMAGE_META_RE = re.compile(
     r"^\[Image: original \d+x\d+, displayed at \d+x\d+\."
@@ -1214,6 +1248,10 @@ def _parse_session_turns(jsonl_path: str) -> list[tuple[str, str, dict | None, s
     except OSError as e:
         logger.warning("_parse_session_turns: failed to read %s: %s", jsonl_path, e)
         return turns
+
+    # Drop incomplete last line (mid-write by Claude Code)
+    if lines and not lines[-1].endswith("\n"):
+        lines.pop()
 
     # Accumulate assistant blocks between user messages
     assistant_parts: list[tuple[str, str]] = []
@@ -2667,9 +2705,15 @@ Here are the day's conversations (with timestamps):
 
         _progress_job_clear(project_name)
 
-    def _emit(self, coro):
+    def _emit(self, coro_or_dict):
         try:
-            asyncio.ensure_future(coro)
+            if isinstance(coro_or_dict, dict):
+                from websocket import ws_manager
+                asyncio.ensure_future(
+                    ws_manager.broadcast(coro_or_dict.pop("type", "debug"), coro_or_dict)
+                )
+            else:
+                asyncio.ensure_future(coro_or_dict)
         except Exception:
             logger.warning("Failed to schedule WebSocket emit", exc_info=True)
 
@@ -2813,7 +2857,7 @@ Here are the day's conversations (with timestamps):
             self._stale_session_retries.pop(agent.id, None)
             self._syncing_no_pane_retries.pop(agent.id, None)
             self._known_subagents.pop(agent.id, None)
-            # Clean up hook signal files and flush gate
+            # Clean up hook signal files
             for suffix in (".newsession", ".stopsummary"):
                 try:
                     os.unlink(f"/tmp/ahive-{agent.id}{suffix}")
@@ -2823,8 +2867,6 @@ Here are the day's conversations (with timestamps):
                 os.unlink(f"/tmp/ahive-hooks/{agent.id}.stopsummary")
             except FileNotFoundError:
                 pass
-            from main import _hook_flush_ready
-            _hook_flush_ready.discard(agent.id)
 
         if emit:
             from websocket import emit_agent_update
@@ -4512,9 +4554,14 @@ Here are the day's conversations (with timestamps):
         """Detect interactive claude processes in tmux and sync them.
 
         Scans tmux panes for non-orchestrator claude processes whose CWD
-        matches a registered project.  For each match, finds the most
-        recently modified session JSONL and creates (or revives) a
-        SYNCING agent.
+        matches a registered project, using tiered matching:
+        - Tier 0: tmux session name → agent ID (revive stopped agents)
+        - Tier 1: /proc/PID/fd or debug log → exact session match
+        - Tier 2: mtime fallback (process start ↔ JSONL creation time)
+
+        When an existing agent matches, it's revived directly.  When a new
+        session is detected with no agent match, an unlinked session entry
+        is written for the user to confirm in the UI before syncing starts.
         """
         from websocket import emit_agent_update
 
@@ -4787,81 +4834,23 @@ Here are the day's conversations (with timestamps):
                         )
                         db.flush()
 
-                # --- Create new SYNCING agent ---
-                agent_name = "CLI session"
-                detected_model = None
-                turns = []
-                if best_fpath:
-                    turns = _parse_session_turns(best_fpath)
-                    for role, content, *_rest in turns:
-                        if role == "user" and content:
-                            # Skip system-wrapped prompts — use real user message
-                            if _is_wrapped_prompt(content):
-                                continue
-                            agent_name = (content or "")[:80]
-                            break
-                    detected_model = _detect_session_model(best_fpath)
-
-                # Detect worktree name from pane CWD
-                detected_worktree = None
+                # --- Write unlinked session entry for user confirmation ---
                 pane_info = pane_map.get(pane_id)
-                if pane_info:
-                    pcwd = pane_info["cwd"]
-                    wt_prefix = os.path.join(proj_path, ".claude", "worktrees") + "/"
-                    if pcwd.startswith(wt_prefix):
-                        remainder = pcwd[len(wt_prefix):]
-                        detected_worktree = remainder.split("/")[0] or None
+                pcwd = pane_info["cwd"] if pane_info else proj_path
+                detected_model = _detect_session_model(best_fpath) if best_fpath else None
 
-                logger.info(
-                    "Auto-detected tmux CLI session %s in project %s (pane %s, worktree=%s)",
-                    best_sid[:12], proj.name, pane_id, detected_worktree,
-                )
-
-                agent = Agent(
-                    project=proj.name,
-                    name=agent_name,
-                    mode=AgentMode.AUTO,
-                    status=AgentStatus.SYNCING,
-                    model=detected_model,
+                _write_unlinked_entry(
                     session_id=best_sid,
-                    cli_sync=True,
+                    cwd=pcwd,
+                    transcript_path=best_fpath or "",
+                    model=detected_model,
                     tmux_pane=pane_id,
-                    worktree=detected_worktree,
-                    last_message_preview=agent_name,
-                    last_message_at=_utcnow(),
+                    project_name=proj.name,
                 )
-                db.add(agent)
-                db.flush()
-
-                # Rename tmux session to ah-{id} format — only for
-                # orchestrator-created sessions; preserve user-chosen names.
-                if tmux_session_name.startswith("ah-"):
-                    try:
-                        _sp.run(
-                            ["tmux", "rename-session", "-t",
-                             tmux_session_name, f"ah-{agent.id[:8]}"],
-                            capture_output=True, text=True, timeout=5,
-                        )
-                    except (_sp.TimeoutExpired, OSError) as e:
-                        logger.warning(
-                            "tmux rename failed for agent %s: %s", agent.id, e,
-                        )
-
-                # Import existing turns as messages
-                self._import_turns_as_messages(db, agent.id, turns)
-
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    logger.warning(
-                        "_auto_detect_cli_sessions: session %s already owned "
-                        "(UNIQUE violation), skipping pane %s",
-                        best_sid[:12], pane_id,
-                    )
-                    continue
-                agents_to_sync.append((agent.id, best_sid, proj.path))
-                self._emit(emit_agent_update(agent.id, agent.status.value, proj.name))
+                logger.info(
+                    "Unlinked CLI session %s in project %s (pane %s) — awaiting user confirmation",
+                    best_sid[:12], proj.name, pane_id,
+                )
 
         # Start sync tasks (after commit)
         for aid, sid, ppath in agents_to_sync:
@@ -5630,9 +5619,6 @@ Here are the day's conversations (with timestamps):
         last_streamed_hash = ""  # Hash of last agent_stream content (avoid re-emit)
         is_generating = False
         _sync_gen_id: int | None = None  # current generation_id for sync streaming
-        pending_push_body = ""  # Deferred notification until response stabilizes
-        pending_push_idle = 0   # Consecutive idle polls since pending was set
-
         def _content_hash(content: str) -> str:
             """Fast hash of content for change detection."""
             import hashlib
@@ -5800,9 +5786,12 @@ Here are the day's conversations (with timestamps):
                     agent.last_message_preview = (conv_turns[-1][1] or "")[:200]
                     agent.last_message_at = _utcnow()
                     db.commit()
-                    self._emit(emit_new_message(
-                        agent_id, "sync", _sync_agent_name, _sync_project,
-                    ))
+                    # Only emit new_message for non-user turns to avoid
+                    # triggering browser notifications for the user's own messages.
+                    if any(r != "user" for r, _, *_ in missing):
+                        self._emit(emit_new_message(
+                            agent_id, "sync", _sync_agent_name, _sync_project,
+                        ))
                     logger.info(
                         "Reconciled %d missing turns for agent %s",
                         len(missing), agent_id,
@@ -5943,53 +5932,6 @@ Here are the day's conversations (with timestamps):
                     is_generating = False
                     self._stop_generating(agent_id)
                     _sync_gen_id = None
-                # Flush deferred push notification when Stop hook confirms
-                # end-of-turn AND JSONL has been idle (no tool result followed).
-                # This gates on the deterministic Stop hook signal instead of
-                # a pure idle-time heuristic, preventing false positives during
-                # long-running tool executions (Bash, Agent, etc.).
-                _HOOK_FALLBACK_POLLS = 10  # ~30s: flush even without stop hook
-                if pending_push_body:
-                    pending_push_idle += 1
-                    from main import _hook_flush_ready
-                    hook_gated = (
-                        agent_id in _hook_flush_ready and pending_push_idle >= 1
-                    )
-                    fallback = (
-                        pending_push_idle >= _HOOK_FALLBACK_POLLS
-                        and not is_generating
-                    )
-                    flush_ok = hook_gated or fallback
-                    if flush_ok:
-                        _flush_reason = "stop-hook" if hook_gated else "fallback-timeout"
-                        logger.info(
-                            "push: flushing notification for %s "
-                            "(%s, %d idle polls): %s",
-                            agent_id, _flush_reason, pending_push_idle,
-                            pending_push_body[:50],
-                        )
-                        _hook_flush_ready.discard(agent_id)
-                        db_push = SessionLocal()
-                        _notify_decision = "SKIP (no agent)"
-                        try:
-                            ag_push = db_push.get(Agent, agent_id)
-                            if ag_push:
-                                self._refresh_pane_attached()
-                                from notify import notify
-                                _notify_decision = notify("message", agent_id,
-                                       _sync_agent_name or f"Agent {agent_id[:8]}",
-                                       pending_push_body, f"/agents/{agent_id}",
-                                       muted=ag_push.muted,
-                                       in_use=self._is_agent_in_use(agent_id, ag_push.tmux_pane))
-                        finally:
-                            db_push.close()
-                        self._emit({"type": "notification_debug",
-                                    "agent_id": agent_id,
-                                    "decision": _notify_decision,
-                                    "channel": "message",
-                                    "body": pending_push_body[:60]})
-                        pending_push_body = ""
-                        pending_push_idle = 0
                 # Periodically check if we should still be syncing
                 if idle_polls % 10 == 0:
                     db = SessionLocal()
@@ -6094,10 +6036,6 @@ Here are the day's conversations (with timestamps):
                     # simply be idle in the tmux session.
                 continue
             idle_polls = 0
-            pending_push_idle = 0  # File grew — response may still be generating
-            # Agent is still working (tool result came back) — cancel flush gate
-            from main import _hook_flush_ready
-            _hook_flush_ready.discard(agent_id)
             last_size = current_size
 
             # Parse full file for turns
@@ -6210,14 +6148,6 @@ Here are the day's conversations (with timestamps):
                         if not is_generating:
                             is_generating = True
                             _sync_gen_id = self._start_generating(agent_id)
-                        # Update deferred push body with latest content
-                        if pending_push_body:
-                            pending_push_body = (_last_content or "")[:120]
-                            pending_push_idle = 0  # Reset — still generating
-                            logger.debug(
-                                "push: pending updated (turn grew) for %s: %s",
-                                agent_id, pending_push_body[:50],
-                            )
                         logger.info(
                             "Updated last turn content for agent %s (%s chars)",
                             agent_id, len(_last_content),
@@ -6378,7 +6308,8 @@ Here are the day's conversations (with timestamps):
                     agent.last_message_preview = (new_turns[-1][1] or "")[:200]
                     agent.last_message_at = _utcnow()
                     if not self._is_agent_in_use(agent.id, agent.tmux_pane):
-                        agent.unread_count += len(new_turns)
+                        _non_user = sum(1 for r, *_ in new_turns if r != "user")
+                        agent.unread_count += _non_user
                     db.commit()
 
                     last_turn_count = len(turns)
@@ -6407,27 +6338,6 @@ Here are the day's conversations (with timestamps):
                     # triggering browser notifications for the user's own messages.
                     if any(r != "user" for r, *_ in new_turns):
                         self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
-
-                    # Defer push notification until response stabilizes
-                    # (file stops growing), so we notify with final content
-                    # instead of partial mid-generation text.
-                    for _r, _c, *_rest in reversed(new_turns):
-                        if _r == "assistant":
-                            pending_push_body = _c[:120]
-                            pending_push_idle = 0
-                            logger.info(
-                                "push: pending set (new assistant turn) for %s: %s",
-                                agent_id, pending_push_body[:50],
-                            )
-                            break
-                        if _r == "system":
-                            pending_push_body = _c[:120]
-                            pending_push_idle = 0
-                            logger.info(
-                                "push: pending set (new system turn) for %s: %s",
-                                agent_id, pending_push_body[:50],
-                            )
-                            break
 
                     # Generate video thumbnails for new assistant turns
                     for _r, _c, *_ in new_turns:
@@ -6489,33 +6399,6 @@ Here are the day's conversations (with timestamps):
                         agent_id,
                     )
                     continue
-
-                # Flush any deferred push notification before stopping
-                if pending_push_body:
-                    logger.debug(
-                        "push: flushing on session end for %s: %s",
-                        agent_id, pending_push_body[:50],
-                    )
-                    db_push = SessionLocal()
-                    _notify_decision = "SKIP (no agent)"
-                    try:
-                        ag_push = db_push.get(Agent, agent_id)
-                        if ag_push:
-                            self._refresh_pane_attached()
-                            from notify import notify
-                            _notify_decision = notify("message", agent_id,
-                                   _sync_agent_name or f"Agent {agent_id[:8]}",
-                                   pending_push_body, f"/agents/{agent_id}",
-                                   muted=ag_push.muted,
-                                   in_use=self._is_agent_in_use(agent_id, ag_push.tmux_pane))
-                    finally:
-                        db_push.close()
-                    self._emit({"type": "notification_debug",
-                                "agent_id": agent_id,
-                                "decision": _notify_decision,
-                                "channel": "message",
-                                "body": pending_push_body[:60]})
-                    pending_push_body = ""
 
                 # Process is dead — transition to STOPPED
                 logger.info(

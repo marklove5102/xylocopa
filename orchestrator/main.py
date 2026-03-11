@@ -3828,14 +3828,6 @@ async def generate_worktree_name(request: Request):
 # these when harvesting task completions.
 _HOOK_SIGNAL_DIR = "/tmp/ahive-hooks"
 
-# Set of agent IDs whose Stop hook fired since the last JSONL growth.
-# The cli_sync loop uses this as a gate: only flush deferred push
-# notifications when the Stop hook has confirmed end-of-turn AND no
-# new JSONL growth followed (which would indicate tool execution).
-# When JSONL grows again (tool_result written), the agent is removed
-# from this set, preventing mid-conversation false positives.
-_hook_flush_ready: set[str] = set()
-
 
 def write_stop_summary(agent_id: str, summary: str) -> None:
     """Persist Stop hook summary to signal file (survives restart)."""
@@ -3864,16 +3856,15 @@ def read_stop_summary(agent_id: str) -> str | None:
 async def hook_agent_stop(request: Request):
     """Receive Stop hook from Claude Code agents.
 
-    Caches the last_assistant_message so the dispatcher can use it when it
-    independently confirms the agent is truly done (subprocess exited).
+    This is the sole trigger for "message" notifications.  When the Stop
+    hook fires, we immediately check in-use / mute conditions and send a
+    push notification if appropriate.
 
-    Also clears the generating state immediately so the frontend receives
-    agent_stream_end without waiting for the sync loop's JSONL-polling
-    heuristic — this unblocks deferred browser notifications.
+    Also caches the last_assistant_message for the dispatcher and clears
+    generating state so the frontend receives agent_stream_end.
 
     Stop fires per conversation turn, not just at task completion, so this
-    endpoint deliberately does NOT transition task state.  The dispatcher
-    owns that decision using full context (process exit, agent status, etc.).
+    endpoint deliberately does NOT transition task state.
     """
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     if not agent_id:
@@ -3892,22 +3883,38 @@ async def hook_agent_stop(request: Request):
     if summary:
         write_stop_summary(agent_id, summary)
 
-    # Mark this agent as ready to flush deferred push notification.
-    # If new JSONL growth follows (tool result), the sync loop clears
-    # this flag — preventing mid-conversation false positives.
-    _hook_flush_ready.add(agent_id)
-    logger.info(
-        "hook_agent_stop: agent=%s summary_len=%d flush_ready=True",
-        agent_id[:8], len(summary),
-    )
-
     # Clear generating state immediately — the Stop hook is a deterministic
-    # signal that Claude finished this turn.  This emits agent_stream_end
-    # over WebSocket, which flushes deferred browser notifications.
+    # signal that Claude finished this turn.
     ad = getattr(app.state, "agent_dispatcher", None)
     if ad and agent_id in ad._generating_agents:
         logger.info("hook_agent_stop: clearing generating state for %s", agent_id[:8])
         ad._stop_generating(agent_id)
+
+    # Send message notification (sole trigger point).
+    from database import SessionLocal
+    from models import Agent
+    db_notify = SessionLocal()
+    _notify_decision = "SKIP (no agent)"
+    try:
+        agent = db_notify.get(Agent, agent_id)
+        if agent and ad:
+            ad._refresh_pane_attached()
+            from notify import notify
+            _notify_decision = notify(
+                "message", agent_id,
+                agent.name or f"Agent {agent_id[:8]}",
+                summary[:120] or "Response ready",
+                f"/agents/{agent_id}",
+                muted=agent.muted,
+                in_use=ad._is_agent_in_use(agent_id, agent.tmux_pane),
+            )
+    finally:
+        db_notify.close()
+
+    logger.info(
+        "hook_agent_stop: agent=%s summary_len=%d notify=%s",
+        agent_id[:8], len(summary), _notify_decision,
+    )
 
     return {}
 
@@ -3916,36 +3923,38 @@ async def hook_agent_stop(request: Request):
 async def hook_agent_session_start(request: Request):
     """Receive SessionStart hook from Claude Code agents.
 
-    Writes a signal file that the dispatcher's _detect_successor() reads
-    to deterministically track session rotation (e.g. /clear, compaction).
+    Only handles managed agents (X-Agent-Id present): writes a signal file
+    for _detect_successor() to track session rotation.  Unmanaged sessions
+    are discovered via tmux scan and shown as "needs confirm" in the UI.
     """
     agent_id = request.headers.get("X-Agent-Id", "").strip()
-    if not agent_id:
-        return {}
 
     try:
         body = await request.json()
     except Exception:
+        logger.debug("SessionStart hook: failed to parse body (agent_id=%s)", agent_id[:8] if agent_id else "(none)")
         return {}
 
     # Claude Code sends session info — extract session_id
     session_id = ""
     if isinstance(body, dict):
-        # Try direct field, then nested session object
         session_id = body.get("session_id", "") or ""
         if not session_id:
             session = body.get("session") or {}
             if isinstance(session, dict):
                 session_id = session.get("session_id", "") or session.get("id", "") or ""
 
-    if session_id:
-        signal_path = f"/tmp/ahive-{agent_id}.newsession"
-        try:
-            with open(signal_path, "w") as f:
-                f.write(session_id)
-            logger.info("SessionStart hook: agent=%s session=%s", agent_id[:8], session_id[:12])
-        except OSError:
-            pass
+    if not session_id or not agent_id:
+        return {}
+
+    # Managed agent — session rotation signal
+    signal_path = f"/tmp/ahive-{agent_id}.newsession"
+    try:
+        with open(signal_path, "w") as f:
+            f.write(session_id)
+        logger.info("SessionStart hook: agent=%s session=%s", agent_id[:8], session_id[:12])
+    except OSError:
+        pass
 
     return {}
 
@@ -4856,10 +4865,10 @@ async def list_unlinked_sessions(db: Session = Depends(get_db)):
                     except OSError:
                         pass
                     continue
-                # Derive project name from CWD
+                # Use stored project name or derive from CWD
                 cwd = info.get("cwd", "")
-                project_name = os.path.basename(cwd.rstrip("/")) if cwd else ""
-                info["project_name"] = project_name
+                if not info.get("project_name"):
+                    info["project_name"] = os.path.basename(cwd.rstrip("/")) if cwd else ""
                 info["file"] = fname
                 sessions.append(info)
             except (OSError, json.JSONDecodeError):
@@ -4946,7 +4955,8 @@ async def adopt_unlinked_session(
             model=info.get("model") or proj.default_model or CC_MODEL,
             cli_sync=True,
             session_id=session_id,
-            last_message_preview="Adopted manual session",
+            tmux_pane=info.get("tmux_pane"),
+            last_message_preview="Confirmed session",
             last_message_at=datetime.now(timezone.utc),
         )
         db.add(agent)
