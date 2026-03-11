@@ -407,20 +407,20 @@ export default function NewTaskPage() {
                     </svg>
                   </button>
                   <div />
-                  <div className="relative">
+                  <div className="flex items-center gap-1.5">
+                    {voice.recording && voice.remainingSeconds != null && (
+                      <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
+                        {voice.remainingSeconds >= 60
+                          ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
+                          : voice.remainingSeconds}
+                      </span>
+                    )}
                     <VoiceRecorder
                       recording={voice.recording}
                       voiceLoading={voice.voiceLoading}
                       micError={voice.micError}
                       onToggle={voice.toggleRecording}
                     />
-                    {voice.recording && voice.remainingSeconds != null && (
-                      <span className="absolute -top-1.5 -right-1 text-[9px] font-semibold tabular-nums bg-black/60 text-white rounded-full px-1 min-w-[16px] text-center leading-[14px] pointer-events-none">
-                        {voice.remainingSeconds >= 60
-                          ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
-                          : voice.remainingSeconds}
-                      </span>
-                    )}
                   </div>
                   <div className="relative">
                     <button
