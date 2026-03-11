@@ -3152,7 +3152,6 @@ HOW TO UPDATE:
 SAFETY RULES:
 - You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/plan (move to planning)
 - Do NOT call any other endpoints (no /api/agents/*, /api/git/*, /api/projects/*, DELETE endpoints, etc.)
-- Do NOT run git commands, modify files, or execute any destructive operations
 
 INSTRUCTIONS:
 1. First, analyze all tasks and present a summary table of your proposed changes (title, project assignment, ready status)
@@ -3535,7 +3534,6 @@ async def verify_task(task_id: str, request: Request, db: Session = Depends(get_
 
     context_parts.append(f"\n## Safety Rules (mandatory)")
     context_parts.append("- You are a READ-ONLY verifier. Do NOT commit, push, or modify any source code.")
-    context_parts.append("- NEVER run: `git reset --hard`, `git push --force`, `rm -rf`, or any destructive operation")
     context_parts.append("- If you find issues, REPORT them — do NOT attempt to fix them")
     context_parts.append(f"\n## Your Verification Checklist")
     context_parts.append("1. Read the diff / changed files to understand what was modified")
@@ -4078,7 +4076,21 @@ def _write_agent_hooks_config(project_path: str):
     port = os.getenv("PORT", "8080")
     base_url = f"http://localhost:{port}/api/hooks"
 
+    # PreToolUse safety hook — deterministic guardrail that replaces
+    # prompt-based "NEVER run X" rules with hard blocks.
+    hook_script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "hooks", "pretooluse-safety.sh",
+    )
+
     desired_hooks = {
+        "PreToolUse": [{
+            "matcher": "Bash|Write|Edit",
+            "hooks": [{
+                "type": "command",
+                "command": hook_script,
+            }],
+        }],
         "SessionStart": [{
             "hooks": [{
                 "type": "http",
@@ -4579,10 +4591,13 @@ async def _launch_tmux_background(
             """Find the JSONL created by our launch.
 
             If pre_session_id was provided (pre-generated UUID passed to
-            Claude via --session-id), just check for that specific file.
-            Falls back to legacy scanning for backward compat.
+            Claude via --session-id), ONLY accept that exact session.
+            Falls back to FD/mtime scan only when no pre_session_id was set
+            (legacy launches without --session-id).
             """
-            # Fast path: we know exactly which session file to expect
+            # When we pre-generated a session ID, only accept that one.
+            # Never fall back to mtime guessing — it causes session theft
+            # when the expected JSONL hasn't been written yet.
             if pre_session_id:
                 for sdir in dict.fromkeys([session_dir, base_session_dir]):
                     if not os.path.isdir(sdir):
@@ -4590,8 +4605,9 @@ async def _launch_tmux_background(
                     fpath = os.path.join(sdir, f"{pre_session_id}.jsonl")
                     if os.path.exists(fpath):
                         return pre_session_id
+                return None  # Not ready yet — caller will retry
 
-            # Legacy fallback: scan for newest unowned JSONL
+            # Legacy fallback (no pre_session_id): scan for newest unowned JSONL
             if pane_pid:
                 sid = _detect_pid_session_jsonl(pane_pid)
                 if sid and sid not in owned_sids:
