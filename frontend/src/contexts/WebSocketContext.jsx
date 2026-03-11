@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
 import { getAuthToken } from "../lib/api";
-import { showBrowserNotification } from "../lib/notifications";
 
 const WebSocketContext = createContext(null);
 
@@ -69,7 +68,6 @@ export function WebSocketProvider({ children }) {
         }
         if (event.type === "pong" || event.type === "ping") return;
         setLastEvent(event);
-        showBrowserNotification(event);
       };
 
       ws.onclose = () => {
