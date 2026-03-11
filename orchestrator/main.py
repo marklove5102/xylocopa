@@ -4912,8 +4912,9 @@ def _clean_stale_unlinked(max_age: int = 3600):
                     if now - mtime < max_age:
                         continue  # still active
                 # Transcript stale or gone — check if tmux pane is alive
-                # (idle sessions have stale JONLs but running processes).
+                # with the SAME process (guards against pane ID reuse).
                 tmux_pane = info.get("tmux_pane", "")
+                stored_pid = info.get("pane_pid")
                 if tmux_pane:
                     try:
                         import subprocess
@@ -4921,8 +4922,9 @@ def _clean_stale_unlinked(max_age: int = 3600):
                             ["tmux", "display-message", "-t", tmux_pane, "-p", "#{pane_pid}"],
                             capture_output=True, text=True, timeout=3,
                         )
-                        if r.returncode == 0 and r.stdout.strip():
-                            continue  # pane is still alive — keep entry
+                        current_pid = r.stdout.strip() if r.returncode == 0 else ""
+                        if current_pid and (not stored_pid or str(stored_pid) == current_pid):
+                            continue  # same pane, same process — keep entry
                     except Exception:
                         pass
                 # Transcript gone/stale and no live pane → remove
@@ -5020,46 +5022,20 @@ async def adopt_unlinked_session(
     existing = db.query(Agent).filter(Agent.session_id == session_id).first()
     if existing:
         if existing.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            # Revive the stopped/errored agent that owns this session.
-            # This handles the case where a manually-started claude process
-            # reuses a session that was previously adopted and then stopped.
-            revive_proj = db.get(Project, existing.project)
-            if not revive_proj:
-                raise HTTPException(status_code=404, detail=f"Project '{existing.project}' not found")
-
-            existing.status = AgentStatus.SYNCING
-            existing.tmux_pane = info.get("tmux_pane")
-            existing.cli_sync = True
-            existing.last_message_at = datetime.now(timezone.utc)
-            db.commit()
-            db.refresh(existing)
-
-            ad = getattr(request.app.state, "agent_dispatcher", None)
-            if ad:
-                ad.start_session_sync(existing.id, session_id, revive_proj.path)
-
+            # Dissociate session from stopped/errored agent so a fresh
+            # agent can take over.  Avoids reviving stale task/cost state.
+            existing.session_id = None
+            db.flush()
+        else:
+            # Active agent owns this session — can't adopt
             try:
                 os.unlink(info_path)
             except OSError:
                 pass
-
-            logger.info(
-                "Adopted unlinked session %s → revived agent %s (project %s)",
-                session_id[:12], existing.id, existing.project,
+            raise HTTPException(
+                status_code=409,
+                detail=f"Session already bound to active agent {existing.id} ({existing.name})",
             )
-            from websocket import emit_agent_update
-            asyncio.ensure_future(emit_agent_update(existing.id, existing.status.value, existing.project))
-            return AgentOut.model_validate(existing)
-
-        # Active agent owns this session — can't adopt
-        try:
-            os.unlink(info_path)
-        except OSError:
-            pass
-        raise HTTPException(
-            status_code=409,
-            detail=f"Session already bound to active agent {existing.id} ({existing.name})",
-        )
 
     proj = db.get(Project, project_name)
     if not proj:

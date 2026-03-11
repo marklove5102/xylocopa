@@ -345,12 +345,14 @@ def _write_unlinked_entry(
     transcript_path: str = "",
     model: str | None = None,
     tmux_pane: str | None = None,
+    pane_pid: int | None = None,
     project_name: str | None = None,
 ):
     """Write an unlinked session entry for user confirmation in the UI.
 
     Creates a JSON file in the unlinked-sessions directory (under BACKUP_DIR)
     so that the frontend can display it and the user can confirm (adopt) it.
+    Keyed by session_id — idempotent (won't overwrite existing entry).
     """
     from config import BACKUP_DIR
     udir = os.path.join(BACKUP_DIR, "unlinked-sessions")
@@ -366,6 +368,7 @@ def _write_unlinked_entry(
                 "transcript_path": transcript_path,
                 "model": model,
                 "tmux_pane": tmux_pane,
+                "pane_pid": pane_pid,
                 "project_name": project_name,
                 "timestamp": _time.time(),
             }, f)
@@ -4543,15 +4546,10 @@ Here are the day's conversations (with timestamps):
     def _auto_detect_cli_sessions(self, db: Session):
         """Detect interactive claude processes in tmux and sync them.
 
-        Scans tmux panes for non-orchestrator claude processes whose CWD
-        matches a registered project, using tiered matching:
-        - Tier 0: tmux session name → agent ID (revive stopped agents)
-        - Tier 1: /proc/PID/fd or debug log → exact session match
-        - Tier 2: mtime fallback (process start ↔ JSONL creation time)
-
-        When an existing agent matches, it's revived directly.  When a new
-        session is detected with no agent match, an unlinked session entry
-        is written for the user to confirm in the UI before syncing starts.
+        Three detection paths:
+        - Tier 0: ah-* tmux session name → deterministic agent revive
+        - Poll fallback: ctime correlation → unlinked entry (user confirms)
+        - Hook push (SessionStart endpoint) → unlinked entry (separate path)
         """
         from websocket import emit_agent_update
 
@@ -4570,18 +4568,13 @@ Here are the day's conversations (with timestamps):
         # Collect session IDs / tmux panes already owned by active agents
         active_session_ids: set[str] = set()
         active_tmux_panes: set[str] = set()
-        stopped_session_agents: dict[str, Agent] = {}
-        # Track ALL session_ids (including stopped) so we can prevent
-        # reassigning a session that another agent already owns.
-        all_agent_session_ids: set[str] = set()
-        for a in db.query(Agent).filter(Agent.session_id.is_not(None)).all():
-            all_agent_session_ids.add(a.session_id)
-            if a.status == AgentStatus.STOPPED:
-                stopped_session_agents[a.session_id] = a
-            else:
-                active_session_ids.add(a.session_id)
-                if a.tmux_pane:
-                    active_tmux_panes.add(a.tmux_pane)
+        for a in db.query(Agent).filter(
+            Agent.session_id.is_not(None),
+            Agent.status != AgentStatus.STOPPED,
+        ).all():
+            active_session_ids.add(a.session_id)
+            if a.tmux_pane:
+                active_tmux_panes.add(a.tmux_pane)
         # Also protect panes owned by STARTING agents (no session_id yet,
         # still being set up by _launch_tmux_background).
         for a in db.query(Agent).filter(
@@ -4638,13 +4631,11 @@ Here are the day's conversations (with timestamps):
             if not session_dirs_to_scan:
                 continue
 
-            # Collect available session JSONLs sorted by mtime descending.
-            # Also track stopped-agent sessions separately for Tier 3
-            # (broad fallback that creates unlinked entries only).
-            candidates: list[tuple[str, str, float]] = []  # (sid, fpath, mtime)
-            stopped_candidates: list[tuple[str, str, float]] = []
+            # Collect ALL session JSONLs not owned by active agents.
+            # Includes unowned sessions AND stopped-agent sessions (the
+            # latter are eligible for re-detection as unlinked entries).
+            all_candidates: list[tuple[str, str, float]] = []  # (sid, fpath, mtime)
             seen_sids: set[str] = set()
-            stopped_sids = set(stopped_session_agents.keys())
             for sdir in session_dirs_to_scan:
                 try:
                     for fname in os.listdir(sdir):
@@ -4654,44 +4645,20 @@ Here are the day's conversations (with timestamps):
                         if not os.path.isfile(fpath):
                             continue
                         sid = fname.replace(".jsonl", "")
-                        if sid in seen_sids:
+                        if sid in active_session_ids or sid in seen_sids:
                             continue
                         seen_sids.add(sid)
-                        if sid in stopped_sids:
-                            stopped_candidates.append((sid, fpath, os.path.getmtime(fpath)))
-                        elif sid not in all_agent_session_ids:
-                            candidates.append((sid, fpath, os.path.getmtime(fpath)))
+                        all_candidates.append((sid, fpath, os.path.getmtime(fpath)))
                 except OSError as e:
                     logger.warning(
                         "_auto_detect_cli_sessions: failed to scan session dir %s: %s",
                         sdir, e,
                     )
                     continue
-            candidates.sort(key=lambda x: x[2], reverse=True)
 
-            # Build PID→session map from debug logs for deterministic matching.
-            pid_to_session: dict[int, tuple[str, str]] = {}  # pid -> (sid, fpath)
-            for sid, fpath, mtime in candidates:
-                session_pid = _get_session_pid(sid)
-                if session_pid and session_pid not in pid_to_session:
-                    pid_to_session[session_pid] = (sid, fpath)
-
-            # Build mtime-sorted list for Tier 2 fallback (recently active sessions).
-            # Used when debug logs don't exist (Claude Code >=2.1.71 no longer
-            # writes debug logs by default).
-            _now_ts = _time.time()
-            _RECENT_THRESHOLD = _STALE_SESSION_THRESHOLD  # 30 min — same as liveness check
-            pid_matched_sids = {sid for sid, _ in pid_to_session.values()}
-            recent_candidates = [
-                (sid, fpath, mtime) for sid, fpath, mtime in candidates
-                if (_now_ts - mtime) < _RECENT_THRESHOLD
-                and sid not in active_session_ids
-                and sid not in pid_matched_sids
-            ]
-
-            # Assign sessions to panes: Tier 0 (session name) + Tier 1 (PID) + Tier 2 (mtime)
+            # Per-pane matching: Tier 0 (managed) then poll fallback (unlinked)
             for pane_id, pane_pid, tmux_session_name in pane_entries:
-                # --- Tier 0: tmux session name → agent ID match ---
+                # --- Tier 0: ah-* session name → deterministic agent revive ---
                 if tmux_session_name.startswith("ah-"):
                     agent_prefix = tmux_session_name[3:]
                     named_agent = db.query(Agent).filter(
@@ -4711,7 +4678,6 @@ Here are the day's conversations (with timestamps):
                                 named_agent.last_message_at = _utcnow()
                                 db.flush()
                                 active_session_ids.add(agent_sid)
-                                all_agent_session_ids.add(agent_sid)
                                 active_tmux_panes.add(pane_id)
                                 logger.info(
                                     "Revived agent %s by tmux session name %s (tmux=%s)",
@@ -4720,163 +4686,47 @@ Here are the day's conversations (with timestamps):
                                 agents_to_sync.append((named_agent.id, agent_sid, proj.path))
                                 self._emit(emit_agent_update(named_agent.id, "SYNCING", proj.name))
                                 continue
-                        # Named agent has no session_id — try Tier 2 to find
-                        # one and assign it to this agent (common when agent
-                        # previously errored and user restarted claude manually).
-                        t2_match = _tier2_match_for_pane(pane_pid, recent_candidates)
-                        if t2_match:
-                            t2_sid, t2_fpath = t2_match
-                            named_agent.session_id = t2_sid
+                        # Named agent has no session_id — try ctime match
+                        # to find one (common when agent previously errored
+                        # and user restarted claude manually in ah-* pane).
+                        t0_match = _tier2_match_for_pane(pane_pid, all_candidates)
+                        if t0_match:
+                            t0_sid, t0_fpath = t0_match
+                            named_agent.session_id = t0_sid
                             named_agent.status = AgentStatus.SYNCING
                             named_agent.tmux_pane = pane_id
                             named_agent.last_message_at = _utcnow()
                             db.flush()
-                            active_session_ids.add(t2_sid)
-                            all_agent_session_ids.add(t2_sid)
+                            active_session_ids.add(t0_sid)
                             active_tmux_panes.add(pane_id)
                             logger.info(
-                                "Revived agent %s (Tier 0+2: name=%s, session=%s, pane=%s)",
-                                named_agent.id, tmux_session_name, t2_sid[:12], pane_id,
+                                "Revived agent %s (Tier 0+ctime: name=%s, session=%s, pane=%s)",
+                                named_agent.id, tmux_session_name, t0_sid[:12], pane_id,
                             )
-                            agents_to_sync.append((named_agent.id, t2_sid, proj.path))
+                            agents_to_sync.append((named_agent.id, t0_sid, proj.path))
                             self._emit(emit_agent_update(named_agent.id, "SYNCING", proj.name))
                             continue
 
-                best_sid, best_fpath = None, None
-
-                # Tier 1: exact PID match (direct OS or debug log)
-                os_sid = _detect_pid_session_jsonl(pane_pid)
-                if os_sid:
-                    for sid, fpath, mtime in candidates:
-                        if sid == os_sid:
-                            best_sid, best_fpath = sid, fpath
-                            # Remove from pid_to_session if it was there (deterministic matching)
-                            for p, (s, f) in list(pid_to_session.items()):
-                                if s == sid:
-                                    pid_to_session.pop(p)
-                            break
-
-                if not best_sid and pane_pid in pid_to_session:
-                    best_sid, best_fpath = pid_to_session.pop(pane_pid)
-
-                # Tier 2: mtime fallback — match the most recently written
-                # unowned session JSONL.  Only used when Tier 1 fails (no
-                # debug log, common since Claude Code >=2.1.71).
-                # Uses process start time correlation to avoid mismatches
-                # when multiple panes exist for the same project.
-                if not best_sid and recent_candidates:
-                    t2_match = _tier2_match_for_pane(pane_pid, recent_candidates)
-                    if t2_match:
-                        best_sid, best_fpath = t2_match
-                        logger.info(
-                            "Tier 2 (mtime) match: pane %s → session %s",
-                            pane_id, best_sid[:12],
-                        )
-
-                if not best_sid:
-                    # Tier 3: broad fallback for unlinked entry detection.
-                    # recent_candidates filters by mtime (<30 min) which
-                    # misses idle sessions whose JSONL hasn't been written
-                    # to recently.  Try ALL unowned + stopped candidates
-                    # using ctime correlation.  Only creates an unlinked
-                    # entry requiring user confirmation — never auto-assigns.
-                    broad_candidates = [
-                        (sid, fpath, mt) for sid, fpath, mt in candidates
-                        if sid not in active_session_ids
-                        and sid not in pid_matched_sids
-                    ] + list(stopped_candidates)
-                    t3_match = _tier2_match_for_pane(pane_pid, broad_candidates)
-                    if t3_match:
-                        t3_sid, t3_fpath = t3_match
-                        pane_info = pane_map.get(pane_id)
-                        pcwd = pane_info["cwd"] if pane_info else proj_path
-                        detected_model = _detect_session_model(t3_fpath) if t3_fpath else None
-                        _write_unlinked_entry(
-                            session_id=t3_sid,
-                            cwd=pcwd,
-                            transcript_path=t3_fpath or "",
-                            model=detected_model,
-                            tmux_pane=pane_id,
-                            project_name=proj.name,
-                        )
-                        logger.info(
-                            "Tier 3 (broad ctime) → unlinked entry: pane %s → session %s (project=%s)",
-                            pane_id, t3_sid[:12], proj.name,
-                        )
-                    continue
-
-                active_session_ids.add(best_sid)
-                all_agent_session_ids.add(best_sid)
-                active_tmux_panes.add(pane_id)
-
-                # --- Try to revive a stopped agent that owns this session ---
-                stopped_agent = stopped_session_agents.get(best_sid)
-                if stopped_agent:
-                    existing_owner = _get_pane_owner(pane_id, exclude_agent_id=stopped_agent.id)
-                    if existing_owner:
-                        logger.warning(
-                            "Skipping revive of %s — pane %s already owned by %s",
-                            stopped_agent.id, pane_id, existing_owner.id,
-                        )
-                        continue
-                    stopped_agent.status = AgentStatus.SYNCING
-                    stopped_agent.tmux_pane = pane_id
-                    stopped_agent.last_message_at = _utcnow()
-                    db.flush()
-                    logger.info(
-                        "Revived stopped agent %s for session %s (tmux=%s)",
-                        stopped_agent.id, best_sid[:12], pane_id,
+                # --- Poll fallback: ctime match → unlinked entry only ---
+                match = _tier2_match_for_pane(pane_pid, all_candidates)
+                if match:
+                    match_sid, match_fpath = match
+                    pane_info = pane_map.get(pane_id)
+                    pcwd = pane_info["cwd"] if pane_info else proj_path
+                    detected_model = _detect_session_model(match_fpath) if match_fpath else None
+                    _write_unlinked_entry(
+                        session_id=match_sid,
+                        cwd=pcwd,
+                        transcript_path=match_fpath or "",
+                        model=detected_model,
+                        tmux_pane=pane_id,
+                        pane_pid=pane_pid,
+                        project_name=proj.name,
                     )
-                    agents_to_sync.append((stopped_agent.id, best_sid, proj.path))
-                    self._emit(emit_agent_update(stopped_agent.id, "SYNCING", proj.name))
-                    continue
-
-                # --- Session change on existing SYNCING pane → rotate in-place ---
-                existing_pane_agent = db.query(Agent).filter(
-                    Agent.status == AgentStatus.SYNCING,
-                    Agent.tmux_pane == pane_id,
-                    Agent.cli_sync == True,
-                ).first()
-                if existing_pane_agent:
-                    expected_session = f"ah-{existing_pane_agent.id[:8]}"
-                    if tmux_session_name == expected_session:
-                        db.commit()
-                        self._rotate_agent_session(
-                            existing_pane_agent.id, best_sid, proj.path,
-                            worktree=existing_pane_agent.worktree,
-                        )
-                        continue
-                    else:
-                        logger.info(
-                            "Pane %s session name %r != expected %r — "
-                            "stopping old agent %s, creating fresh agent",
-                            pane_id, tmux_session_name, expected_session,
-                            existing_pane_agent.id,
-                        )
-                        self._cancel_sync_task(existing_pane_agent.id)
-                        self.stop_agent_cleanup(
-                            db, existing_pane_agent, "",
-                            kill_tmux=False, add_message=False, cancel_tasks=False,
-                        )
-                        db.flush()
-
-                # --- Write unlinked session entry for user confirmation ---
-                pane_info = pane_map.get(pane_id)
-                pcwd = pane_info["cwd"] if pane_info else proj_path
-                detected_model = _detect_session_model(best_fpath) if best_fpath else None
-
-                _write_unlinked_entry(
-                    session_id=best_sid,
-                    cwd=pcwd,
-                    transcript_path=best_fpath or "",
-                    model=detected_model,
-                    tmux_pane=pane_id,
-                    project_name=proj.name,
-                )
-                logger.info(
-                    "Unlinked CLI session %s in project %s (pane %s) — awaiting user confirmation",
-                    best_sid[:12], proj.name, pane_id,
-                )
+                    logger.info(
+                        "Poll fallback → unlinked entry: pane %s → session %s (project=%s)",
+                        pane_id, match_sid[:12], proj.name,
+                    )
 
         # Start sync tasks (after commit)
         for aid, sid, ppath in agents_to_sync:
