@@ -5490,25 +5490,18 @@ Here are the day's conversations (with timestamps):
                             # Quaternary: no ownership evidence at all.
                             # Auto-continuation sessions (compaction, /clear
                             # without slug) have no sidecar, no marker, and
-                            # new UUIDs.  Only accept when the agent's own
-                            # pane PID has the session open — this prevents
-                            # stealing unrelated sessions that happen to
-                            # share the same project CWD (e.g. progress
-                            # summaries run via `claude -p`).
-                            if pane_pid and _pid_owns_session(pane_pid, sid):
-                                if mtime < cwd_mtime:
-                                    logger.info(
-                                        "_detect_successor_session: unowned CWD match "
-                                        "agent=%s candidate_sid=%s (FD-verified)",
-                                        agent_id, sid[:12],
-                                    )
-                                    cwd_sid, cwd_mtime = sid, mtime
-                            else:
-                                logger.debug(
-                                    "_detect_successor_session: skipping unowned "
-                                    "candidate_sid=%s for agent=%s (no FD evidence)",
-                                    sid[:12], agent_id,
+                            # new UUIDs.  Accept as weak CWD candidate —
+                            # progress-summary sessions are excluded by
+                            # the Primary .owner check above (marked as
+                            # "system"), and launching agents are excluded
+                            # by the launching_sids guard at loop top.
+                            if mtime < cwd_mtime:
+                                logger.info(
+                                    "_detect_successor_session: unowned CWD match "
+                                    "agent=%s candidate_sid=%s (no ownership evidence)",
+                                    agent_id, sid[:12],
                                 )
+                                cwd_sid, cwd_mtime = sid, mtime
                             continue
 
                     # Strategy 3: legacy PID-based match (fallback) — newest wins
