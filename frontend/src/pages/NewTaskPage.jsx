@@ -359,7 +359,7 @@ export default function NewTaskPage() {
                   ref={textareaRef}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); quickSave(); } }}
                   onPaste={handlePaste}
                   placeholder="Describe what needs to be done..."
                   rows={3}
