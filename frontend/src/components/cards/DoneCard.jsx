@@ -17,12 +17,13 @@ export default memo(function DoneCard({ task, selecting, selected, onToggle, exp
 
   const handleClick = () => {
     if (selecting) onToggle?.(task.id);
-    else if (!(expanded && !selecting)) onExpand?.(task.id);
+    else onExpand?.(task.id);
   };
 
   return (
     <div className="relative">
       <CardShell
+        taskId={task.id}
         expanded={expanded}
         selecting={selecting}
         selected={selected}

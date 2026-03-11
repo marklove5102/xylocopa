@@ -214,7 +214,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
   // --- card actions ---
   const handleClick = () => {
     if (selecting) onToggle?.(task.id);
-    else if (!isExpanded) onExpand?.(task.id);
+    else onExpand?.(task.id);
   };
 
   const update = async (field, value) => {
@@ -227,7 +227,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
 
   return (
     <div className="relative">
-      <CardShell expanded={expanded} selecting={selecting} selected={selected}>
+      <CardShell taskId={task.id} expanded={expanded} selecting={selecting} selected={selected}>
         <div
           className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${
             expanded && !selecting ? "pt-5 pb-3" : cardPadding(expanded, selecting)
