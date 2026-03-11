@@ -15,12 +15,12 @@ export default memo(function ReviewCard({ task, selecting, selected, onToggle, m
 
   const handleClick = () => {
     if (selecting) onToggle?.(task.id);
-    else if (!(expanded && !selecting)) onExpand?.(task.id);
+    else onExpand?.(task.id);
   };
 
   return (
     <div className="relative">
-      <CardShell expanded={expanded} selecting={selecting} selected={selected} data-review-task={task.id}>
+      <CardShell taskId={task.id} expanded={expanded} selecting={selecting} selected={selected} data-review-task={task.id}>
         <div
           className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${cardPadding(expanded, selecting)}`}
           onClick={handleClick}
