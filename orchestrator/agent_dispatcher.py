@@ -3444,6 +3444,42 @@ Here are the day's conversations (with timestamps):
             ))
             logger.info("Task %s: failed stale MERGING task", task.id)
 
+        # --- Hook-harvested cleanup ---
+        # When the Stop hook transitions a task to REVIEW instantly, the agent
+        # subprocess is still running.  Once _harvest_exec_completions sets the
+        # agent to IDLE (subprocess exited), we stop the agent here.
+        hook_review_tasks = (
+            db.query(Task)
+            .filter(
+                Task.status == TaskStatus.REVIEW,
+                Task.agent_id.isnot(None),
+            )
+            .all()
+        )
+        for task in hook_review_tasks:
+            agent = db.get(Agent, task.agent_id)
+            if not agent:
+                continue
+            # Agent is IDLE (exec finished) but not yet STOPPED → stop it
+            if agent.status == AgentStatus.IDLE and not agent.cli_sync:
+                # Upgrade summary from actual Message (more complete than hook payload)
+                last_msg = (
+                    db.query(Message)
+                    .filter(Message.agent_id == agent.id, Message.role == MessageRole.AGENT)
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                if last_msg and last_msg.content:
+                    task.agent_summary = last_msg.content[:2000]
+                self.stop_agent_cleanup(
+                    db, agent, "",
+                    add_message=False, cancel_tasks=False, emit=False,
+                )
+                db.commit()
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
+                logger.info("Task %s: stopped hook-harvested agent %s", task.id, agent.id)
+
     def _harvest_verify_completions(self, db: Session):
         """Check verification sub-agents — when done, update task review_artifacts."""
         verify_agents = (
