@@ -2521,6 +2521,21 @@ Here are the day's conversations (with timestamps):
 
 {session_context}"""
 
+        # Snapshot existing session files so we can identify new ones after
+        # the subprocess completes and mark them with a "system" owner to
+        # prevent successor detection from stealing them.
+        from session_cache import session_source_dir as _ssd
+        _session_dir = _ssd(project_path)
+        _pre_sessions: set[str] = set()
+        try:
+            _pre_sessions = {
+                f.replace(".jsonl", "")
+                for f in os.listdir(_session_dir)
+                if f.endswith(".jsonl")
+            }
+        except OSError:
+            pass
+
         try:
             result = subprocess.run(
                 [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
@@ -2528,6 +2543,20 @@ Here are the day's conversations (with timestamps):
                 capture_output=True, text=True, timeout=600,
                 cwd=project_path,
             )
+
+            # Mark any new sessions created by this subprocess as "system"
+            # so they won't be adopted by successor detection.
+            try:
+                for f in os.listdir(_session_dir):
+                    if not f.endswith(".jsonl"):
+                        continue
+                    sid = f.replace(".jsonl", "")
+                    if sid not in _pre_sessions:
+                        _write_session_owner(_session_dir, sid, "system")
+                        logger.info("Marked progress-summary session %s as system-owned", sid[:12])
+            except OSError:
+                pass
+
             if result.returncode != 0:
                 logger.warning("Auto progress summary failed for %s: %s", project_name, result.stderr[:500])
                 _progress_job_set(project_name, status="error", error="Auto-summary failed")
@@ -5461,15 +5490,25 @@ Here are the day's conversations (with timestamps):
                             # Quaternary: no ownership evidence at all.
                             # Auto-continuation sessions (compaction, /clear
                             # without slug) have no sidecar, no marker, and
-                            # new UUIDs.  Accept as weak CWD candidate when
-                            # there is no conflicting ownership.
-                            if mtime < cwd_mtime:
-                                logger.info(
-                                    "_detect_successor_session: unowned CWD match "
-                                    "agent=%s candidate_sid=%s (no ownership evidence)",
-                                    agent_id, sid[:12],
+                            # new UUIDs.  Only accept when the agent's own
+                            # pane PID has the session open — this prevents
+                            # stealing unrelated sessions that happen to
+                            # share the same project CWD (e.g. progress
+                            # summaries run via `claude -p`).
+                            if pane_pid and _pid_owns_session(pane_pid, sid):
+                                if mtime < cwd_mtime:
+                                    logger.info(
+                                        "_detect_successor_session: unowned CWD match "
+                                        "agent=%s candidate_sid=%s (FD-verified)",
+                                        agent_id, sid[:12],
+                                    )
+                                    cwd_sid, cwd_mtime = sid, mtime
+                            else:
+                                logger.debug(
+                                    "_detect_successor_session: skipping unowned "
+                                    "candidate_sid=%s for agent=%s (no FD evidence)",
+                                    sid[:12], agent_id,
                                 )
-                                cwd_sid, cwd_mtime = sid, mtime
                             continue
 
                     # Strategy 3: legacy PID-based match (fallback) — newest wins
