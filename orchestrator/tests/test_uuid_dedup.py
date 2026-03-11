@@ -639,12 +639,6 @@ class TestSessionOwnerSidecar:
         result = _read_session_owner(str(tmp_path), sid)
         assert result == {"agent_id": agent_id}
 
-    def test_write_and_read_owner_with_slug(self, tmp_path):
-        sid = "test-session-slug"
-        _write_session_owner(str(tmp_path), sid, "agent-abc", slug="fix-bug")
-        result = _read_session_owner(str(tmp_path), sid)
-        assert result == {"agent_id": "agent-abc", "slug": "fix-bug"}
-
     def test_read_missing_returns_none(self, tmp_path):
         assert _read_session_owner(str(tmp_path), "nonexistent") is None
 

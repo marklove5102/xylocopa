@@ -285,23 +285,17 @@ def _is_wrapped_prompt(content: str) -> bool:
     return _PREAMBLE_PREFIX in head or _AGENTHIVE_PROMPT_MARKER in head
 
 
-def _write_session_owner(
-    session_dir: str, sid: str, agent_id: str, slug: str | None = None,
-):
+def _write_session_owner(session_dir: str, sid: str, agent_id: str):
     """Write ownership sidecar file next to a session JSONL.
 
-    Creates ``{session_dir}/{sid}.owner`` as JSON containing agent_id
-    and optional slug.  The slug is recorded so that /clear transitions
-    (which create a new session UUID but preserve the slug) can be
-    matched without re-parsing the JSONL.
+    Creates ``{session_dir}/{sid}.owner`` as JSON containing agent_id.
+    This allows deterministic session→agent mapping without parsing
+    JSONL content.
     """
     path = os.path.join(session_dir, f"{sid}.owner")
-    data: dict = {"agent_id": agent_id}
-    if slug:
-        data["slug"] = slug
     try:
         with open(path, "w") as f:
-            json.dump(data, f)
+            json.dump({"agent_id": agent_id}, f)
     except OSError:
         pass
 
@@ -5189,16 +5183,9 @@ Here are the day's conversations (with timestamps):
         """Start a background task to live-sync a CLI session JSONL."""
         # Write ownership sidecar so _detect_successor_session can
         # determine which agent owns this session without parsing content.
-        # Try to capture slug immediately; if not yet available (session
-        # just started), _sync_session_loop will backfill it later.
-        sdir = session_source_dir(project_path)
-        slug = None
-        try:
-            jsonl_path = _resolve_session_jsonl(session_id, project_path)
-            slug = _get_session_slug(jsonl_path)
-        except Exception:
-            pass
-        _write_session_owner(sdir, session_id, agent_id, slug=slug)
+        _write_session_owner(
+            session_source_dir(project_path), session_id, agent_id,
+        )
         self._cancel_sync_task(agent_id)
         task = asyncio.ensure_future(
             self._sync_session_loop(agent_id, session_id, project_path)
@@ -5352,17 +5339,16 @@ Here are the day's conversations (with timestamps):
         Used to detect when Claude auto-continues into a new session
         (e.g. after /clear or context compaction).
 
-        Two-layer detection (identity via sidecar, continuity via slug):
+        Detection strategy (identity anchored to tmux pane):
 
-          Layer 1 — Sidecar ownership: .owner file contains this agent's
-                    ID.  Covers sessions already claimed (e.g. pre-written
-                    at launch or by a prior rotation).
+          Primary — FD scan: check which JSONL the agent's own Claude
+                    process has open (via /proc/{pid}/fd/).  Deterministic,
+                    zero false positives.  Detects /clear and context
+                    compaction without parsing any JSONL content.
 
-          Layer 2 — Slug continuity: the candidate session's slug matches
-                    the current session's slug.  Covers /clear transitions
-                    where a new session UUID is created but the slug
-                    persists.  On match, writes a .owner sidecar so future
-                    checks hit Layer 1.
+          Fallback — Sidecar scan: check .owner files for sessions
+                     already claimed by this agent (e.g. written by
+                     another code path).
 
         Sessions owned by other agents are skipped.  Unmatched sessions
         are left as "unaffiliated" — never stolen.
@@ -5373,10 +5359,20 @@ Here are the day's conversations (with timestamps):
         except OSError:
             return None
 
-        # Collect ALL session IDs assigned to any agent to avoid
-        # re-adopting a dead or unrelated session.
+        # Get this agent's Claude process PID from its tmux pane.
+        # The pane is the stable identity anchor — it doesn't change
+        # across /clear or context compaction.
+        pane_pid: int | None = None
         db = SessionLocal()
         try:
+            agent = db.get(Agent, agent_id)
+            if agent and agent.tmux_pane:
+                pane_info = _build_tmux_claude_map().get(agent.tmux_pane)
+                if pane_info:
+                    pane_pid = pane_info["pid"]
+
+            # Collect ALL session IDs assigned to any agent to avoid
+            # re-adopting a dead or unrelated session.
             active_sids: set[str] = {
                 a.session_id for a in db.query(Agent).filter(
                     Agent.session_id.is_not(None),
@@ -5385,14 +5381,26 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
-        # Read slug from .owner sidecar (preferred) or JSONL (fallback).
         sdir = session_source_dir(project_path)
-        current_owner = _read_session_owner(sdir, current_sid)
-        current_slug = (current_owner or {}).get("slug")
-        if not current_slug:
-            current_slug = _get_session_slug(current_jsonl)
 
-        # Collect session dirs to scan
+        # Primary: FD scan — ask the OS which JSONL the agent's own
+        # Claude process has open.  This is deterministic: the PID
+        # belongs to THIS agent's tmux pane, so it can only find
+        # sessions belonging to this agent's Claude process.
+        if pane_pid:
+            fd_sid = _detect_pid_session_jsonl(pane_pid)
+            if fd_sid and fd_sid != current_sid and fd_sid not in active_sids:
+                # Write .owner immediately so future checks are instant
+                _write_session_owner(sdir, fd_sid, agent_id)
+                logger.info(
+                    "_detect_successor: fd-scan match "
+                    "agent=%s pid=%d new_sid=%s",
+                    agent_id, pane_pid, fd_sid[:12],
+                )
+                return fd_sid
+
+        # Fallback: sidecar scan — check .owner files for sessions
+        # already claimed by this agent but not yet assigned in the DB.
         session_dirs = [sdir]
         if worktree:
             wt_path = os.path.join(project_path, ".claude", "worktrees", worktree)
@@ -5400,70 +5408,35 @@ Here are the day's conversations (with timestamps):
             if wt_sdir not in session_dirs and os.path.isdir(wt_sdir):
                 session_dirs.append(wt_sdir)
 
-        best_sid, best_mtime = None, current_mtime  # newest wins
+        best_sid, best_mtime = None, current_mtime
         for session_dir in session_dirs:
             try:
                 for fname in os.listdir(session_dir):
-                    if not fname.endswith(".jsonl"):
+                    if not fname.endswith(".owner"):
                         continue
-                    sid = fname.replace(".jsonl", "")
+                    sid = fname.replace(".owner", "")
                     if sid == current_sid or sid in active_sids:
                         continue
-                    fpath = os.path.join(session_dir, fname)
+                    owner = _read_session_owner(session_dir, sid)
+                    if not owner or owner.get("agent_id") != agent_id:
+                        continue
+                    # Verify JSONL exists and is newer
+                    jsonl_path = os.path.join(session_dir, f"{sid}.jsonl")
                     try:
-                        mtime = os.path.getmtime(fpath)
+                        mtime = os.path.getmtime(jsonl_path)
                     except OSError:
                         continue
-                    if mtime <= current_mtime:
-                        continue
-
-                    # Layer 1: sidecar ownership
-                    owner = _read_session_owner(session_dir, sid)
-                    if owner is not None:
-                        owner_aid = owner.get("agent_id")
-                        if owner_aid == agent_id:
-                            if mtime > best_mtime:
-                                logger.info(
-                                    "_detect_successor: sidecar match "
-                                    "agent=%s candidate_sid=%s",
-                                    agent_id, sid[:12],
-                                )
-                                best_sid, best_mtime = sid, mtime
-                        # Owned by someone else — skip
-                        continue
-
-                    # Layer 2: slug continuity (only unowned sessions)
-                    if current_slug:
-                        candidate_slug = _get_session_slug(fpath)
-                        if candidate_slug == current_slug:
-                            if mtime > best_mtime:
-                                logger.info(
-                                    "_detect_successor: slug match "
-                                    "agent=%s slug=%s candidate_sid=%s",
-                                    agent_id, current_slug, sid[:12],
-                                )
-                                best_sid, best_mtime = sid, mtime
-                            continue
-
-                    # Unaffiliated — leave it alone
+                    if mtime > best_mtime:
+                        logger.info(
+                            "_detect_successor: sidecar match "
+                            "agent=%s candidate_sid=%s",
+                            agent_id, sid[:12],
+                        )
+                        best_sid, best_mtime = sid, mtime
             except OSError as e:
                 logger.warning(
                     "_detect_successor: scan failed dir=%s agent=%s: %s",
                     session_dir, agent_id, e,
-                )
-
-        # Write .owner for the matched session so future checks hit
-        # Layer 1 directly.
-        if best_sid:
-            for _sd in session_dirs:
-                existing = _read_session_owner(_sd, best_sid)
-                if existing and existing.get("agent_id") == agent_id:
-                    break  # already owned by us
-            else:
-                _write_session_owner(sdir, best_sid, agent_id, slug=current_slug)
-                logger.info(
-                    "_detect_successor: claimed session %s for agent %s",
-                    best_sid[:12], agent_id,
                 )
 
         return best_sid
@@ -5653,27 +5626,6 @@ Here are the day's conversations (with timestamps):
             _init_tail = initial_turns[-1]
             _init_meta_sig = str(_init_tail[2]) if len(_init_tail) > 2 and _init_tail[2] else ""
             last_tail_hash = f"{_content_hash(_init_tail[1])}:{_init_meta_sig}"
-
-        # Backfill slug into .owner if not yet recorded.
-        # At launch time the JSONL may not have existed yet, so slug
-        # was unknown.  Now that we have initial_turns, try to capture it.
-        _owner_slug_backfilled = False
-        try:
-            _sdir = session_source_dir(project_path)
-            _owner_data = _read_session_owner(_sdir, session_id)
-            if _owner_data and not _owner_data.get("slug"):
-                _slug = _get_session_slug(jsonl_path)
-                if _slug:
-                    _write_session_owner(
-                        _sdir, session_id, agent_id, slug=_slug,
-                    )
-                    _owner_slug_backfilled = True
-                    logger.info(
-                        "Backfilled slug %r into .owner for agent %s session %s",
-                        _slug, agent_id, session_id[:12],
-                    )
-        except Exception:
-            pass
 
         # Reconcile: full-scan comparison between JSONL turns and DB
         # messages.  Queue-operation user messages can appear anywhere
