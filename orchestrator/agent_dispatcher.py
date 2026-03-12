@@ -5613,9 +5613,33 @@ Here are the day's conversations (with timestamps):
                         jsonl_path, agent_id, e,
                     )
                 if _getsize_error_count >= _GETSIZE_ERROR_LIMIT:
+                    # Before stopping, check if tmux pane still has a live
+                    # claude process.  If so, the JSONL may not exist yet
+                    # (e.g. just after /clear or session start) — keep waiting.
+                    pane_alive = False
+                    db_chk = SessionLocal()
+                    try:
+                        ag_chk = db_chk.get(Agent, agent_id)
+                        if ag_chk and ag_chk.tmux_pane:
+                            pm = _build_tmux_claude_map()
+                            info = pm.get(ag_chk.tmux_pane)
+                            pane_alive = bool(info and not info["is_orchestrator"])
+                    finally:
+                        db_chk.close()
+
+                    if pane_alive:
+                        # Claude is still running — JSONL will appear eventually
+                        if _getsize_error_count % 20 == 0:
+                            logger.info(
+                                "Sync loop: session file missing for %d polls "
+                                "but pane alive — waiting (agent %s)",
+                                _getsize_error_count, agent_id,
+                            )
+                        continue
+
                     logger.warning(
-                        "Sync loop: session file missing for %d polls, "
-                        "stopping agent %s",
+                        "Sync loop: session file missing for %d polls "
+                        "and no live pane — stopping agent %s",
                         _getsize_error_count, agent_id,
                     )
                     db = SessionLocal()
