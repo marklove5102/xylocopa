@@ -930,13 +930,36 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
 // --- Typing Indicator (shown when executing but no streaming content yet) ---
 
-function TypingIndicator() {
+function TypingIndicator({ activeTool, toolStartTime }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!toolStartTime) { setElapsed(0); return; }
+    setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [toolStartTime]);
+
   return (
     <div className="flex justify-start my-2">
-      <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5 flex items-center gap-[5px]">
-        <span className="typing-dot" style={{ animationDelay: "0ms" }} />
-        <span className="typing-dot" style={{ animationDelay: "200ms" }} />
-        <span className="typing-dot" style={{ animationDelay: "400ms" }} />
+      <div className="bg-surface shadow-card rounded-2xl rounded-bl-md px-5 py-3.5">
+        {activeTool ? (
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-xs text-dim">
+              <code className="text-[11px] px-1 py-0.5 rounded bg-elevated text-cyan-300 font-mono">{activeTool.name}</code>
+              {" "}running{activeTool.summary ? `: ${activeTool.summary.replace(/^`\w+`\s*/, "")}` : "..."}
+              {elapsed > 3 && <span className="text-faint ml-1">({elapsed}s)</span>}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-[5px]">
+            <span className="typing-dot" style={{ animationDelay: "0ms" }} />
+            <span className="typing-dot" style={{ animationDelay: "200ms" }} />
+            <span className="typing-dot" style={{ animationDelay: "400ms" }} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1431,6 +1454,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [muted, setMuted] = useState(() => isAgentMuted(id));
   const [streamingContent, setStreamingContent] = useState(null);
   const [activeTool, setActiveTool] = useState(null);
+  const [toolStartTime, setToolStartTime] = useState(null);
   const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   const [editingName, setEditingName] = useState(false);
@@ -1784,13 +1808,19 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       // Track the current generation
       if (gid != null) generationIdRef.current = gid;
       setStreamingContent(lastEvent.data.content);
-      setActiveTool(lastEvent.data.active_tool || null);
-      // Safety fallback: auto-clear after inactivity in case agent_stream_end
-      // is never received (e.g., WS disconnect).
+      const newTool = lastEvent.data.active_tool || null;
+      setActiveTool((prev) => {
+        // Track when the active tool changes (new tool or different tool)
+        if (newTool && (!prev || prev.name !== newTool.name)) setToolStartTime(Date.now());
+        if (!newTool) setToolStartTime(null);
+        return newTool;
+      });
+      // Safety fallback: auto-clear streaming content after inactivity in
+      // case agent_stream_end is never received (e.g., WS disconnect).
+      // Keep activeTool visible — it will be cleared by new_message or agent_update.
       clearTimeout(streamTimeoutRef.current);
       streamTimeoutRef.current = setTimeout(() => {
         setStreamingContent(null);
-        setActiveTool(null);
       }, STREAM_TIMEOUT);
       return;
     }
@@ -1801,7 +1831,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
       clearTimeout(streamTimeoutRef.current);
       setStreamingContent(null);
-      setActiveTool(null);
+      // Keep activeTool visible — the tool may still be executing even though
+      // the JSONL stopped growing.  It will be cleared when new_message arrives
+      // (tool completed) or agent status changes (agent stopped).
       return;
     }
 
@@ -1809,6 +1841,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       clearTimeout(streamTimeoutRef.current);
       setStreamingContent(null);
       setActiveTool(null);
+      setToolStartTime(null);
       refreshMessages({ syncHint: lastEvent.data?.message_id === "sync" });
       return;
     }
@@ -1830,10 +1863,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     if (lastEvent.type === "agent_update" && lastEvent.data?.agent_id === id) {
       const status = lastEvent.data.status;
       if (status !== "EXECUTING" && status !== "SYNCING") {
-        // Agent no longer active — clear streaming
+        // Agent no longer active — clear all streaming & tool state
         clearTimeout(streamTimeoutRef.current);
         setStreamingContent(null);
         setActiveTool(null);
+        setToolStartTime(null);
         generationIdRef.current = null;
       }
       refreshMessages();
@@ -2393,7 +2427,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 );
                 if (!isDuplicate) return <StreamingBubble content={streamingContent} project={agent.project} activeTool={activeTool} />;
               }
-              return (isExecuting || agent?.is_generating) ? <TypingIndicator /> : null;
+              return (isExecuting || agent?.is_generating) ? <TypingIndicator activeTool={activeTool} toolStartTime={toolStartTime} /> : null;
             })()}
 
             {/* Pending/scheduled messages always at the bottom */}
