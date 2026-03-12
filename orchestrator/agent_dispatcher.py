@@ -1790,55 +1790,6 @@ def _pid_owns_session(pid: int, session_id: str) -> bool:
     return False
 
 
-def _get_process_start_time(pid: int) -> float | None:
-    """Return the start time (epoch seconds) of a process, or None."""
-    try:
-        stat_start = os.stat(f"/proc/{pid}").st_mtime
-        return stat_start
-    except OSError:
-        return None
-
-
-def _tier2_match_for_pane(
-    pane_pid: int,
-    recent_candidates: list[tuple[str, str, float]],
-) -> tuple[str, str] | None:
-    """Find the best session JSONL for a pane using process start time.
-
-    Matches the session whose JSONL creation time (ctime) is closest to
-    the process start time.  Rejects matches where the delta exceeds
-    _MAX_START_DELTA to avoid mismatching stale sessions.
-
-    Removes the matched entry from recent_candidates (mutates in place).
-    """
-    if not recent_candidates:
-        return None
-
-    _MAX_START_DELTA = 1800  # 30 min max between process start and session creation
-
-    proc_start = _get_process_start_time(pane_pid)
-    if proc_start is None:
-        return None
-
-    # Find the session whose ctime is closest to the process start
-    best_idx = None
-    best_delta = float("inf")
-    for i, (sid, fpath, mtime) in enumerate(recent_candidates):
-        try:
-            ctime = os.path.getctime(fpath)
-        except OSError:
-            ctime = mtime
-        delta = abs(ctime - proc_start)
-        if delta < best_delta:
-            best_delta = delta
-            best_idx = i
-
-    if best_idx is not None and best_delta <= _MAX_START_DELTA:
-        sid, fpath, _mt = recent_candidates.pop(best_idx)
-        return sid, fpath
-    return None
-
-
 def _is_orchestrator_process(pid: int) -> bool:
     """Check if a PID is an orchestrator-spawned claude process.
 
