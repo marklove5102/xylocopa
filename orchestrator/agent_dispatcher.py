@@ -2617,6 +2617,9 @@ class AgentDispatcher:
         # Accumulated tool activity entries per agent (populated by CC hooks,
         # drained and attached to agent messages during sync commit).
         self._tool_logs: dict[str, list] = {}
+        # Per-agent sync contexts (used by sync_engine)
+        from sync_engine import SyncContext
+        self._sync_contexts: dict[str, SyncContext] = {}
 
         # Tmux launch background tasks: agent_id -> asyncio.Task
         self._launch_tasks: dict[str, asyncio.Task] = {}
@@ -3387,6 +3390,9 @@ Here are the day's conversations (with timestamps):
         ev = self._sync_wake.get(agent_id)
         if ev:
             ev.set()
+        ctx = self._sync_contexts.get(agent_id)
+        if ctx:
+            ctx.wake_event.set()
 
     def append_tool_log(self, agent_id: str, entry: dict):
         """Append a tool activity entry (called from hook endpoint)."""
@@ -3406,6 +3412,11 @@ Here are the day's conversations (with timestamps):
         self._generating_agents.discard(agent_id)
         from websocket import emit_agent_stream_end
         self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
+
+    async def trigger_sync(self, agent_id: str, *, is_stop: bool = False):
+        """Trigger an immediate sync for an agent (called from hooks)."""
+        from sync_engine import trigger_sync
+        await trigger_sync(self, agent_id, is_stop=is_stop)
 
     # ---- v2 Task dispatch/harvest ----
 
@@ -5689,6 +5700,7 @@ Here are the day's conversations (with timestamps):
                 db.close()
         finally:
             self._sync_wake.pop(agent_id, None)
+            self._sync_contexts.pop(agent_id, None)
             # Only clean up if this is still the active sync task.
             # _rotate_agent_session replaces the task, so the old one
             # must not remove the new entry from _sync_tasks.
@@ -5728,26 +5740,32 @@ Here are the day's conversations (with timestamps):
     async def _sync_session_loop_inner(
         self, agent_id: str, session_id: str, project_path: str
     ):
-        """Inner sync loop — see _sync_session_loop for docs."""
+        """Inner sync loop — delegates to sync_engine for heavy lifting."""
+        from sync_engine import (
+            SyncContext,
+            _content_hash,
+            sync_reconcile_initial,
+            sync_import_new_turns,
+            sync_handle_compact,
+            sync_check_streaming,
+        )
+
         POLL_INTERVAL = 6  # seconds between checks (hooks handle latency-sensitive events)
-        _GENERATING_IDLE_THRESHOLD = 2  # idle polls before clearing is_generating (~12s)
 
         # Register wake event so stop hook can interrupt the sleep
         wake_event = asyncio.Event()
         self._sync_wake[agent_id] = wake_event
 
-        from websocket import emit_agent_stream, emit_agent_update, emit_new_message, emit_tool_activity
+        from websocket import emit_agent_update, emit_new_message
 
         # Cache agent name/project for notification payloads
-        _sync_agent_name = ""
-        _sync_project = ""
         _worktree = None
         db = SessionLocal()
         try:
             _ag = db.get(Agent, agent_id)
+            _sync_agent_name = _ag.name if _ag else ""
+            _sync_project = _ag.project if _ag else ""
             if _ag:
-                _sync_agent_name = _ag.name
-                _sync_project = _ag.project
                 _worktree = _ag.worktree
         finally:
             db.close()
@@ -5759,24 +5777,21 @@ Here are the day's conversations (with timestamps):
                 agent_id, jsonl_path,
             )
 
-        last_offset = 0  # byte position for incremental JSONL reads
-        last_turn_count = 0
-        last_tail_hash = ""  # Hash of last turn content to detect updates
-        last_streamed_hash = ""  # Hash of last agent_stream content (avoid re-emit)
-        is_generating = False
-        _sync_gen_id: int | None = None  # current generation_id for sync streaming
-        _compact_notified = False  # True once Compact "start" event emitted (reset on compact end)
-        # Accumulated turns from incremental reads (avoids full re-parse each poll)
-        _incremental_turns: list[tuple[str, str, dict | None, str | None]] = []
-        def _content_hash(content: str) -> str:
-            """Fast hash of content for change detection."""
-            import hashlib
-            return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+        # Create and register sync context
+        ctx = SyncContext(
+            agent_id=agent_id,
+            session_id=session_id,
+            project_path=project_path,
+            worktree=_worktree,
+            agent_name=_sync_agent_name,
+            agent_project=_sync_project,
+            jsonl_path=jsonl_path,
+        )
 
-        # Get the current file offset and turn count so we only import new turns
+        # Initialize: read current file state, set offset to end
         try:
             with open(jsonl_path, "r", errors="replace") as f:
-                last_offset = f.seek(0, 2)  # seek to end — byte offset
+                ctx.last_offset = f.seek(0, 2)  # seek to end — byte offset
         except OSError as e:
             logger.warning(
                 "Sync loop for agent %s: cannot read session JSONL %s: %s",
@@ -5784,226 +5799,19 @@ Here are the day's conversations (with timestamps):
             )
 
         initial_turns = _parse_session_turns(jsonl_path)
-        _incremental_turns = list(initial_turns)
-        last_turn_count = len(initial_turns)
+        ctx.incremental_turns = list(initial_turns)
+        ctx.last_turn_count = len(initial_turns)
         if initial_turns:
             _init_tail = initial_turns[-1]
             _init_meta_sig = str(_init_tail[2]) if len(_init_tail) > 2 and _init_tail[2] else ""
-            last_tail_hash = f"{_content_hash(_init_tail[1])}:{_init_meta_sig}"
+            ctx.last_tail_hash = f"{_content_hash(_init_tail[1])}:{_init_meta_sig}"
 
-        # Reconcile: full-scan comparison between JSONL turns and DB
-        # messages.  Queue-operation user messages can appear anywhere
-        # in the conversation (interspersed between assistant turns), so
-        # we check every turn against the DB and insert any that are
-        # missing, regardless of position.
-        db = SessionLocal()
-        try:
-            conv_turns = [
-                t for t in initial_turns
-                if t[0] in ("user", "assistant")
-                # Skip system-wrapped prompts injected by _build_agent_prompt —
-                # the original user message is already stored in the DB.
-                and not (t[0] == "user" and _is_wrapped_prompt(t[1]))
-            ]
+        self._sync_contexts[agent_id] = ctx
 
-            if conv_turns:
-                agent = db.get(Agent, agent_id)
+        # Initial reconciliation (full scan)
+        await sync_reconcile_initial(self, ctx)
 
-                # Get ALL user/agent DB messages for dedup
-                all_db = db.query(Message).filter(
-                    Message.agent_id == agent_id,
-                    Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
-                ).all()
-
-                # Primary: UUID-based dedup via jsonl_uuid
-                db_uuids: set[str] = {
-                    m.jsonl_uuid for m in all_db if m.jsonl_uuid
-                }
-
-                # Secondary: content multiset for backward compat
-                # (messages imported before jsonl_uuid was added)
-                db_sig_counts: dict[tuple[str, str], int] = {}
-                for m in all_db:
-                    role_char = "u" if m.role == MessageRole.USER else "a"
-                    sig = (role_char, _dedup_sig(m.content))
-                    db_sig_counts[sig] = db_sig_counts.get(sig, 0) + 1
-
-                # Walk through JSONL turns and collect missing ones
-                missing: list[tuple[str, str, dict | None, str | None]] = []
-                for r, c, mt, uuid in conv_turns:
-                    # Primary: UUID-based dedup
-                    if uuid and uuid in db_uuids:
-                        continue
-                    # Secondary: content-based fallback (backward compat)
-                    role_char = "u" if r == "user" else "a"
-                    content_sig = _dedup_sig(c)
-                    sig = (role_char, content_sig)
-                    if db_sig_counts.get(sig, 0) > 0:
-                        db_sig_counts[sig] -= 1
-                        continue
-                    # Check opposite role (e.g. task-notification fixed
-                    # from USER→AGENT)
-                    alt = ("a" if role_char == "u" else "u", content_sig)
-                    if db_sig_counts.get(alt, 0) > 0:
-                        db_sig_counts[alt] -= 1
-                        continue
-                    missing.append((r, c, mt, uuid))
-
-                if missing and agent:
-                    # Build a list of existing agent messages for
-                    # prefix-match dedup (detect partial messages
-                    # that need updating instead of duplication).
-                    _existing_agent_msgs = [
-                        m for m in all_db
-                        if m.role == MessageRole.AGENT
-                    ]
-                    _existing_user_msgs = [
-                        m for m in all_db
-                        if m.role == MessageRole.USER
-                    ]
-                    for role, content, meta, uuid in missing:
-                        meta_json = json.dumps(meta) if meta else None
-                        if role == "user":
-                            # Dedup: skip CLI user messages that are wrapped
-                            # versions of an existing task/web message (the
-                            # wrapper adds project context around the original).
-                            is_wrapped_dup = False
-                            for em in _existing_user_msgs:
-                                if em.source in ("task", "web") and em.content:
-                                    # The wrapped prompt contains the original
-                                    if em.content[:100] in (content or ""):
-                                        is_wrapped_dup = True
-                                        # Attach UUID so future syncs skip it
-                                        if uuid and not em.jsonl_uuid:
-                                            em.jsonl_uuid = uuid
-                                        break
-                            if is_wrapped_dup:
-                                continue
-                            db.add(Message(
-                                agent_id=agent_id,
-                                role=MessageRole.USER,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                jsonl_uuid=uuid,
-                                completed_at=_utcnow(),
-                            ))
-                        elif role == "assistant":
-                            # Check if this is an update to a partial
-                            # message already in the DB (content grew
-                            # since last sync).
-                            updated = False
-                            for existing in _existing_agent_msgs:
-                                # Primary: UUID match
-                                if uuid and existing.jsonl_uuid == uuid:
-                                    if len(existing.content) < len(content):
-                                        existing.content = content
-                                        existing.completed_at = _utcnow()
-                                        if meta is not None:
-                                            existing.meta_json = _merge_interactive_meta(
-                                                existing.meta_json, meta,
-                                            )
-                                    updated = True
-                                    break
-                                # Secondary: content prefix fallback
-                                if (
-                                    len(existing.content) < len(content)
-                                    and content.startswith(
-                                        existing.content[:200]
-                                    )
-                                ):
-                                    existing.content = content
-                                    existing.completed_at = _utcnow()
-                                    if uuid and not existing.jsonl_uuid:
-                                        existing.jsonl_uuid = uuid
-                                    if meta is not None:
-                                        existing.meta_json = _merge_interactive_meta(
-                                            existing.meta_json, meta,
-                                        )
-                                    updated = True
-                                    break
-                            if not updated:
-                                db.add(Message(
-                                    agent_id=agent_id,
-                                    role=MessageRole.AGENT,
-                                    content=content,
-                                    status=MessageStatus.COMPLETED,
-                                    source="cli",
-                                    meta_json=meta_json,
-                                    jsonl_uuid=uuid,
-                                    completed_at=_utcnow(),
-                                ))
-                    agent.last_message_preview = (conv_turns[-1][1] or "")[:200]
-                    agent.last_message_at = _utcnow()
-                    db.commit()
-                    # Only emit new_message for non-user turns to avoid
-                    # triggering browser notifications for the user's own messages.
-                    if any(r != "user" for r, _, *_ in missing):
-                        self._emit(emit_new_message(
-                            agent_id, "sync", _sync_agent_name, _sync_project,
-                        ))
-                    logger.info(
-                        "Reconciled %d missing turns for agent %s",
-                        len(missing), agent_id,
-                    )
-                elif agent:
-                    # No missing turns — but update last agent msg if it grew
-                    last_agent_msg = db.query(Message).filter(
-                        Message.agent_id == agent_id,
-                        Message.role == MessageRole.AGENT,
-                    ).order_by(Message.created_at.desc()).first()
-                    last_assistant = None
-                    last_assistant_meta = None
-                    last_assistant_uuid = None
-                    for role, content, meta, uuid in reversed(conv_turns):
-                        if role == "assistant":
-                            last_assistant = content
-                            last_assistant_meta = meta
-                            last_assistant_uuid = uuid
-                            break
-                    _should_update = False
-                    if last_agent_msg and last_assistant:
-                        # Primary: UUID match
-                        if (last_assistant_uuid and last_agent_msg.jsonl_uuid
-                                and last_assistant_uuid == last_agent_msg.jsonl_uuid):
-                            _should_update = len(last_agent_msg.content) < len(last_assistant)
-                        # Secondary: content prefix fallback
-                        elif (
-                            len(last_agent_msg.content) < len(last_assistant)
-                            and last_assistant.startswith(
-                                last_agent_msg.content[:200]
-                            )
-                        ):
-                            _should_update = True
-                    if _should_update:
-                        last_agent_msg.content = last_assistant
-                        last_agent_msg.completed_at = _utcnow()
-                        if last_assistant_uuid and not last_agent_msg.jsonl_uuid:
-                            last_agent_msg.jsonl_uuid = last_assistant_uuid
-                        if last_assistant_meta is not None:
-                            last_agent_msg.meta_json = _merge_interactive_meta(
-                                last_agent_msg.meta_json, last_assistant_meta,
-                            )
-                        db.commit()
-                        self._emit(emit_new_message(
-                            agent_id, "sync", _sync_agent_name, _sync_project,
-                        ))
-
-                # Update stale interactive metadata (answers that arrived
-                # after the assistant message was initially stored)
-                if _update_stale_interactive_metadata(db, agent_id, initial_turns):
-                    self._emit(emit_new_message(
-                        agent_id, "sync", _sync_agent_name, _sync_project,
-                    ))
-                    logger.debug(
-                        "Updated stale interactive metadata for agent %s "
-                        "(initial reconciliation)", agent_id,
-                    )
-        finally:
-            db.close()
-
-        idle_polls = 0
-        _getsize_error_count = 0
+        # Background loop — handles streaming preview, session rotation, tmux health
         _GETSIZE_ERROR_LIMIT = 10  # ~60s at 6s poll interval
         while True:
             # Wait up to POLL_INTERVAL, but wake immediately if stop hook fires
@@ -6012,21 +5820,22 @@ Here are the day's conversations (with timestamps):
                 wake_event.clear()
             except asyncio.TimeoutError:
                 pass
+            # Also clear the ctx wake_event (set by wake_sync)
+            ctx.wake_event.clear()
 
             try:
-                current_size = os.path.getsize(jsonl_path)
-                _getsize_error_count = 0  # reset on success
+                current_size = os.path.getsize(ctx.jsonl_path)
+                ctx.getsize_error_count = 0  # reset on success
             except OSError as e:
-                _getsize_error_count += 1
-                if _getsize_error_count == 1:
+                ctx.getsize_error_count += 1
+                if ctx.getsize_error_count == 1:
                     logger.warning(
                         "Sync loop: getsize failed for %s (agent %s): %s",
-                        jsonl_path, agent_id, e,
+                        ctx.jsonl_path, agent_id, e,
                     )
-                if _getsize_error_count >= _GETSIZE_ERROR_LIMIT:
+                if ctx.getsize_error_count >= _GETSIZE_ERROR_LIMIT:
                     # Before stopping, check if tmux pane still has a live
-                    # claude process.  If so, the JSONL may not exist yet
-                    # (e.g. just after /clear or session start) — keep waiting.
+                    # claude process.
                     pane_alive = False
                     db_chk = SessionLocal()
                     try:
@@ -6039,19 +5848,18 @@ Here are the day's conversations (with timestamps):
                         db_chk.close()
 
                     if pane_alive:
-                        # Claude is still running — JSONL will appear eventually
-                        if _getsize_error_count % 20 == 0:
+                        if ctx.getsize_error_count % 20 == 0:
                             logger.info(
                                 "Sync loop: session file missing for %d polls "
                                 "but pane alive — waiting (agent %s)",
-                                _getsize_error_count, agent_id,
+                                ctx.getsize_error_count, agent_id,
                             )
                         continue
 
                     logger.warning(
                         "Sync loop: session file missing for %d polls "
                         "and no live pane — stopping agent %s",
-                        _getsize_error_count, agent_id,
+                        ctx.getsize_error_count, agent_id,
                     )
                     db = SessionLocal()
                     try:
@@ -6067,113 +5875,27 @@ Here are the day's conversations (with timestamps):
                     break
                 continue
 
-            # Detect JSONL rewrite (e.g. /compact shrinks the file)
-            if current_size < last_offset:
-                logger.info(
-                    "Session file shrank for agent %s (%d → %d bytes, "
-                    "likely /compact), resetting offset + full re-parse",
-                    agent_id, last_offset, current_size,
-                )
-                # Compact: full re-parse required, reset offset
-                turns = _parse_session_turns(jsonl_path)
-                _incremental_turns = list(turns)
-                last_turn_count = len(turns)
-                _t = turns[-1] if turns else ("", "", None)
-                _meta_sig = str(_t[2]) if len(_t) > 2 and _t[2] else ""
-                last_tail_hash = f"{_content_hash(_t[1])}:{_meta_sig}" if turns else ""
-                last_offset = current_size
-                idle_polls = 0
-                # Drain accumulated tool_log to the last assistant message
-                # so tool entries aren't lost across the compact boundary.
-                _tlog = self.drain_tool_log(agent_id)
-                if _tlog:
-                    db_tlog = SessionLocal()
-                    try:
-                        last_asst = db_tlog.query(Message).filter(
-                            Message.agent_id == agent_id,
-                            Message.role == "AGENT",
-                        ).order_by(Message.created_at.desc()).first()
-                        if last_asst:
-                            _meta = json.loads(last_asst.meta_json) if last_asst.meta_json else {}
-                            existing = _meta.get("tool_log", [])
-                            _meta["tool_log"] = existing + _tlog
-                            last_asst.meta_json = json.dumps(_meta)
-                            db_tlog.commit()
-                    finally:
-                        db_tlog.close()
-                # Notify UI about the compact
-                db_compact = SessionLocal()
-                try:
-                    compact_msg = self._add_system_message(
-                        db_compact, agent_id,
-                        "Context compacted — conversation history refreshed",
-                    )
-                    db_compact.commit()
-                    self._emit(emit_new_message(
-                        agent_id, compact_msg.id, _sync_agent_name, _sync_project,
-                    ))
-                    self._emit(emit_tool_activity(
-                        agent_id, "Compact", "end",
-                        tool_output="context compacted",
-                    ))
-                    _compact_notified = False
-                finally:
-                    db_compact.close()
+            # Compact detection — file shrink
+            if current_size < ctx.last_offset:
+                async with ctx.sync_lock:
+                    await sync_handle_compact(self, ctx)
                 continue
 
-            if current_size <= last_offset:
-                idle_polls += 1
-                # Heartbeat log every 30 idle polls (~180s) to confirm loop is alive
-                if idle_polls % 30 == 0 and idle_polls > 0:
+            # File hasn't grown — idle polling
+            if current_size <= ctx.last_offset:
+                ctx.idle_polls += 1
+                # Heartbeat log every 30 idle polls (~180s)
+                if ctx.idle_polls % 30 == 0 and ctx.idle_polls > 0:
                     logger.info(
                         "Sync loop heartbeat for agent %s: idle_polls=%d, session=%s",
-                        agent_id, idle_polls, session_id[:12],
+                        agent_id, ctx.idle_polls, session_id[:12],
                     )
-                # File stopped growing — clear generating state after threshold
-                # (covers brief API latency gaps between tool completion and
-                # next response start, where JSONL is static but agent is busy)
-                if is_generating and idle_polls >= _GENERATING_IDLE_THRESHOLD:
-                    is_generating = False
-                    self._stop_generating(agent_id)
-                    _sync_gen_id = None
 
-                # Detect likely in-progress compaction: JSONL stopped growing,
-                # there are accumulated tool_log entries (hooks fired recently),
-                # and the tmux pane is alive.  Emit a single Compact "start"
-                # so the frontend keeps showing executing status.
-                if not _compact_notified and idle_polls == _GENERATING_IDLE_THRESHOLD:
-                    has_pending_tools = bool(self._tool_logs.get(agent_id))
-                    if has_pending_tools:
-                        _pane_id = None
-                        db_cp = SessionLocal()
-                        try:
-                            _ag = db_cp.get(Agent, agent_id)
-                            if _ag:
-                                _pane_id = _ag.tmux_pane
-                        finally:
-                            db_cp.close()
-                        if _pane_id and verify_tmux_pane(_pane_id):
-                            _compact_notified = True
-                            self._emit(emit_tool_activity(
-                                agent_id, "Compact", "start",
-                                tool_input={"description": "Compacting context"},
-                            ))
+                # Handle streaming state, generating timeout, compact detection
+                await sync_check_streaming(self, ctx)
 
-                # Stop hook fired but JSONL hasn't changed — turns were
-                # already imported; increment unread now.
-                if agent_id in self._pending_notify:
-                    self._pending_notify.discard(agent_id)
-                    db_pn = SessionLocal()
-                    try:
-                        _ag = db_pn.get(Agent, agent_id)
-                        if _ag and not self._is_agent_in_use(_ag.id, _ag.tmux_pane):
-                            _ag.unread_count += 1
-                            self._maybe_notify_message(_ag)
-                            db_pn.commit()
-                    finally:
-                        db_pn.close()
                 # Periodically check if we should still be syncing
-                if idle_polls % 10 == 0:
+                if ctx.idle_polls % 10 == 0:
                     db = SessionLocal()
                     try:
                         agent = db.get(Agent, agent_id)
@@ -6198,12 +5920,8 @@ Here are the day's conversations (with timestamps):
                     finally:
                         db.close()
 
-                # After a few idle polls, check if Claude continued into
-                # a new session (context too long → auto-continuation).
-                # Only do this if the tmux process is still alive — if it's
-                # dead, there's no Claude that could have continued.
-                if idle_polls >= 3 and idle_polls % 3 == 0:
-                    # Verify tmux pane is still alive before checking
+                # Session rotation / tmux health check
+                if ctx.idle_polls >= 3 and ctx.idle_polls % 3 == 0:
                     pane_alive = False
                     db_check = SessionLocal()
                     try:
@@ -6216,15 +5934,11 @@ Here are the day's conversations (with timestamps):
                         db_check.close()
 
                     if not pane_alive:
-                        # tmux is dead — if we've been idle long enough
-                        # with no pane, the CLI session is truly gone.
-                        # Use 60 idle polls (~6 min) to give time for
-                        # pane re-detection before giving up.
-                        if idle_polls >= 60:
+                        if ctx.idle_polls >= 60:
                             logger.info(
                                 "Sync loop stopping for agent %s — "
                                 "tmux pane dead for %d idle polls",
-                                agent_id, idle_polls,
+                                agent_id, ctx.idle_polls,
                             )
                             db_stop = SessionLocal()
                             try:
@@ -6242,13 +5956,6 @@ Here are the day's conversations (with timestamps):
                             return
                         continue  # tmux is dead, skip continuation check
 
-                    # Look for a successor session.  The old JSONL may or
-                    # may not have a 'result' event — Claude Code sometimes
-                    # continues into a new session file (via --resume getting
-                    # a new ID) without writing 'result' to the old one.
-                    # The PID-match requirement in _detect_successor_session
-                    # already prevents sub-agent sessions from being
-                    # misidentified as continuations.
                     new_sid = self._detect_successor_session(
                         session_id, project_path, agent_id,
                         worktree=_worktree,
@@ -6256,7 +5963,7 @@ Here are the day's conversations (with timestamps):
                     if new_sid:
                         logger.info(
                             "Session rotation detected for agent %s: "
-                            "%s → %s — rotating in-place",
+                            "%s -> %s — rotating in-place",
                             agent_id, session_id[:12], new_sid[:12],
                         )
                         if self._rotate_agent_session(
@@ -6264,433 +5971,41 @@ Here are the day's conversations (with timestamps):
                             worktree=_worktree,
                         ):
                             return  # new sync task started by _rotate_agent_session
-                        # Rotation failed (UNIQUE violation) — stay in
-                        # current sync loop so we keep monitoring.
 
-                    if idle_polls % 30 == 0:
+                    if ctx.idle_polls % 30 == 0:
                         logger.debug(
                             "Successor check: no match for agent %s (idle_polls=%d, pane_alive=%s)",
-                            agent_id, idle_polls, pane_alive,
+                            agent_id, ctx.idle_polls, pane_alive,
                         )
-
-                    # Pane is alive — agent stays syncing even if
-                    # the session file hasn't grown.  The user may
-                    # simply be idle in the tmux session.
-                continue
-            idle_polls = 0
-
-            # Incremental read: seek to last_offset, read only new bytes
-            _inc_lines, _new_offset, _leftover = _read_jsonl_incremental(
-                jsonl_path, last_offset,
-            )
-            if _inc_lines:
-                turns = _parse_incremental_lines(_inc_lines, _incremental_turns)
-            else:
-                # No new complete lines yet (partial write?) — keep old state
-                turns = list(_incremental_turns)
-            last_offset = _new_offset
-
-            # Detect turn count decrease (compact may produce a larger
-            # file but with fewer turns if the summary is long)
-            if len(turns) < last_turn_count:
-                logger.info(
-                    "Turn count decreased for agent %s (%d → %d, "
-                    "likely /compact), resetting offset + full re-parse",
-                    agent_id, last_turn_count, len(turns),
-                )
-                # Incremental parse produced fewer turns — full re-parse
-                # to be safe (compact can rewrite the entire file)
-                turns = _parse_session_turns(jsonl_path)
-                _incremental_turns = list(turns)
-                last_turn_count = len(turns)
-                last_offset = current_size
-                _t = turns[-1] if turns else ("", "", None)
-                _meta_sig = str(_t[2]) if len(_t) > 2 and _t[2] else ""
-                last_tail_hash = f"{_content_hash(_t[1])}:{_meta_sig}" if turns else ""
-                last_streamed_hash = ""  # Reset for fresh post-compact streaming
-                # Drain accumulated tool_log to the last assistant message
-                _tlog = self.drain_tool_log(agent_id)
-                if _tlog:
-                    db_tlog = SessionLocal()
-                    try:
-                        last_asst = db_tlog.query(Message).filter(
-                            Message.agent_id == agent_id,
-                            Message.role == "AGENT",
-                        ).order_by(Message.created_at.desc()).first()
-                        if last_asst:
-                            _meta = json.loads(last_asst.meta_json) if last_asst.meta_json else {}
-                            existing = _meta.get("tool_log", [])
-                            _meta["tool_log"] = existing + _tlog
-                            last_asst.meta_json = json.dumps(_meta)
-                            db_tlog.commit()
-                    finally:
-                        db_tlog.close()
-                # Notify UI about the compact
-                db_compact = SessionLocal()
-                try:
-                    compact_msg = self._add_system_message(
-                        db_compact, agent_id,
-                        "Context compacted — conversation history refreshed",
-                    )
-                    db_compact.commit()
-                    self._emit(emit_new_message(
-                        agent_id, compact_msg.id, _sync_agent_name, _sync_project,
-                    ))
-                    self._emit(emit_tool_activity(
-                        agent_id, "Compact", "end",
-                        tool_output="context compacted",
-                    ))
-                    _compact_notified = False
-                finally:
-                    db_compact.close()
                 continue
 
-            # Update incremental state
-            _incremental_turns = list(turns)
-
-            new_turns = turns[last_turn_count:]
-
-            # Check if the last existing turn's content grew (same turn count
-            # but the assistant accumulated more tool calls / text blocks)
-            # Include metadata in the hash so answer updates are detected
-            _tail_turn = turns[-1] if turns else ("", "", None)
-            _tail_meta_sig = str(_tail_turn[2]) if len(_tail_turn) > 2 and _tail_turn[2] else ""
-            tail_hash = f"{_content_hash(_tail_turn[1])}:{_tail_meta_sig}" if turns else ""
-            last_turn_updated = (
-                not new_turns
-                and len(turns) == last_turn_count
-                and tail_hash != last_tail_hash
-                and turns
-                and turns[-1][0] == "assistant"
-            )
-
-            if not new_turns and not last_turn_updated:
-                # File grew but turns didn't change — Claude is mid-generation.
-                # Stream the current assistant content so the frontend can
-                # show a live preview instead of just typing dots.
-                partial = ""
-                if turns and turns[-1][0] == "assistant":
-                    partial = turns[-1][1]
-                # Only emit when content actually changed — otherwise the
-                # frontend shows a streaming bubble duplicating the already-
-                # committed message (the 1.5s WS lock expires before the
-                # next 3s poll).
-                p_hash = _content_hash(partial) if partial else ""
-                if p_hash != last_streamed_hash:
-                    last_streamed_hash = p_hash
-                    if not is_generating:
-                        is_generating = True
-                        _sync_gen_id = self._start_generating(agent_id)
-                    _sync_active_tool = _extract_last_tool_from_content(partial) if partial else None
-                    self._emit(emit_agent_stream(agent_id, partial, generation_id=_sync_gen_id, active_tool=_sync_active_tool))
-                # Stop hook fired but turns already imported — increment unread now
-                if agent_id in self._pending_notify:
-                    self._pending_notify.discard(agent_id)
-                    db_pn = SessionLocal()
-                    try:
-                        _ag = db_pn.get(Agent, agent_id)
-                        if _ag and not self._is_agent_in_use(_ag.id, _ag.tmux_pane):
-                            _ag.unread_count += 1
-                            _ag.last_message_preview = (partial or _ag.last_message_preview or "")[:200]
-                            self._maybe_notify_message(_ag)
-                            db_pn.commit()
-                    finally:
-                        db_pn.close()
-                continue
-
-            db = SessionLocal()
-            try:
-                agent = db.get(Agent, agent_id)
-                if not agent or agent.status != AgentStatus.SYNCING:
-                    logger.info(
-                        "Sync loop exiting for agent %s (status changed to %s during turn import)",
-                        agent_id, agent.status if agent else "DELETED",
-                    )
-                    break
-
-                if last_turn_updated:
-                    # Update the last agent message in-place
-                    last_msg = db.query(Message).filter(
-                        Message.agent_id == agent_id,
-                        Message.role == MessageRole.AGENT,
-                    ).order_by(Message.created_at.desc()).first()
-                    if last_msg:
-                        _last_role, _last_content, *_last_rest = turns[-1]
-                        _last_meta = _last_rest[0] if _last_rest else None
-                        last_msg.content = _last_content
-                        last_msg.completed_at = _utcnow()
-                        if _last_meta is not None:
-                            last_msg.meta_json = _merge_interactive_meta(
-                                last_msg.meta_json, _last_meta,
-                            )
-                        agent.last_message_preview = (_last_content or "")[:200]
-                        agent.last_message_at = _utcnow()
-                        # Stop hook fired while last turn was growing — this
-                        # is the final content, increment unread now.
-                        if agent_id in self._pending_notify:
-                            self._pending_notify.discard(agent_id)
-                            if not self._is_agent_in_use(agent.id, agent.tmux_pane):
-                                agent.unread_count += 1
-                                self._maybe_notify_message(agent)
-                        db.commit()
-                        # Stream the updated content to connected clients
-                        _sync_active_tool = _extract_last_tool_from_content(_last_content) if _last_content else None
-                        self._emit(emit_agent_stream(
-                            agent_id, _last_content, generation_id=_sync_gen_id,
-                            active_tool=_sync_active_tool,
-                        ))
-                        self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
-                        last_tail_hash = tail_hash
-                        last_streamed_hash = _content_hash(_last_content) if _last_content else ""
-                        # Turn is still growing — mark as generating so
-                        # the frontend knows the agent is active.
-                        if not is_generating:
-                            is_generating = True
-                            _sync_gen_id = self._start_generating(agent_id)
-                        logger.info(
-                            "Updated last turn content for agent %s (%s chars)",
-                            agent_id, len(_last_content),
-                        )
-                else:
-                    # Before importing new turns, check if the turn just
-                    # before the new ones grew (assistant was mid-response
-                    # last time, now finished and user sent a new message).
-                    if last_turn_count > 0 and new_turns:
-                        prev_role, prev_content, *prev_rest = turns[last_turn_count - 1]
-                        prev_meta = prev_rest[0] if prev_rest else None
-                        prev_uuid = prev_rest[1] if len(prev_rest) > 1 else None
-                        if prev_role == "assistant":
-                            last_agent_msg = db.query(Message).filter(
-                                Message.agent_id == agent_id,
-                                Message.role == MessageRole.AGENT,
-                            ).order_by(Message.created_at.desc()).first()
-                            # Verify match: UUID primary, length fallback
-                            _is_match = False
-                            if last_agent_msg:
-                                if (prev_uuid and last_agent_msg.jsonl_uuid
-                                        and prev_uuid == last_agent_msg.jsonl_uuid):
-                                    _is_match = True
-                                elif len(last_agent_msg.content) < len(prev_content):
-                                    _is_match = True
-                            if _is_match and len(last_agent_msg.content) < len(prev_content):
-                                old_len = len(last_agent_msg.content)
-                                last_agent_msg.content = prev_content
-                                last_agent_msg.completed_at = _utcnow()
-                                if prev_uuid and not last_agent_msg.jsonl_uuid:
-                                    last_agent_msg.jsonl_uuid = prev_uuid
-                                if prev_meta is not None:
-                                    last_agent_msg.meta_json = _merge_interactive_meta(
-                                        last_agent_msg.meta_json, prev_meta,
-                                    )
-                                logger.info(
-                                    "Updated previous turn content for agent %s "
-                                    "(%d -> %d chars)",
-                                    agent_id, old_len, len(prev_content),
-                                )
-
-                    # Import new turns
-                    for role, content, *rest in new_turns:
-                        meta = rest[0] if rest else None
-                        jsonl_uuid = rest[1] if len(rest) > 1 else None
-                        meta_json = json.dumps(meta) if meta else None
-                        if role == "user":
-                            # Skip system-wrapped prompts from _build_agent_prompt.
-                            # Detects both new preamble prefix and legacy markers.
-                            if _is_wrapped_prompt(content):
-                                # Backfill jsonl_uuid onto the most recent
-                                # unlinked web/plan_continue message for this
-                                # agent, so future syncs use UUID dedup.
-                                if jsonl_uuid:
-                                    from sqlalchemy import or_ as _or
-                                    _web_msg = db.query(Message).filter(
-                                        Message.agent_id == agent_id,
-                                        Message.role == MessageRole.USER,
-                                        _or(
-                                            Message.source == "web",
-                                            Message.source == "plan_continue",
-                                        ),
-                                        Message.jsonl_uuid.is_(None),
-                                    ).order_by(Message.created_at.desc()).first()
-                                    if _web_msg:
-                                        _web_msg.jsonl_uuid = jsonl_uuid
-                                continue
-                            # Primary: UUID-based dedup — skip if jsonl_uuid
-                            # already exists in DB for this agent
-                            if jsonl_uuid:
-                                existing_uuid = db.query(Message.id).filter(
-                                    Message.agent_id == agent_id,
-                                    Message.jsonl_uuid == jsonl_uuid,
-                                ).first()
-                                if existing_uuid:
-                                    continue
-                            # Secondary: content dedup against unlinked
-                            # web/plan_continue messages — catches web→tmux
-                            # round-trips where the marker was stripped or
-                            # absent (the common case for follow-up messages
-                            # sent to SYNCING agents).
-                            from sqlalchemy import or_
-                            _norm = _dedup_sig(content)
-                            _unlinked = db.query(Message).filter(
-                                Message.agent_id == agent_id,
-                                Message.role == MessageRole.USER,
-                                or_(
-                                    Message.source == "web",
-                                    Message.source == "plan_continue",
-                                ),
-                                Message.jsonl_uuid.is_(None),
-                            ).all()
-                            _match = next(
-                                (m for m in _unlinked
-                                 if _dedup_sig(m.content) == _norm),
-                                None,
-                            )
-                            if _match:
-                                if jsonl_uuid:
-                                    _match.jsonl_uuid = jsonl_uuid
-                                logger.debug(
-                                    "Skipping duplicate user turn for agent %s "
-                                    "(matches unlinked web/plan_continue msg %s)",
-                                    agent_id, _match.id,
-                                )
-                                continue
-                            # Tertiary: broader content fallback for turns
-                            # without UUID (queue-operations, legacy imports)
-                            if not jsonl_uuid:
-                                _candidates = db.query(Message).filter(
-                                    Message.agent_id == agent_id,
-                                    Message.role == MessageRole.USER,
-                                    or_(Message.source != "cli", Message.source.is_(None)),
-                                ).all()
-                                if any(
-                                    _dedup_sig(m.content) == _norm
-                                    for m in _candidates
-                                ):
-                                    logger.debug(
-                                        "Skipping duplicate user turn for agent %s "
-                                        "(already sent via web)", agent_id,
-                                    )
-                                    continue
-                            msg = Message(
-                                agent_id=agent_id,
-                                role=MessageRole.USER,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                jsonl_uuid=jsonl_uuid,
-                                completed_at=_utcnow(),
-                            )
-                        elif role == "assistant":
-                            # Attach accumulated tool activity log from CC hooks
-                            _tlog = self.drain_tool_log(agent_id)
-                            if _tlog:
-                                _meta = json.loads(meta_json) if meta_json else {}
-                                _meta["tool_log"] = _tlog
-                                meta_json = json.dumps(_meta)
-                            msg = Message(
-                                agent_id=agent_id,
-                                role=MessageRole.AGENT,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                meta_json=meta_json,
-                                jsonl_uuid=jsonl_uuid,
-                                completed_at=_utcnow(),
-                            )
-                        elif role == "system":
-                            msg = Message(
-                                agent_id=agent_id,
-                                role=MessageRole.SYSTEM,
-                                content=content,
-                                status=MessageStatus.COMPLETED,
-                                source="cli",
-                                jsonl_uuid=jsonl_uuid,
-                                completed_at=_utcnow(),
-                            )
-                        else:
-                            continue
-                        db.add(msg)
-
-                    agent.last_message_preview = (new_turns[-1][1] or "")[:200]
-                    agent.last_message_at = _utcnow()
-                    # Only increment unread when the stop hook has fired
-                    # (agent finished its turn), not mid-generation.
-                    if agent_id in self._pending_notify:
-                        self._pending_notify.discard(agent_id)
-                        if not self._is_agent_in_use(agent.id, agent.tmux_pane):
-                            _non_user = sum(1 for r, *_ in new_turns if r != "user")
-                            if _non_user > 0:
-                                agent.unread_count += _non_user
-                                self._maybe_notify_message(agent)
-                    db.commit()
-
-                    last_turn_count = len(turns)
-                    last_tail_hash = tail_hash
-                    # Record committed content so mid-generation streaming
-                    # won't re-emit the same content as a duplicate bubble.
-                    _last_assistant = ""
-                    for _r, _c, *_ in reversed(new_turns):
-                        if _r == "assistant":
-                            _last_assistant = _c
-                            break
-                    last_streamed_hash = _content_hash(_last_assistant) if _last_assistant else ""
-                    if is_generating:
-                        is_generating = False
-                        self._stop_generating(agent_id)
-                        _sync_gen_id = None
-                    self._emit(emit_agent_update(
-                        agent.id, agent.status.value, agent.project
-                    ))
-                    _new_roles = [r for r, *_ in new_turns]
-                    logger.info(
-                        "Synced %d new turns for agent %s (roles=%s)",
-                        len(new_turns), agent_id, _new_roles,
-                    )
-                    # Only emit new_message for non-user turns to avoid
-                    # triggering browser notifications for the user's own messages.
-                    if any(r != "user" for r, *_ in new_turns):
-                        self._emit(emit_new_message(agent.id, "sync", _sync_agent_name, _sync_project))
-
-                    # Generate video thumbnails for new assistant turns
-                    for _r, _c, *_ in new_turns:
-                        if _r == "assistant" and _c:
-                            asyncio.ensure_future(asyncio.to_thread(
-                                generate_thumbnails_for_message, _c, project_path,
-                            ))
-
-                # Update stale interactive metadata on EARLIER messages
-                # (e.g. user answered an AskUserQuestion in terminal)
-                if _update_stale_interactive_metadata(db, agent_id, turns):
-                    self._emit(emit_new_message(
-                        agent_id, "sync", _sync_agent_name, _sync_project,
-                    ))
-                    logger.debug(
-                        "Updated stale interactive metadata for agent %s",
-                        agent_id,
-                    )
-            finally:
-                db.close()
+            # File grew — do incremental sync
+            ctx.idle_polls = 0
+            async with ctx.sync_lock:
+                result = await sync_import_new_turns(self, ctx)
+            if result == "exit":
+                break
 
             # Scan for subagent JSONLs spawned by this session
             self._process_subagents(
                 agent_id, session_id, project_path,
-                _worktree, _sync_agent_name, _sync_project,
+                _worktree, ctx.agent_name, ctx.agent_project,
             )
 
-            # Check if the CLI session has ended by looking for a 'result' event
-            if self._session_has_ended(jsonl_path):
-                # Sync any final turns first (incremental read for remaining bytes)
+            # Check if the CLI session has ended
+            if self._session_has_ended(ctx.jsonl_path):
                 db = SessionLocal()
                 try:
                     _end_lines, _end_offset, _ = _read_jsonl_incremental(
-                        jsonl_path, last_offset,
+                        ctx.jsonl_path, ctx.last_offset,
                     )
                     if _end_lines:
-                        turns = _parse_incremental_lines(_end_lines, _incremental_turns)
-                        _incremental_turns = list(turns)
-                        last_offset = _end_offset
+                        turns = _parse_incremental_lines(_end_lines, ctx.incremental_turns)
+                        ctx.incremental_turns = list(turns)
+                        ctx.last_offset = _end_offset
                     else:
-                        turns = list(_incremental_turns)
-                    final_new = turns[last_turn_count:]
+                        turns = list(ctx.incremental_turns)
+                    final_new = turns[ctx.last_turn_count:]
                     agent = db.get(Agent, agent_id)
                     if agent and final_new:
                         self._import_turns_as_messages(db, agent_id, final_new, source=None)
@@ -6700,7 +6015,7 @@ Here are the day's conversations (with timestamps):
                             agent.unread_count += len(final_new)
                             self._maybe_notify_message(agent)
                         db.commit()
-                        last_turn_count = len(turns)
+                        ctx.last_turn_count = len(turns)
                         self._emit(emit_agent_update(
                             agent.id, agent.status.value, agent.project
                         ))
@@ -6712,7 +6027,6 @@ Here are the day's conversations (with timestamps):
                 finally:
                     db.close()
 
-                # If process is still alive, keep syncing (user may resume)
                 if _project_path and _is_cli_session_alive(_project_path, agent.tmux_pane if agent else None):
                     logger.info(
                         "CLI session ended for agent %s but process alive — staying SYNCING",
@@ -6720,7 +6034,6 @@ Here are the day's conversations (with timestamps):
                     )
                     continue
 
-                # Process is dead — transition to STOPPED
                 logger.info(
                     "CLI session ended for agent %s — transitioning to STOPPED",
                     agent_id,
@@ -6742,11 +6055,11 @@ Here are the day's conversations (with timestamps):
                         self._emit(emit_agent_update(
                             agent.id, agent.status.value, agent.project
                         ))
-                        self._emit(emit_new_message(agent.id, sys_msg.id, _sync_agent_name, _sync_project))
+                        self._emit(emit_new_message(agent.id, sys_msg.id, ctx.agent_name, ctx.agent_project))
 
                         from notify import notify
                         _tc_decision = notify("task_complete", agent_id,
-                               f"\u2705 {_sync_agent_name or agent_id[:8]}",
+                               f"\u2705 {ctx.agent_name or agent_id[:8]}",
                                "CLI session ended — sync complete",
                                f"/agents/{agent_id}")
                         self._emit({"type": "notification_debug",
