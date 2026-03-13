@@ -2870,6 +2870,7 @@ Here are the day's conversations (with timestamps):
             content=content,
             status=status,
             completed_at=_utcnow(),
+            delivered_at=_utcnow(),
         )
         if error_message:
             msg.error_message = error_message
@@ -2887,6 +2888,7 @@ Here are the day's conversations (with timestamps):
             meta = rest[0] if rest else None
             jsonl_uuid = rest[1] if len(rest) > 1 else None
             meta_json = json.dumps(meta) if meta else None
+            now = _utcnow()
             if role == "user":
                 msg = Message(
                     agent_id=agent_id,
@@ -2896,7 +2898,8 @@ Here are the day's conversations (with timestamps):
                     source=source,
                     meta_json=meta_json,
                     jsonl_uuid=jsonl_uuid,
-                    completed_at=_utcnow(),
+                    completed_at=now,
+                    delivered_at=now,
                 )
             elif role == "assistant":
                 msg = Message(
@@ -2907,7 +2910,8 @@ Here are the day's conversations (with timestamps):
                     source=source,
                     meta_json=meta_json,
                     jsonl_uuid=jsonl_uuid,
-                    completed_at=_utcnow(),
+                    completed_at=now,
+                    delivered_at=now,
                 )
             elif role == "system":
                 msg = Message(
@@ -2917,7 +2921,8 @@ Here are the day's conversations (with timestamps):
                     status=MessageStatus.COMPLETED,
                     source=source,
                     jsonl_uuid=jsonl_uuid,
-                    completed_at=_utcnow(),
+                    completed_at=now,
+                    delivered_at=now,
                 )
             else:
                 continue
@@ -3071,6 +3076,7 @@ Here are the day's conversations (with timestamps):
                 role=MessageRole.SYSTEM,
                 content=reason,
                 status=MessageStatus.COMPLETED,
+                delivered_at=_utcnow(),
             ))
 
         if cancel_tasks:
@@ -3951,6 +3957,7 @@ Here are the day's conversations (with timestamps):
             # resume watching the session JSONL; others go to IDLE.
             post_exec_status = AgentStatus.SYNCING if agent.cli_sync else AgentStatus.IDLE
 
+            _now = _utcnow()
             if is_error:
                 resp = Message(
                     agent_id=agent.id,
@@ -3960,6 +3967,7 @@ Here are the day's conversations (with timestamps):
                     stream_log=_truncate(logs, 50000),
                     error_message=result_text[:200] if result_text else "Unknown error",
                     meta_json=result_meta_json,
+                    delivered_at=_now,
                 )
                 db.add(resp)
                 agent.status = post_exec_status
@@ -3971,6 +3979,7 @@ Here are the day's conversations (with timestamps):
                     status=MessageStatus.COMPLETED,
                     stream_log=_truncate(logs, 50000),
                     meta_json=result_meta_json,
+                    delivered_at=_now,
                 )
                 db.add(resp)
                 agent.status = post_exec_status
@@ -4431,6 +4440,8 @@ Here are the day's conversations (with timestamps):
                 if agent.worktree:
                     agent.branch = f"worktree-{agent.worktree}"
                 pending_msg.status = MessageStatus.EXECUTING
+                if not pending_msg.delivered_at:
+                    pending_msg.delivered_at = _utcnow()
                 executing_count += 1
 
                 # Start streaming output to frontend
@@ -5447,7 +5458,7 @@ Here are the day's conversations (with timestamps):
             _handle_stop,
         )
 
-        POLL_INTERVAL = 30  # hooks are primary sync driver; polling is fallback only
+        POLL_INTERVAL = 10  # hooks are primary sync driver; polling is fallback only
 
         # Register wake event so stop hook can interrupt the sleep
         wake_event = asyncio.Event()
@@ -6070,6 +6081,7 @@ Here are the day's conversations (with timestamps):
                                         content=f"*(partial — interrupted by restart)*\n\n{partial_text}",
                                         status=MessageStatus.COMPLETED,
                                         meta_json=partial_meta,
+                                        delivered_at=_utcnow(),
                                     )
                                     db.add(partial_msg)
                                     logger.info(

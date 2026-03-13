@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
 import { getAuthToken } from "../lib/api";
+import { calibrate } from "../lib/serverTime";
 
 const WebSocketContext = createContext(null);
 
@@ -67,6 +68,8 @@ export function WebSocketProvider({ children }) {
           return; // untrusted input may not be valid JSON
         }
         if (event.type === "pong" || event.type === "ping") return;
+        // Calibrate client-server clock offset from every event timestamp
+        if (event.timestamp) calibrate(event.timestamp);
         setLastEvent(event);
       };
 

@@ -193,6 +193,7 @@ class MessageOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     scheduled_at: datetime | None = None
+    delivered_at: datetime | None = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
@@ -208,10 +209,32 @@ class MessageOut(BaseModel):
                 return None
         return v
 
-    @field_validator("scheduled_at", "created_at", "completed_at", mode="before")
+    @field_validator("scheduled_at", "created_at", "completed_at", "delivered_at", mode="before")
     @classmethod
     def ensure_utc(cls, v):
         """Ensure datetime fields carry UTC tzinfo (SQLite drops it)."""
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class ToolActivityOut(BaseModel):
+    id: str
+    agent_id: str
+    session_id: str
+    tool_name: str
+    kind: str
+    summary: str
+    output_summary: str | None = None
+    is_error: bool = False
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("started_at", "ended_at", mode="before")
+    @classmethod
+    def ensure_utc_ta(cls, v):
         if v is not None and isinstance(v, datetime) and v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v

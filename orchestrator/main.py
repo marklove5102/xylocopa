@@ -1724,6 +1724,7 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
                 role=MessageRole.SYSTEM,
                 content="Agent stopped — project archived",
                 status=MessageStatus.COMPLETED,
+                delivered_at=_utcnow(),
             ))
             asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
     stopped_count = len(active_agents)
@@ -3919,12 +3920,51 @@ async def hook_agent_session_end(request: Request):
     return {}
 
 
+def _mark_slash_command_delivered(agent_id: str, command_prefix: str):
+    """Mark the latest undelivered web-sent slash command as delivered.
+
+    Used by hooks that confirm a slash command was executed (e.g., PreCompact
+    confirms /compact, SessionStart(source=clear) confirms /clear).
+    """
+    from database import SessionLocal
+    from models import Message, MessageRole
+    db = SessionLocal()
+    try:
+        msg = (
+            db.query(Message)
+            .filter(
+                Message.agent_id == agent_id,
+                Message.role == MessageRole.USER,
+                Message.source == "web",
+                Message.delivered_at.is_(None),
+                Message.content.startswith(command_prefix),
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        if msg:
+            now = _utcnow()
+            msg.delivered_at = now
+            db.commit()
+            from websocket import emit_message_delivered
+            import asyncio
+            asyncio.create_task(emit_message_delivered(
+                agent_id, msg.id, now.isoformat(),
+            ))
+            logger.info("Slash command %s marked executed for agent %s", command_prefix, agent_id[:8])
+    finally:
+        db.close()
+
+
 @app.post("/api/hooks/agent-user-prompt")
 async def hook_agent_user_prompt(request: Request):
     """Receive UserPromptSubmit hook — user typed something in the CLI.
 
     Wakes the sync loop immediately so the new JSONL content (user message)
     is imported without waiting for the next poll cycle.
+
+    Also marks the most recent undelivered web-sent user message as delivered,
+    since Claude has now received and is processing user input.
     """
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     if not agent_id:
@@ -3933,6 +3973,41 @@ async def hook_agent_user_prompt(request: Request):
     ad = getattr(app.state, "agent_dispatcher", None)
     if ad:
         ad.wake_sync(agent_id)
+
+    # Signal frontend that agent is now processing user input
+    from websocket import emit_tool_activity
+    asyncio.ensure_future(emit_tool_activity(
+        agent_id, "Thinking", "start",
+    ))
+
+    # Mark latest undelivered web-sent message as delivered
+    from database import SessionLocal
+    from models import Message, MessageRole
+    db = SessionLocal()
+    try:
+        msg = (
+            db.query(Message)
+            .filter(
+                Message.agent_id == agent_id,
+                Message.role == MessageRole.USER,
+                Message.source == "web",
+                Message.delivered_at.is_(None),
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        if msg:
+            now = _utcnow()
+            msg.delivered_at = now
+            db.commit()
+            from websocket import emit_message_delivered
+            import asyncio
+            asyncio.create_task(emit_message_delivered(
+                agent_id, msg.id, now.isoformat(),
+            ))
+            logger.info("Message %s marked delivered for agent %s", msg.id, agent_id[:8])
+    finally:
+        db.close()
 
     return {}
 
@@ -4053,6 +4128,7 @@ async def hook_agent_tool_activity(request: Request):
                         meta_json=_meta,
                         jsonl_uuid=body.get("tool_use_id", ""),
                         completed_at=_utcnow(),
+                        delivered_at=_utcnow(),
                     )
                     _db.add(_msg)
                     _db.commit()
@@ -4207,8 +4283,70 @@ async def hook_agent_tool_activity(request: Request):
         # Mark compact as starting so sync loop handles offset reset
         if ad and ad._sync_contexts.get(agent_id):
             ad._sync_contexts[agent_id].compact_notified = True
+        # Confirm /compact command execution
+        _mark_slash_command_delivered(agent_id, "/compact")
     else:
         return {}
+
+    # --- Persist tool activity to DB ---
+    if tool_name and phase:
+        try:
+            from database import SessionLocal as _SL2
+            from models import ToolActivity as _TA
+            _db2 = _SL2()
+            try:
+                # Get agent's current session_id for scoping
+                _ag2 = _db2.get(Agent, agent_id)
+                _sid = _ag2.session_id if _ag2 else agent_id
+
+                if phase in ("start", "permission"):
+                    _ta = _TA(
+                        agent_id=agent_id,
+                        session_id=_sid,
+                        tool_name=tool_name,
+                        kind=kind,
+                        summary=summary or "",
+                        started_at=_utcnow(),
+                    )
+                    _db2.add(_ta)
+                    _db2.commit()
+                elif phase == "end":
+                    # Update the most recent unfinished entry for this tool
+                    _existing = (
+                        _db2.query(_TA)
+                        .filter(
+                            _TA.agent_id == agent_id,
+                            _TA.session_id == _sid,
+                            _TA.tool_name == tool_name,
+                            _TA.ended_at.is_(None),
+                        )
+                        .order_by(_TA.started_at.desc())
+                        .first()
+                    )
+                    if _existing:
+                        _existing.ended_at = _utcnow()
+                        _existing.output_summary = output_summary or None
+                        _existing.is_error = is_error
+                        _db2.commit()
+                    else:
+                        # No matching start — insert a completed record
+                        _ta = _TA(
+                            agent_id=agent_id,
+                            session_id=_sid,
+                            tool_name=tool_name,
+                            kind=kind,
+                            summary=summary or "",
+                            output_summary=output_summary or None,
+                            is_error=is_error,
+                            started_at=_utcnow(),
+                            ended_at=_utcnow(),
+                        )
+                        _db2.add(_ta)
+                        _db2.commit()
+            finally:
+                _db2.close()
+        except Exception:
+            logger.debug("Failed to persist tool activity for %s", agent_id[:8], exc_info=True)
 
     # Wake the JSONL sync loop so new message content is picked up
     # immediately instead of waiting for the next poll cycle.
@@ -4395,13 +4533,46 @@ async def hook_agent_session_start(request: Request):
     if not session_id:
         return {}
 
+    source = ""
+    if isinstance(body, dict):
+        source = body.get("source", "") or ""
+
     if agent_id:
+        # Compact completion — event-driven, no polling needed
+        if source == "compact":
+            ad = getattr(app.state, "agent_dispatcher", None)
+            if ad:
+                ctx = ad._sync_contexts.get(agent_id)
+                if ctx:
+                    ctx.compact_notified = False
+                    # Trigger sync to pick up the compacted JSONL
+                    import asyncio
+                    asyncio.create_task(ad.trigger_sync(agent_id))
+                from websocket import emit_tool_activity
+                await emit_tool_activity(agent_id, "Compact", "end",
+                                         tool_output="context compacted")
+            logger.info("SessionStart hook: agent=%s compact complete, session=%s",
+                        agent_id[:8], session_id[:12])
+            # Still write the rotation signal — session_id changed
+            signal_path = f"/tmp/ahive-{agent_id}.newsession"
+            try:
+                with open(signal_path, "w") as f:
+                    f.write(session_id)
+            except OSError:
+                pass
+            return {}
+
+        # Confirm /clear command execution
+        if source == "clear":
+            _mark_slash_command_delivered(agent_id, "/clear")
+
         # Managed agent — session rotation signal
         signal_path = f"/tmp/ahive-{agent_id}.newsession"
         try:
             with open(signal_path, "w") as f:
                 f.write(session_id)
-            logger.info("SessionStart hook: agent=%s session=%s", agent_id[:8], session_id[:12])
+            logger.info("SessionStart hook: agent=%s session=%s (source=%s)",
+                        agent_id[:8], session_id[:12], source or "unknown")
         except OSError:
             pass
         return {}
@@ -5956,6 +6127,7 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
             role=MessageRole.SYSTEM,
             content="Agent stopped",
             status=MessageStatus.COMPLETED,
+            delivered_at=datetime.now(timezone.utc),
         ))
 
         # Cascade stop to child subagents
@@ -6219,6 +6391,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             role=MessageRole.SYSTEM,
             content="Agent resumed" + (" — syncing CLI session" if resumed_sync else ""),
             status=MessageStatus.COMPLETED,
+            delivered_at=_utcnow(),
         )
         db.add(msg)
         try:
@@ -6279,22 +6452,29 @@ async def get_agent_messages(
 ):
     """Get conversation messages for an agent with cursor pagination.
 
+    Sort order: delivered_at ASC (messages without delivered_at sink to bottom).
     - No cursor (initial load): newest `limit` messages, oldest-first.
-    - `before=<ISO datetime>`: messages older than cursor (scroll-up).
-    - `after=<ISO datetime>`: messages newer than cursor (incremental refresh).
+    - `before=<ISO datetime>`: messages with sort key < cursor (scroll-up).
+    - `after=<ISO datetime>`: messages with sort key > cursor (incremental refresh).
     Returns { messages: [...], has_more: bool }.
     """
+    from sqlalchemy import func, literal
+
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Sort key: delivered_at if set, otherwise far-future (undelivered → bottom)
+    _far_future = literal("9999-12-31T23:59:59")
+    sort_key = func.coalesce(Message.delivered_at, _far_future)
 
     query = db.query(Message).filter(Message.agent_id == agent_id)
 
     if before:
         cursor_dt = datetime.fromisoformat(before)
         rows = (
-            query.filter(Message.created_at < cursor_dt)
-            .order_by(Message.created_at.desc())
+            query.filter(sort_key < cursor_dt)
+            .order_by(sort_key.desc())
             .limit(limit + 1)
             .all()
         )
@@ -6303,15 +6483,15 @@ async def get_agent_messages(
     elif after:
         cursor_dt = datetime.fromisoformat(after)
         messages = (
-            query.filter(Message.created_at > cursor_dt)
-            .order_by(Message.created_at.asc())
+            query.filter(sort_key > cursor_dt)
+            .order_by(sort_key.asc())
             .all()
         )
         has_more = False  # always returns everything newer
     else:
         # Default: newest `limit` messages
         rows = (
-            query.order_by(Message.created_at.desc())
+            query.order_by(sort_key.desc())
             .limit(limit + 1)
             .all()
         )
@@ -6323,6 +6503,31 @@ async def get_agent_messages(
             db.commit()
 
     return PaginatedMessages(messages=messages, has_more=has_more)
+
+
+@app.get("/api/agents/{agent_id}/tool-activities")
+async def get_agent_tool_activities(agent_id: str, db: Session = Depends(get_db)):
+    """Get tool activities for the agent's current session.
+
+    Returns the tool log so the frontend can restore state on page reload.
+    """
+    from models import ToolActivity
+    from schemas import ToolActivityOut
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not agent.session_id:
+        return []
+    activities = (
+        db.query(ToolActivity)
+        .filter(
+            ToolActivity.agent_id == agent_id,
+            ToolActivity.session_id == agent.session_id,
+        )
+        .order_by(ToolActivity.started_at.asc())
+        .all()
+    )
+    return [ToolActivityOut.model_validate(a) for a in activities]
 
 
 @app.post("/api/agents/{agent_id}/messages", response_model=MessageOut, status_code=201)
@@ -6404,8 +6609,10 @@ async def send_agent_message(
                     source="web",
                 )
                 db.add(msg)
+            _now_tmux = _utcnow()
             msg.status = MessageStatus.COMPLETED
-            msg.completed_at = _utcnow()
+            msg.completed_at = _now_tmux
+            msg.delivered_at = _now_tmux
             db.commit()
             db.refresh(msg)
             ad = getattr(request.app.state, "agent_dispatcher", None)

@@ -156,7 +156,7 @@ async def test_send_message_with_scheduled_at(client, db_engine):
 # ===========================================================================
 
 def _seed_messages(db, agent_id, count=10):
-    """Insert `count` messages with incrementing timestamps, return list of created_at datetimes."""
+    """Insert `count` messages with incrementing timestamps, return list of delivered_at datetimes."""
     now = _utcnow()
     created_ats = []
     for i in range(count):
@@ -167,6 +167,7 @@ def _seed_messages(db, agent_id, count=10):
             content=f"Message number {i}",
             status=MessageStatus.COMPLETED,
             created_at=ts,
+            delivered_at=ts,
         ))
         created_ats.append(ts)
     db.commit()

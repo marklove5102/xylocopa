@@ -12,6 +12,7 @@
 PAYLOAD=$(cat)
 export SESSION_ID=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
 [ -z "$SESSION_ID" ] && exit 0
+export SESSION_SOURCE=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('source',''))" 2>/dev/null)
 
 PORT="${AHIVE_PORT:-8080}"
 AGENT_ID="${AHIVE_AGENT_ID:-}"
@@ -23,7 +24,7 @@ HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
   -H "X-Agent-Id: ${AGENT_ID}" \
   -H "X-Session-Cwd: ${PWD}" \
   -H "X-Tmux-Pane: ${TMUX_PANE:-}" \
-  -d "$(python3 -c "import json,os; print(json.dumps({'session_id': os.environ['SESSION_ID']}))" )" \
+  -d "$(python3 -c "import json,os; print(json.dumps({'session_id': os.environ['SESSION_ID'], 'source': os.environ.get('SESSION_SOURCE','')}))" )" \
   2>/dev/null)
 
 [ "$HTTP_CODE" = "200" ] && exit 0

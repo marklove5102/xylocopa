@@ -18,6 +18,7 @@ from models import (
     MessageRole,
     MessageStatus,
     Project,
+    ToolActivity,
 )
 from utils import utcnow as _utcnow
 
@@ -59,6 +60,29 @@ def _content_hash(content: str) -> str:
     """Fast hash of content for change detection."""
     import hashlib
     return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _end_compact_activity(db, agent_id: str, session_id: str):
+    """Mark the most recent unfinished Compact tool activity as ended in DB.
+
+    The sync engine detects compact completion and emits WS events, but
+    the DB record was never updated — causing stale in-progress entries
+    on page reload / loadData.
+    """
+    existing = (
+        db.query(ToolActivity)
+        .filter(
+            ToolActivity.agent_id == agent_id,
+            ToolActivity.session_id == session_id,
+            ToolActivity.tool_name == "Compact",
+            ToolActivity.ended_at.is_(None),
+        )
+        .order_by(ToolActivity.started_at.desc())
+        .first()
+    )
+    if existing:
+        existing.ended_at = _utcnow()
+        existing.output_summary = "context compacted"
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +187,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                                 break
                     if is_wrapped_dup:
                         continue
+                    _now = _utcnow()
                     db.add(Message(
                         agent_id=ctx.agent_id,
                         role=MessageRole.USER,
@@ -170,7 +195,8 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                         status=MessageStatus.COMPLETED,
                         source="cli",
                         jsonl_uuid=uuid,
-                        completed_at=_utcnow(),
+                        completed_at=_now,
+                        delivered_at=_now,
                     ))
                 elif role == "assistant":
                     updated = False
@@ -202,6 +228,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                             updated = True
                             break
                     if not updated:
+                        _now2 = _utcnow()
                         db.add(Message(
                             agent_id=ctx.agent_id,
                             role=MessageRole.AGENT,
@@ -210,7 +237,8 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                             source="cli",
                             meta_json=meta_json,
                             jsonl_uuid=uuid,
-                            completed_at=_utcnow(),
+                            completed_at=_now2,
+                            delivered_at=_now2,
                         ))
             agent.last_message_preview = (conv_turns[-1][1] or "")[:200]
             agent.last_message_at = _utcnow()
@@ -327,6 +355,8 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 db_compact, ctx.agent_id,
                 "Context compacted — conversation history refreshed",
             )
+            # Mark the compact tool activity as ended in DB
+            _end_compact_activity(db_compact, ctx.agent_id, ctx.session_id)
             db_compact.commit()
             ad._emit(emit_new_message(
                 ctx.agent_id, compact_msg.id, ctx.agent_name, ctx.agent_project,
@@ -501,6 +531,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                                 "(already sent via web)", ctx.agent_id,
                             )
                             continue
+                    _now = _utcnow()
                     msg = Message(
                         agent_id=ctx.agent_id,
                         role=MessageRole.USER,
@@ -508,9 +539,11 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         status=MessageStatus.COMPLETED,
                         source="cli",
                         jsonl_uuid=jsonl_uuid,
-                        completed_at=_utcnow(),
+                        completed_at=_now,
+                        delivered_at=_now,
                     )
                 elif role == "assistant":
+                    _now = _utcnow()
                     msg = Message(
                         agent_id=ctx.agent_id,
                         role=MessageRole.AGENT,
@@ -519,9 +552,11 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         source="cli",
                         meta_json=meta_json,
                         jsonl_uuid=jsonl_uuid,
-                        completed_at=_utcnow(),
+                        completed_at=_now,
+                        delivered_at=_now,
                     )
                 elif role == "system":
+                    _now = _utcnow()
                     msg = Message(
                         agent_id=ctx.agent_id,
                         role=MessageRole.SYSTEM,
@@ -529,7 +564,8 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         status=MessageStatus.COMPLETED,
                         source="cli",
                         jsonl_uuid=jsonl_uuid,
-                        completed_at=_utcnow(),
+                        completed_at=_now,
+                        delivered_at=_now,
                     )
                 else:
                     continue
@@ -609,6 +645,8 @@ async def sync_handle_compact(ad, ctx: SyncContext):
             db_compact, ctx.agent_id,
             "Context compacted — conversation history refreshed",
         )
+        # Mark the compact tool activity as ended in DB
+        _end_compact_activity(db_compact, ctx.agent_id, ctx.session_id)
         db_compact.commit()
         ad._emit(emit_new_message(
             ctx.agent_id, compact_msg.id, ctx.agent_name, ctx.agent_project,

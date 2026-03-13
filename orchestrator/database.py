@@ -419,6 +419,25 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Add delivered_at column to messages if missing ---
+        if "delivered_at" not in msg_cols:
+            conn.execute(text(
+                "ALTER TABLE messages ADD COLUMN delivered_at DATETIME"
+            ))
+            conn.commit()
+
+        # --- Backfill delivered_at for existing non-PENDING messages ---
+        _undelivered = conn.execute(text(
+            "SELECT COUNT(*) FROM messages "
+            "WHERE delivered_at IS NULL AND status != 'PENDING'"
+        )).scalar()
+        if _undelivered:
+            conn.execute(text(
+                "UPDATE messages SET delivered_at = created_at "
+                "WHERE delivered_at IS NULL AND status != 'PENDING'"
+            ))
+            conn.commit()
+
         # --- progress_insights compound index for existing DBs ---
         if "progress_insights" in [r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"

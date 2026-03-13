@@ -195,6 +195,16 @@ async def emit_new_message(agent_id: str, message_id: str,
     })
 
 
+async def emit_message_delivered(agent_id: str, message_id: str,
+                                 delivered_at: str):
+    """Notify clients that a web-sent message was delivered to Claude."""
+    await ws_manager.broadcast("message_delivered", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+        "delivered_at": delivered_at,
+    })
+
+
 async def emit_message_update(agent_id: str, message_id: str, status: str,
                               error_message: str | None = None):
     """Notify clients that a message's status changed (e.g. PENDING→EXECUTING)."""
