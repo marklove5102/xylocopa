@@ -1,0 +1,852 @@
+"""Sync engine — extracted sync logic for JSONL-to-DB reconciliation.
+
+All functions are standalone async functions that take (ad, ctx) as first args,
+where `ad` is an AgentDispatcher instance and `ctx` is a SyncContext dataclass.
+"""
+
+import asyncio
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+
+from database import SessionLocal
+from models import (
+    Agent,
+    AgentStatus,
+    Message,
+    MessageRole,
+    MessageStatus,
+    Project,
+)
+from utils import utcnow as _utcnow
+
+logger = logging.getLogger("orchestrator.sync_engine")
+
+
+# ---------------------------------------------------------------------------
+# SyncContext dataclass — holds all per-agent sync state
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SyncContext:
+    agent_id: str
+    session_id: str
+    project_path: str
+    worktree: str | None = None
+    agent_name: str = ""
+    agent_project: str = ""
+    jsonl_path: str = ""
+
+    # Incremental read state
+    last_offset: int = 0          # byte position for seek-based reads
+    last_turn_count: int = 0
+    last_tail_hash: str = ""
+    last_streamed_hash: str = ""
+    incremental_turns: list = field(default_factory=list)
+
+    # Agent state
+    is_generating: bool = False
+    sync_gen_id: int | None = None
+    compact_notified: bool = False
+    idle_polls: int = 0
+    getsize_error_count: int = 0
+
+    # Concurrency
+    sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    wake_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _content_hash(content: str) -> str:
+    """Fast hash of content for change detection."""
+    import hashlib
+    return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# 1. sync_reconcile_initial — full-scan comparison on loop start
+# ---------------------------------------------------------------------------
+
+async def sync_reconcile_initial(ad, ctx: SyncContext):
+    """Reconcile JSONL turns with DB messages on sync loop start.
+
+    Reads all turns, compares with DB, inserts any missing turns.
+    """
+    from agent_dispatcher import (
+        _is_wrapped_prompt,
+        _dedup_sig,
+        _merge_interactive_meta,
+        _update_stale_interactive_metadata,
+    )
+    from websocket import emit_new_message
+
+    initial_turns = list(ctx.incremental_turns)
+
+    conv_turns = [
+        t for t in initial_turns
+        if t[0] in ("user", "assistant")
+        and not (t[0] == "user" and _is_wrapped_prompt(t[1]))
+    ]
+
+    db = SessionLocal()
+    try:
+        if not conv_turns:
+            # Still check stale interactive metadata even with no turns
+            if _update_stale_interactive_metadata(db, ctx.agent_id, initial_turns):
+                ad._emit(emit_new_message(
+                    ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
+                ))
+                logger.debug(
+                    "Updated stale interactive metadata for agent %s "
+                    "(initial reconciliation)", ctx.agent_id,
+                )
+            return
+
+        agent = db.get(Agent, ctx.agent_id)
+
+        # Get ALL user/agent DB messages for dedup
+        all_db = db.query(Message).filter(
+            Message.agent_id == ctx.agent_id,
+            Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
+        ).all()
+
+        # Primary: UUID-based dedup via jsonl_uuid
+        db_uuids: set[str] = {
+            m.jsonl_uuid for m in all_db if m.jsonl_uuid
+        }
+
+        # Secondary: content multiset for backward compat
+        db_sig_counts: dict[tuple[str, str], int] = {}
+        for m in all_db:
+            role_char = "u" if m.role == MessageRole.USER else "a"
+            sig = (role_char, _dedup_sig(m.content))
+            db_sig_counts[sig] = db_sig_counts.get(sig, 0) + 1
+
+        # Walk through JSONL turns and collect missing ones
+        missing: list[tuple[str, str, dict | None, str | None]] = []
+        for r, c, mt, uuid in conv_turns:
+            # Primary: UUID-based dedup
+            if uuid and uuid in db_uuids:
+                continue
+            # Secondary: content-based fallback (backward compat)
+            role_char = "u" if r == "user" else "a"
+            content_sig = _dedup_sig(c)
+            sig = (role_char, content_sig)
+            if db_sig_counts.get(sig, 0) > 0:
+                db_sig_counts[sig] -= 1
+                continue
+            # Check opposite role (e.g. task-notification fixed
+            # from USER->AGENT)
+            alt = ("a" if role_char == "u" else "u", content_sig)
+            if db_sig_counts.get(alt, 0) > 0:
+                db_sig_counts[alt] -= 1
+                continue
+            missing.append((r, c, mt, uuid))
+
+        if missing and agent:
+            _existing_agent_msgs = [
+                m for m in all_db
+                if m.role == MessageRole.AGENT
+            ]
+            _existing_user_msgs = [
+                m for m in all_db
+                if m.role == MessageRole.USER
+            ]
+            for role, content, meta, uuid in missing:
+                meta_json = json.dumps(meta) if meta else None
+                if role == "user":
+                    is_wrapped_dup = False
+                    for em in _existing_user_msgs:
+                        if em.source in ("task", "web") and em.content:
+                            if em.content[:100] in (content or ""):
+                                is_wrapped_dup = True
+                                if uuid and not em.jsonl_uuid:
+                                    em.jsonl_uuid = uuid
+                                break
+                    if is_wrapped_dup:
+                        continue
+                    db.add(Message(
+                        agent_id=ctx.agent_id,
+                        role=MessageRole.USER,
+                        content=content,
+                        status=MessageStatus.COMPLETED,
+                        source="cli",
+                        jsonl_uuid=uuid,
+                        completed_at=_utcnow(),
+                    ))
+                elif role == "assistant":
+                    updated = False
+                    for existing in _existing_agent_msgs:
+                        if uuid and existing.jsonl_uuid == uuid:
+                            if len(existing.content) < len(content):
+                                existing.content = content
+                                existing.completed_at = _utcnow()
+                                if meta is not None:
+                                    existing.meta_json = _merge_interactive_meta(
+                                        existing.meta_json, meta,
+                                    )
+                            updated = True
+                            break
+                        if (
+                            len(existing.content) < len(content)
+                            and content.startswith(
+                                existing.content[:200]
+                            )
+                        ):
+                            existing.content = content
+                            existing.completed_at = _utcnow()
+                            if uuid and not existing.jsonl_uuid:
+                                existing.jsonl_uuid = uuid
+                            if meta is not None:
+                                existing.meta_json = _merge_interactive_meta(
+                                    existing.meta_json, meta,
+                                )
+                            updated = True
+                            break
+                    if not updated:
+                        db.add(Message(
+                            agent_id=ctx.agent_id,
+                            role=MessageRole.AGENT,
+                            content=content,
+                            status=MessageStatus.COMPLETED,
+                            source="cli",
+                            meta_json=meta_json,
+                            jsonl_uuid=uuid,
+                            completed_at=_utcnow(),
+                        ))
+            agent.last_message_preview = (conv_turns[-1][1] or "")[:200]
+            agent.last_message_at = _utcnow()
+            db.commit()
+            if any(r != "user" for r, _, *_ in missing):
+                ad._emit(emit_new_message(
+                    ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
+                ))
+            logger.info(
+                "Reconciled %d missing turns for agent %s",
+                len(missing), ctx.agent_id,
+            )
+        elif agent:
+            # No missing turns — but update last agent msg if it grew
+            last_agent_msg = db.query(Message).filter(
+                Message.agent_id == ctx.agent_id,
+                Message.role == MessageRole.AGENT,
+            ).order_by(Message.created_at.desc()).first()
+            last_assistant = None
+            last_assistant_meta = None
+            last_assistant_uuid = None
+            for role, content, meta, uuid in reversed(conv_turns):
+                if role == "assistant":
+                    last_assistant = content
+                    last_assistant_meta = meta
+                    last_assistant_uuid = uuid
+                    break
+            _should_update = False
+            if last_agent_msg and last_assistant:
+                if (last_assistant_uuid and last_agent_msg.jsonl_uuid
+                        and last_assistant_uuid == last_agent_msg.jsonl_uuid):
+                    _should_update = len(last_agent_msg.content) < len(last_assistant)
+                elif (
+                    len(last_agent_msg.content) < len(last_assistant)
+                    and last_assistant.startswith(
+                        last_agent_msg.content[:200]
+                    )
+                ):
+                    _should_update = True
+            if _should_update:
+                last_agent_msg.content = last_assistant
+                last_agent_msg.completed_at = _utcnow()
+                if last_assistant_uuid and not last_agent_msg.jsonl_uuid:
+                    last_agent_msg.jsonl_uuid = last_assistant_uuid
+                if last_assistant_meta is not None:
+                    last_agent_msg.meta_json = _merge_interactive_meta(
+                        last_agent_msg.meta_json, last_assistant_meta,
+                    )
+                db.commit()
+                ad._emit(emit_new_message(
+                    ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
+                ))
+
+        # Update stale interactive metadata
+        if _update_stale_interactive_metadata(db, ctx.agent_id, initial_turns):
+            ad._emit(emit_new_message(
+                ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
+            ))
+            logger.debug(
+                "Updated stale interactive metadata for agent %s "
+                "(initial reconciliation)", ctx.agent_id,
+            )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# 2. sync_import_new_turns — incremental sync (file grew)
+# ---------------------------------------------------------------------------
+
+async def sync_import_new_turns(ad, ctx: SyncContext):
+    """Read JSONL incrementally, parse new turns, import to DB.
+
+    Returns one of: "new_turns", "turn_updated", "streaming", "no_change"
+    """
+    from agent_dispatcher import (
+        _read_jsonl_incremental,
+        _parse_incremental_lines,
+        _parse_session_turns,
+        _is_wrapped_prompt,
+        _dedup_sig,
+        _merge_interactive_meta,
+        _update_stale_interactive_metadata,
+        _extract_last_tool_from_content,
+    )
+    from websocket import (
+        emit_agent_stream,
+        emit_agent_update,
+        emit_new_message,
+        emit_tool_activity,
+    )
+    from thumbnails import generate_thumbnails_for_message
+
+    # Incremental read: seek to last_offset, read only new bytes
+    _inc_lines, _new_offset, _leftover = _read_jsonl_incremental(
+        ctx.jsonl_path, ctx.last_offset,
+    )
+    if _inc_lines:
+        turns = _parse_incremental_lines(_inc_lines, ctx.incremental_turns)
+    else:
+        turns = list(ctx.incremental_turns)
+    ctx.last_offset = _new_offset
+
+    # Detect turn count decrease (compact may produce a larger
+    # file but with fewer turns if the summary is long)
+    if len(turns) < ctx.last_turn_count:
+        logger.info(
+            "Turn count decreased for agent %s (%d -> %d, "
+            "likely /compact), resetting offset + full re-parse",
+            ctx.agent_id, ctx.last_turn_count, len(turns),
+        )
+        turns = _parse_session_turns(ctx.jsonl_path)
+        ctx.incremental_turns = list(turns)
+        ctx.last_turn_count = len(turns)
+        try:
+            ctx.last_offset = os.path.getsize(ctx.jsonl_path)
+        except OSError:
+            pass
+        _t = turns[-1] if turns else ("", "", None)
+        _meta_sig = str(_t[2]) if len(_t) > 2 and _t[2] else ""
+        ctx.last_tail_hash = f"{_content_hash(_t[1])}:{_meta_sig}" if turns else ""
+        ctx.last_streamed_hash = ""
+        # Drain accumulated tool_log to the last assistant message
+        _tlog = ad.drain_tool_log(ctx.agent_id)
+        if _tlog:
+            db_tlog = SessionLocal()
+            try:
+                last_asst = db_tlog.query(Message).filter(
+                    Message.agent_id == ctx.agent_id,
+                    Message.role == "AGENT",
+                ).order_by(Message.created_at.desc()).first()
+                if last_asst:
+                    _meta = json.loads(last_asst.meta_json) if last_asst.meta_json else {}
+                    existing = _meta.get("tool_log", [])
+                    _meta["tool_log"] = existing + _tlog
+                    last_asst.meta_json = json.dumps(_meta)
+                    db_tlog.commit()
+            finally:
+                db_tlog.close()
+        # Notify UI about the compact
+        db_compact = SessionLocal()
+        try:
+            compact_msg = ad._add_system_message(
+                db_compact, ctx.agent_id,
+                "Context compacted — conversation history refreshed",
+            )
+            db_compact.commit()
+            ad._emit(emit_new_message(
+                ctx.agent_id, compact_msg.id, ctx.agent_name, ctx.agent_project,
+            ))
+            ad._emit(emit_tool_activity(
+                ctx.agent_id, "Compact", "end",
+                tool_output="context compacted",
+            ))
+            ctx.compact_notified = False
+        finally:
+            db_compact.close()
+        return "compact_turn_decrease"
+
+    # Update incremental state
+    ctx.incremental_turns = list(turns)
+
+    new_turns = turns[ctx.last_turn_count:]
+
+    # Check if the last existing turn's content grew
+    _tail_turn = turns[-1] if turns else ("", "", None)
+    _tail_meta_sig = str(_tail_turn[2]) if len(_tail_turn) > 2 and _tail_turn[2] else ""
+    tail_hash = f"{_content_hash(_tail_turn[1])}:{_tail_meta_sig}" if turns else ""
+    last_turn_updated = (
+        not new_turns
+        and len(turns) == ctx.last_turn_count
+        and tail_hash != ctx.last_tail_hash
+        and turns
+        and turns[-1][0] == "assistant"
+    )
+
+    if not new_turns and not last_turn_updated:
+        # File grew but turns didn't change — mid-generation streaming
+        partial = ""
+        if turns and turns[-1][0] == "assistant":
+            partial = turns[-1][1]
+        p_hash = _content_hash(partial) if partial else ""
+        if p_hash != ctx.last_streamed_hash:
+            ctx.last_streamed_hash = p_hash
+            if not ctx.is_generating:
+                ctx.is_generating = True
+                ctx.sync_gen_id = ad._start_generating(ctx.agent_id)
+            _sync_active_tool = _extract_last_tool_from_content(partial) if partial else None
+            ad._emit(emit_agent_stream(ctx.agent_id, partial, generation_id=ctx.sync_gen_id, active_tool=_sync_active_tool))
+        # Stop hook fired but turns already imported — increment unread now
+        if ctx.agent_id in ad._pending_notify:
+            ad._pending_notify.discard(ctx.agent_id)
+            db_pn = SessionLocal()
+            try:
+                _ag = db_pn.get(Agent, ctx.agent_id)
+                if _ag and not ad._is_agent_in_use(_ag.id, _ag.tmux_pane):
+                    _ag.unread_count += 1
+                    _ag.last_message_preview = (partial or _ag.last_message_preview or "")[:200]
+                    ad._maybe_notify_message(_ag)
+                    db_pn.commit()
+            finally:
+                db_pn.close()
+        return "streaming"
+
+    db = SessionLocal()
+    try:
+        agent = db.get(Agent, ctx.agent_id)
+        if not agent or agent.status != AgentStatus.SYNCING:
+            logger.info(
+                "Sync loop exiting for agent %s (status changed to %s during turn import)",
+                ctx.agent_id, agent.status if agent else "DELETED",
+            )
+            return "exit"
+
+        if last_turn_updated:
+            # Update the last agent message in-place
+            last_msg = db.query(Message).filter(
+                Message.agent_id == ctx.agent_id,
+                Message.role == MessageRole.AGENT,
+            ).order_by(Message.created_at.desc()).first()
+            if last_msg:
+                _last_role, _last_content, *_last_rest = turns[-1]
+                _last_meta = _last_rest[0] if _last_rest else None
+                last_msg.content = _last_content
+                last_msg.completed_at = _utcnow()
+                if _last_meta is not None:
+                    last_msg.meta_json = _merge_interactive_meta(
+                        last_msg.meta_json, _last_meta,
+                    )
+                agent.last_message_preview = (_last_content or "")[:200]
+                agent.last_message_at = _utcnow()
+                # Stop hook fired while last turn was growing
+                if ctx.agent_id in ad._pending_notify:
+                    ad._pending_notify.discard(ctx.agent_id)
+                    if not ad._is_agent_in_use(agent.id, agent.tmux_pane):
+                        agent.unread_count += 1
+                        ad._maybe_notify_message(agent)
+                db.commit()
+                _sync_active_tool = _extract_last_tool_from_content(_last_content) if _last_content else None
+                ad._emit(emit_agent_stream(
+                    ctx.agent_id, _last_content, generation_id=ctx.sync_gen_id,
+                    active_tool=_sync_active_tool,
+                ))
+                ad._emit(emit_new_message(agent.id, "sync", ctx.agent_name, ctx.agent_project))
+                ctx.last_tail_hash = tail_hash
+                ctx.last_streamed_hash = _content_hash(_last_content) if _last_content else ""
+                if not ctx.is_generating:
+                    ctx.is_generating = True
+                    ctx.sync_gen_id = ad._start_generating(ctx.agent_id)
+                logger.info(
+                    "Updated last turn content for agent %s (%s chars)",
+                    ctx.agent_id, len(_last_content),
+                )
+            return "turn_updated"
+        else:
+            # Before importing new turns, check if the turn just
+            # before the new ones grew
+            if ctx.last_turn_count > 0 and new_turns:
+                prev_role, prev_content, *prev_rest = turns[ctx.last_turn_count - 1]
+                prev_meta = prev_rest[0] if prev_rest else None
+                prev_uuid = prev_rest[1] if len(prev_rest) > 1 else None
+                if prev_role == "assistant":
+                    last_agent_msg = db.query(Message).filter(
+                        Message.agent_id == ctx.agent_id,
+                        Message.role == MessageRole.AGENT,
+                    ).order_by(Message.created_at.desc()).first()
+                    _is_match = False
+                    if last_agent_msg:
+                        if (prev_uuid and last_agent_msg.jsonl_uuid
+                                and prev_uuid == last_agent_msg.jsonl_uuid):
+                            _is_match = True
+                        elif len(last_agent_msg.content) < len(prev_content):
+                            _is_match = True
+                    if _is_match and len(last_agent_msg.content) < len(prev_content):
+                        old_len = len(last_agent_msg.content)
+                        last_agent_msg.content = prev_content
+                        last_agent_msg.completed_at = _utcnow()
+                        if prev_uuid and not last_agent_msg.jsonl_uuid:
+                            last_agent_msg.jsonl_uuid = prev_uuid
+                        if prev_meta is not None:
+                            last_agent_msg.meta_json = _merge_interactive_meta(
+                                last_agent_msg.meta_json, prev_meta,
+                            )
+                        logger.info(
+                            "Updated previous turn content for agent %s "
+                            "(%d -> %d chars)",
+                            ctx.agent_id, old_len, len(prev_content),
+                        )
+
+            # Import new turns
+            for role, content, *rest in new_turns:
+                meta = rest[0] if rest else None
+                jsonl_uuid = rest[1] if len(rest) > 1 else None
+                meta_json = json.dumps(meta) if meta else None
+                if role == "user":
+                    if _is_wrapped_prompt(content):
+                        if jsonl_uuid:
+                            from sqlalchemy import or_ as _or
+                            _web_msg = db.query(Message).filter(
+                                Message.agent_id == ctx.agent_id,
+                                Message.role == MessageRole.USER,
+                                _or(
+                                    Message.source == "web",
+                                    Message.source == "plan_continue",
+                                ),
+                                Message.jsonl_uuid.is_(None),
+                            ).order_by(Message.created_at.desc()).first()
+                            if _web_msg:
+                                _web_msg.jsonl_uuid = jsonl_uuid
+                        continue
+                    # Primary: UUID-based dedup
+                    if jsonl_uuid:
+                        existing_uuid = db.query(Message.id).filter(
+                            Message.agent_id == ctx.agent_id,
+                            Message.jsonl_uuid == jsonl_uuid,
+                        ).first()
+                        if existing_uuid:
+                            continue
+                    # Secondary: content dedup against unlinked web/plan_continue
+                    from sqlalchemy import or_
+                    _norm = _dedup_sig(content)
+                    _unlinked = db.query(Message).filter(
+                        Message.agent_id == ctx.agent_id,
+                        Message.role == MessageRole.USER,
+                        or_(
+                            Message.source == "web",
+                            Message.source == "plan_continue",
+                        ),
+                        Message.jsonl_uuid.is_(None),
+                    ).all()
+                    _match = next(
+                        (m for m in _unlinked
+                         if _dedup_sig(m.content) == _norm),
+                        None,
+                    )
+                    if _match:
+                        if jsonl_uuid:
+                            _match.jsonl_uuid = jsonl_uuid
+                        logger.debug(
+                            "Skipping duplicate user turn for agent %s "
+                            "(matches unlinked web/plan_continue msg %s)",
+                            ctx.agent_id, _match.id,
+                        )
+                        continue
+                    # Tertiary: broader content fallback
+                    if not jsonl_uuid:
+                        _candidates = db.query(Message).filter(
+                            Message.agent_id == ctx.agent_id,
+                            Message.role == MessageRole.USER,
+                            or_(Message.source != "cli", Message.source.is_(None)),
+                        ).all()
+                        if any(
+                            _dedup_sig(m.content) == _norm
+                            for m in _candidates
+                        ):
+                            logger.debug(
+                                "Skipping duplicate user turn for agent %s "
+                                "(already sent via web)", ctx.agent_id,
+                            )
+                            continue
+                    msg = Message(
+                        agent_id=ctx.agent_id,
+                        role=MessageRole.USER,
+                        content=content,
+                        status=MessageStatus.COMPLETED,
+                        source="cli",
+                        jsonl_uuid=jsonl_uuid,
+                        completed_at=_utcnow(),
+                    )
+                elif role == "assistant":
+                    _tlog = ad.drain_tool_log(ctx.agent_id)
+                    if _tlog:
+                        _meta = json.loads(meta_json) if meta_json else {}
+                        _meta["tool_log"] = _tlog
+                        meta_json = json.dumps(_meta)
+                    msg = Message(
+                        agent_id=ctx.agent_id,
+                        role=MessageRole.AGENT,
+                        content=content,
+                        status=MessageStatus.COMPLETED,
+                        source="cli",
+                        meta_json=meta_json,
+                        jsonl_uuid=jsonl_uuid,
+                        completed_at=_utcnow(),
+                    )
+                elif role == "system":
+                    msg = Message(
+                        agent_id=ctx.agent_id,
+                        role=MessageRole.SYSTEM,
+                        content=content,
+                        status=MessageStatus.COMPLETED,
+                        source="cli",
+                        jsonl_uuid=jsonl_uuid,
+                        completed_at=_utcnow(),
+                    )
+                else:
+                    continue
+                db.add(msg)
+
+            agent.last_message_preview = (new_turns[-1][1] or "")[:200]
+            agent.last_message_at = _utcnow()
+            if ctx.agent_id in ad._pending_notify:
+                ad._pending_notify.discard(ctx.agent_id)
+                if not ad._is_agent_in_use(agent.id, agent.tmux_pane):
+                    _non_user = sum(1 for r, *_ in new_turns if r != "user")
+                    if _non_user > 0:
+                        agent.unread_count += _non_user
+                        ad._maybe_notify_message(agent)
+            db.commit()
+
+            ctx.last_turn_count = len(turns)
+            ctx.last_tail_hash = tail_hash
+            _last_assistant = ""
+            for _r, _c, *_ in reversed(new_turns):
+                if _r == "assistant":
+                    _last_assistant = _c
+                    break
+            ctx.last_streamed_hash = _content_hash(_last_assistant) if _last_assistant else ""
+            if ctx.is_generating:
+                ctx.is_generating = False
+                ad._stop_generating(ctx.agent_id)
+                ctx.sync_gen_id = None
+            ad._emit(emit_agent_update(
+                agent.id, agent.status.value, agent.project
+            ))
+            _new_roles = [r for r, *_ in new_turns]
+            logger.info(
+                "Synced %d new turns for agent %s (roles=%s)",
+                len(new_turns), ctx.agent_id, _new_roles,
+            )
+            if any(r != "user" for r, *_ in new_turns):
+                ad._emit(emit_new_message(agent.id, "sync", ctx.agent_name, ctx.agent_project))
+
+            # Generate video thumbnails for new assistant turns
+            for _r, _c, *_ in new_turns:
+                if _r == "assistant" and _c:
+                    asyncio.ensure_future(asyncio.to_thread(
+                        generate_thumbnails_for_message, _c, ctx.project_path,
+                    ))
+
+        # Update stale interactive metadata on EARLIER messages
+        if _update_stale_interactive_metadata(db, ctx.agent_id, turns):
+            ad._emit(emit_new_message(
+                ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
+            ))
+            logger.debug(
+                "Updated stale interactive metadata for agent %s",
+                ctx.agent_id,
+            )
+    finally:
+        db.close()
+
+    return "new_turns"
+
+
+# ---------------------------------------------------------------------------
+# 3. sync_handle_compact — file shrink detection
+# ---------------------------------------------------------------------------
+
+async def sync_handle_compact(ad, ctx: SyncContext):
+    """Handle JSONL rewrite (e.g. /compact shrinks the file).
+
+    Full re-parse, drain tool_log, emit compact notification.
+    """
+    from agent_dispatcher import _parse_session_turns
+    from websocket import emit_new_message, emit_tool_activity
+
+    logger.info(
+        "Session file shrank for agent %s (%d -> ? bytes, "
+        "likely /compact), resetting offset + full re-parse",
+        ctx.agent_id, ctx.last_offset,
+    )
+    turns = _parse_session_turns(ctx.jsonl_path)
+    ctx.incremental_turns = list(turns)
+    ctx.last_turn_count = len(turns)
+    _t = turns[-1] if turns else ("", "", None)
+    _meta_sig = str(_t[2]) if len(_t) > 2 and _t[2] else ""
+    ctx.last_tail_hash = f"{_content_hash(_t[1])}:{_meta_sig}" if turns else ""
+    try:
+        ctx.last_offset = os.path.getsize(ctx.jsonl_path)
+    except OSError:
+        ctx.last_offset = 0
+    ctx.idle_polls = 0
+    # Drain accumulated tool_log to the last assistant message
+    _tlog = ad.drain_tool_log(ctx.agent_id)
+    if _tlog:
+        db_tlog = SessionLocal()
+        try:
+            last_asst = db_tlog.query(Message).filter(
+                Message.agent_id == ctx.agent_id,
+                Message.role == "AGENT",
+            ).order_by(Message.created_at.desc()).first()
+            if last_asst:
+                _meta = json.loads(last_asst.meta_json) if last_asst.meta_json else {}
+                existing = _meta.get("tool_log", [])
+                _meta["tool_log"] = existing + _tlog
+                last_asst.meta_json = json.dumps(_meta)
+                db_tlog.commit()
+        finally:
+            db_tlog.close()
+    # Notify UI about the compact
+    db_compact = SessionLocal()
+    try:
+        compact_msg = ad._add_system_message(
+            db_compact, ctx.agent_id,
+            "Context compacted — conversation history refreshed",
+        )
+        db_compact.commit()
+        ad._emit(emit_new_message(
+            ctx.agent_id, compact_msg.id, ctx.agent_name, ctx.agent_project,
+        ))
+        ad._emit(emit_tool_activity(
+            ctx.agent_id, "Compact", "end",
+            tool_output="context compacted",
+        ))
+        ctx.compact_notified = False
+    finally:
+        db_compact.close()
+
+
+# ---------------------------------------------------------------------------
+# 4. sync_check_streaming — idle poll streaming preview
+# ---------------------------------------------------------------------------
+
+async def sync_check_streaming(ad, ctx: SyncContext):
+    """Check for partial content growth during idle polls and emit agent_stream.
+
+    Also handles generating timeout and compact detection.
+    """
+    from agent_dispatcher import (
+        _build_tmux_claude_map,
+        _extract_last_tool_from_content,
+        verify_tmux_pane,
+    )
+    from websocket import (
+        emit_agent_stream,
+        emit_agent_update,
+        emit_tool_activity,
+    )
+
+    _GENERATING_IDLE_THRESHOLD = 2
+
+    # File stopped growing — clear generating state after threshold
+    if ctx.is_generating and ctx.idle_polls >= _GENERATING_IDLE_THRESHOLD:
+        ctx.is_generating = False
+        ad._stop_generating(ctx.agent_id)
+        ctx.sync_gen_id = None
+
+    # Detect likely in-progress compaction
+    if not ctx.compact_notified and ctx.idle_polls == _GENERATING_IDLE_THRESHOLD:
+        has_pending_tools = bool(ad._tool_logs.get(ctx.agent_id))
+        if has_pending_tools:
+            _pane_id = None
+            db_cp = SessionLocal()
+            try:
+                _ag = db_cp.get(Agent, ctx.agent_id)
+                if _ag:
+                    _pane_id = _ag.tmux_pane
+            finally:
+                db_cp.close()
+            if _pane_id and verify_tmux_pane(_pane_id):
+                ctx.compact_notified = True
+                ad._emit(emit_tool_activity(
+                    ctx.agent_id, "Compact", "start",
+                    tool_input={"description": "Compacting context"},
+                ))
+
+    # Stop hook fired but JSONL hasn't changed
+    if ctx.agent_id in ad._pending_notify:
+        ad._pending_notify.discard(ctx.agent_id)
+        db_pn = SessionLocal()
+        try:
+            _ag = db_pn.get(Agent, ctx.agent_id)
+            if _ag and not ad._is_agent_in_use(_ag.id, _ag.tmux_pane):
+                _ag.unread_count += 1
+                ad._maybe_notify_message(_ag)
+                db_pn.commit()
+        finally:
+            db_pn.close()
+
+
+# ---------------------------------------------------------------------------
+# 5. trigger_sync — public entry point for hooks
+# ---------------------------------------------------------------------------
+
+async def trigger_sync(ad, agent_id: str, *, is_stop: bool = False):
+    """Public entry point for hooks to trigger an immediate sync.
+
+    Args:
+        ad: AgentDispatcher instance
+        agent_id: The agent to sync
+        is_stop: If True, handle post-stop logic (unread count, notifications)
+    """
+    ctx = ad._sync_contexts.get(agent_id)
+    if not ctx:
+        return
+    async with ctx.sync_lock:
+        # Check for compact (file shrink)
+        try:
+            current_size = os.path.getsize(ctx.jsonl_path)
+        except OSError:
+            return
+        if current_size < ctx.last_offset:
+            await sync_handle_compact(ad, ctx)
+            return
+        # Import new turns
+        result = await sync_import_new_turns(ad, ctx)
+        if is_stop:
+            await _handle_stop(ad, ctx)
+
+
+# ---------------------------------------------------------------------------
+# 6. _handle_stop — post-stop logic
+# ---------------------------------------------------------------------------
+
+async def _handle_stop(ad, ctx: SyncContext):
+    """Handle post-stop logic: clear generating, unread count, notifications."""
+    # Clear generating state
+    if ctx.is_generating:
+        ctx.is_generating = False
+        ad._stop_generating(ctx.agent_id)
+        ctx.sync_gen_id = None
+
+    # Increment unread_count if agent not in use
+    db = SessionLocal()
+    try:
+        agent = db.get(Agent, ctx.agent_id)
+        if agent and not ad._is_agent_in_use(agent.id, agent.tmux_pane):
+            agent.unread_count += 1
+            ad._maybe_notify_message(agent)
+            db.commit()
+    finally:
+        db.close()
