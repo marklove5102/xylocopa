@@ -224,6 +224,14 @@ export const answerAgent = (agentId, payload) =>
   });
 export const escapeAgent = (agentId) =>
   request(`/api/agents/${agentId}/escape`, { method: "POST" });
+// --- Tool Permission Approval ---
+export const respondPermission = (agentId, requestId, payload) =>
+  request(`/api/agents/${agentId}/permission/${requestId}/respond`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+export const fetchPendingPermissions = (agentId) =>
+  request(`/api/agents/${agentId}/permissions/pending`);
 
 // --- Message search ---
 export const searchMessages = (query, { project, role, limit } = {}) => {

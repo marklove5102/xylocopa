@@ -19,6 +19,8 @@ import {
   escapeAgent,
   uploadFile,
   fetchProjectFile,
+  respondPermission,
+  fetchPendingPermissions,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
@@ -1169,6 +1171,89 @@ function ToolActivityLog({ toolLog, activeTool, toolStartTime }) {
 }
 
 
+// --- Permission Approval Card (inline in tool activity log area) ---
+
+function PermissionCard({ request, agentId, onResolved }) {
+  const [loading, setLoading] = useState(null); // "allow" | "deny" | "allow_always"
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const t0 = request.created_at * 1000;
+    setElapsed(Math.floor((Date.now() - t0) / 1000));
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - t0) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [request.created_at]);
+
+  const handle = async (decision) => {
+    setLoading(decision);
+    try {
+      await respondPermission(agentId, request.request_id, {
+        decision,
+        tool_name: request.tool_name,
+      });
+      onResolved(request.request_id, decision);
+    } catch {
+      setLoading(null);
+    }
+  };
+
+  const toolLabel = request.tool_name;
+  const summary = request.summary || "";
+
+  return (
+    <div className="flex justify-start my-2">
+      <div className="max-w-[85%] rounded-2xl px-4 py-3 bg-surface shadow-card rounded-bl-md border border-amber-500/30">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-amber-400 text-sm">⏳</span>
+          <span className="text-xs font-semibold text-amber-300">Permission Required</span>
+          <span className="text-[11px] text-faint font-mono ml-auto">{elapsed}s</span>
+        </div>
+        <div className="text-xs font-mono text-dim mb-2">
+          <span className="text-cyan-300">{toolLabel}</span>
+          {summary && <span className="text-faint ml-1.5 break-all">{summary.length > 120 ? summary.slice(0, 120) + "…" : summary}</span>}
+        </div>
+        {request.tool_input && Object.keys(request.tool_input).length > 0 && (
+          <details className="mb-2">
+            <summary className="text-[11px] text-faint cursor-pointer hover:text-dim">details</summary>
+            <pre className="text-[10px] text-faint mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">
+              {JSON.stringify(request.tool_input, null, 2)}
+            </pre>
+          </details>
+        )}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => handle("allow")}
+            disabled={!!loading}
+            className="px-3 py-1 text-xs rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+          >
+            {loading === "allow" ? "…" : "Allow"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handle("allow_always")}
+            disabled={!!loading}
+            className="px-3 py-1 text-xs rounded-lg bg-cyan-600/60 hover:bg-cyan-500 text-white transition-colors disabled:opacity-50"
+          >
+            {loading === "allow_always" ? "…" : `Always ${toolLabel}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => handle("deny")}
+            disabled={!!loading}
+            className="px-3 py-1 text-xs rounded-lg bg-red-600/60 hover:bg-red-500 text-white transition-colors disabled:opacity-50"
+          >
+            {loading === "deny" ? "…" : "Deny"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // --- Typing Indicator (shown when executing but no streaming content yet) ---
 
 function TypingIndicator({ activeTool, toolStartTime }) {
@@ -1700,6 +1785,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
   const [toolLog, setToolLog] = useState([]);   // [{name, summary, outputSummary, isError, startTime, done}]
+  const [pendingPermissions, setPendingPermissions] = useState([]); // [{request_id, tool_name, tool_input, summary, created_at}]
   const [hookActive, setHookActive] = useState(false); // true when hook events indicate agent is working
   const lastHookTimeRef = useRef(0);   // timestamp of last hook event (for compact grace period)
   const hookGraceRef = useRef(null);   // timer for grace period
@@ -1736,9 +1822,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const [agentData, msgData] = await Promise.all([
+      const [agentData, msgData, pendingPerms] = await Promise.all([
         fetchAgent(id),
         fetchMessages(id),
+        fetchPendingPermissions(id).catch(() => []),
       ]);
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) return;
@@ -1746,6 +1833,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const msgs = Array.isArray(msgData?.messages) ? msgData.messages : [];
       setMessages(msgs);
       setHasMore(!!msgData?.has_more);
+      if (Array.isArray(pendingPerms) && pendingPerms.length > 0) {
+        setPendingPermissions(pendingPerms);
+      }
       if (!initialLoadDone.current && agentData.muted != null) {
         setMuted(agentData.muted);
         setAgentMuted(id, agentData.muted);
@@ -2132,6 +2222,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
+    // --- Permission request from supervised agent ---
+    if (lastEvent.type === "permission_request" && lastEvent.data?.agent_id === id) {
+      setPendingPermissions((prev) => {
+        if (prev.some((p) => p.request_id === lastEvent.data.request_id)) return prev;
+        return [...prev, lastEvent.data];
+      });
+      return;
+    }
+    if (lastEvent.type === "permission_resolved" && lastEvent.data?.agent_id === id) {
+      setPendingPermissions((prev) =>
+        prev.filter((p) => p.request_id !== lastEvent.data.request_id)
+      );
+      return;
+    }
+
     if (lastEvent.type === "new_message" && lastEvent.data?.agent_id === id) {
       clearTimeout(streamTimeoutRef.current);
       clearTimeout(hookGraceRef.current);
@@ -2139,6 +2244,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setActiveTool(null);
       setToolStartTime(null);
       setToolLog([]);
+      setPendingPermissions([]);
       setHookActive(false);
       lastHookTimeRef.current = 0;
       refreshMessages({ syncHint: lastEvent.data?.message_id === "sync" });
@@ -2759,6 +2865,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               if (toolLog.length > 0) return <ToolActivityLog toolLog={toolLog} activeTool={activeTool} toolStartTime={toolStartTime} />;
               return (isExecuting || agent?.is_generating || hookActive) ? <TypingIndicator activeTool={activeTool} toolStartTime={toolStartTime} /> : null;
             })()}
+
+            {/* Pending permission approval cards for supervised agents */}
+            {pendingPermissions.map((req) => (
+              <PermissionCard
+                key={req.request_id}
+                request={req}
+                agentId={id}
+                onResolved={(reqId) => {
+                  setPendingPermissions((prev) => prev.filter((p) => p.request_id !== reqId));
+                }}
+              />
+            ))}
 
             {/* Pending/scheduled messages always at the bottom */}
             {(() => {

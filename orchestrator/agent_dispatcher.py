@@ -3002,6 +3002,15 @@ Here are the day's conversations (with timestamps):
             except FileNotFoundError:
                 pass
 
+            # Clear pending permission requests for this agent
+            try:
+                from main import app as _app
+                pm = getattr(_app.state, "permission_manager", None)
+                if pm:
+                    pm.clear_agent(agent.id)
+            except Exception:
+                pass
+
         if emit:
             from websocket import emit_agent_update
             self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
