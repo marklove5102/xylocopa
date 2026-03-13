@@ -1,3 +1,5 @@
+import { serverNow } from "./serverTime";
+
 /** Shared date format options for toLocaleString / toLocaleTimeString. */
 export const DATE_SHORT = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
 export const TIME_SHORT = { hour: "2-digit", minute: "2-digit" };
@@ -5,7 +7,7 @@ export const TIME_SHORT = { hour: "2-digit", minute: "2-digit" };
 /** Turn an ISO / unix timestamp into a relative string like "2m ago". */
 export function relativeTime(dateStr) {
   if (!dateStr) return "";
-  const now = Date.now();
+  const now = serverNow();
   // Backend returns UTC datetimes without timezone suffix — append Z so
   // JavaScript doesn't misinterpret them as local time.
   let str = String(dateStr);

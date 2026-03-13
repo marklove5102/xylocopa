@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2, planTask, dispatchTask, approveTask, rejectTask, cancelTask, tryTaskChanges, revertTaskChanges, verifyTask } from "../lib/api";
 import { TASK_STATUS_COLORS, TASK_STATUS_TEXT_COLORS, projectBadgeColor, modelDisplayName, POLL_INTERVAL } from "../lib/constants";
 import { relativeTime, renderMarkdown } from "../lib/formatters";
+import { serverNow } from "../lib/serverTime";
 import ProjectSelector from "../components/ProjectSelector";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket, { registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
@@ -136,7 +137,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
 
   // Elapsed time for running tasks
   const elapsed = task.started_at && !task.completed_at
-    ? Math.floor((Date.now() - new Date(task.started_at).getTime()) / 1000)
+    ? Math.floor((serverNow() - new Date(task.started_at).getTime()) / 1000)
     : task.elapsed_seconds;
   const fmtElapsed = (s) => {
     if (!s) return null;

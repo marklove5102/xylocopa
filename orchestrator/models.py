@@ -215,6 +215,25 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ToolActivity(Base):
+    __tablename__ = "tool_activities"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="tool")  # tool|compact|subagent|permission
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_error: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Project(Base):

@@ -133,12 +133,14 @@ async def test_get_messages_with_data(client, db_engine):
     db.flush()
     now = datetime.now(timezone.utc)
     for i in range(3):
+        ts = now + timedelta(seconds=i)
         db.add(Message(
             agent_id="msg2agent1111",
             role=MessageRole.USER if i % 2 == 0 else MessageRole.AGENT,
             content=f"Message {i}",
             status=MessageStatus.COMPLETED,
-            created_at=now + timedelta(seconds=i),
+            created_at=ts,
+            delivered_at=ts,
         ))
     db.commit()
     db.close()

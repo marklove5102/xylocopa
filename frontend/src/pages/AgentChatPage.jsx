@@ -21,10 +21,12 @@ import {
   fetchProjectFile,
   respondPermission,
   fetchPendingPermissions,
+  fetchToolActivities,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
+import { serverNow } from "../lib/serverTime";
 
 // Mini error boundary that wraps individual markdown renders so a single
 // broken message doesn't crash the entire chat page.
@@ -85,6 +87,7 @@ function SystemBubble({ message }) {
         <div className="flex items-center gap-1.5">
           <span className="shrink-0 opacity-60">sys</span>
           <span className="truncate">{label}</span>
+          <span className="shrink-0 opacity-40 ml-1">{relativeTime(message.completed_at || message.created_at)}</span>
           {isLong && (
             <svg className={`w-3 h-3 shrink-0 opacity-50 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" d="m19 9-7 7-7-7" />
@@ -637,6 +640,8 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const isUser = message.role === "USER";
   const isScheduled = isUser && message.scheduled_at && message.status === "PENDING";
   const isPending = isUser && message.status === "PENDING" && !message.scheduled_at;
+  const isSlashCommand = isUser && (message.content || "").trimStart().startsWith("/");
+  const isWebUndelivered = isUser && message.source === "web" && !message.delivered_at && !isPending && !isScheduled && !isSlashCommand;
 
   const [showActions, setShowActions] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -843,7 +848,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 ? "bg-amber-600/80 text-white rounded-br-md"
                 : isPending
                   ? "bg-cyan-600/60 text-white/80 rounded-br-md"
-                  : "bg-cyan-600 text-white rounded-br-md"
+                  : isWebUndelivered
+                    ? "bg-cyan-600/70 text-white/80 rounded-br-md"
+                    : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
           } ${canModify ? "select-none" : ""}`}
           onDoubleClick={handleDoubleClick}
@@ -896,6 +903,27 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             {message.status === "TIMEOUT" && (
               <span className="text-orange-400">Timed out</span>
             )}
+            {isUser && message.source === "web" && (isSlashCommand ? (
+              message.delivered_at && (
+                <span className="ml-auto text-green-400" title={`Executed ${new Date(message.delivered_at).toLocaleTimeString()}`}>
+                  <svg className="w-4 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 28 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L16 7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 13l4 4L24 7" />
+                  </svg>
+                </span>
+              )
+            ) : (
+              <span className={`ml-auto ${message.delivered_at ? "text-green-400" : "text-cyan-300/40"}`}
+                    title={message.delivered_at ? `Delivered ${new Date(message.delivered_at).toLocaleTimeString()}` : "Sending..."}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  {message.delivered_at ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" opacity="0.5" />
+                  )}
+                </svg>
+              </span>
+            ))}
           </div>
         </div>
         {message.status === "FAILED" && message.error_message && (
@@ -1028,18 +1056,32 @@ function ToolLogBubble({ entries }) {
 
 // --- Tool Activity Log (real-time feed of tool calls via CC hooks) ---
 
-function ToolActivityLog({ toolLog, activeTool, toolStartTime }) {
-  const [expanded, setExpanded] = useState(true);
-  const [elapsed, setElapsed] = useState(0);
-
+function ActiveToolEntry({ entry, nameColor }) {
+  const [elapsed, setElapsed] = useState(() => Math.floor((serverNow() - entry.startTime) / 1000));
   useEffect(() => {
-    if (!toolStartTime) { setElapsed(0); return; }
-    setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
     const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
+      setElapsed(Math.floor((serverNow() - entry.startTime) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [toolStartTime]);
+  }, [entry.startTime]);
+
+  return (
+    <div className="flex items-center gap-1.5 text-dim">
+      {entry.kind === "permission" ? (
+        <span className="text-amber-400 shrink-0">&#x23F3;</span>
+      ) : (
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+      )}
+      <span className={nameColor(entry)}>{entry.name}</span>
+      {entry.summary && <span className="text-faint truncate max-w-[160px]">{entry.summary}</span>}
+      {entry.kind === "permission" && <span className="text-amber-400/70">awaiting permission</span>}
+      {entry.kind !== "permission" && elapsed > 2 && <span className="text-faint">({elapsed}s)</span>}
+    </div>
+  );
+}
+
+function ToolActivityLog({ toolLog }) {
+  const [expanded, setExpanded] = useState(true);
 
   if (!toolLog.length) return null;
 
@@ -1050,10 +1092,10 @@ function ToolActivityLog({ toolLog, activeTool, toolStartTime }) {
   const hiddenCount = completed.length - visibleCompleted.length;
 
   const entryIcon = (entry) => {
-    if (entry.kind === "permission") return "⏳";
-    if (entry.isError) return "✗";
-    if (entry.kind === "subagent") return "◆";
-    return "✓";
+    if (entry.kind === "permission") return "\u23F3";
+    if (entry.isError) return "\u2717";
+    if (entry.kind === "subagent") return "\u25C6";
+    return "\u2713";
   };
   const nameColor = (entry) => {
     if (entry.kind === "permission") return "text-amber-400";
@@ -1080,22 +1122,12 @@ function ToolActivityLog({ toolLog, activeTool, toolStartTime }) {
               <span className={nameColor(entry)}>{entry.name}</span>
               {entry.summary && <span className="text-faint truncate max-w-[160px]">{entry.summary}</span>}
               {entry.outputSummary && (
-                <span className={entry.isError ? "text-red-400/70" : "text-faint"}>→ {entry.outputSummary}</span>
+                <span className={entry.isError ? "text-red-400/70" : "text-faint"}>&rarr; {entry.outputSummary}</span>
               )}
             </div>
           ))}
           {active.map((entry, i) => (
-            <div key={`active-${i}`} className="flex items-center gap-1.5 text-dim">
-              {entry.kind === "permission" ? (
-                <span className="text-amber-400 shrink-0">⏳</span>
-              ) : (
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
-              )}
-              <span className={nameColor(entry)}>{entry.name}</span>
-              {entry.summary && <span className="text-faint truncate max-w-[160px]">{entry.summary}</span>}
-              {entry.kind === "permission" && <span className="text-amber-400/70">awaiting permission</span>}
-              {entry.kind !== "permission" && elapsed > 2 && <span className="text-faint">({elapsed}s)</span>}
-            </div>
+            <ActiveToolEntry key={`active-${i}`} entry={entry} nameColor={nameColor} />
           ))}
           {collapsible && expanded && (
             <button
@@ -1130,9 +1162,9 @@ function PermissionCard({ request, agentId, onResolved }) {
 
   useEffect(() => {
     const t0 = request.created_at * 1000;
-    setElapsed(Math.floor((Date.now() - t0) / 1000));
+    setElapsed(Math.floor((serverNow() - t0) / 1000));
     const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - t0) / 1000));
+      setElapsed(Math.floor((serverNow() - t0) / 1000));
     }, 1000);
     return () => clearInterval(timer);
   }, [request.created_at]);
@@ -1278,9 +1310,9 @@ function TypingIndicator({ activeTool, toolStartTime }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     if (!toolStartTime) { setElapsed(0); return; }
-    setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
+    setElapsed(Math.floor((serverNow() - toolStartTime) / 1000));
     const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - toolStartTime) / 1000));
+      setElapsed(Math.floor((serverNow() - toolStartTime) / 1000));
     }, 1000);
     return () => clearInterval(timer);
   }, [toolStartTime]);
@@ -1840,10 +1872,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const [agentData, msgData, pendingPerms] = await Promise.all([
+      const [agentData, msgData, pendingPerms, toolActs] = await Promise.all([
         fetchAgent(id),
         fetchMessages(id),
         fetchPendingPermissions(id).catch(() => []),
+        fetchToolActivities(id).catch(() => []),
       ]);
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) return;
@@ -1853,6 +1886,37 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setHasMore(!!msgData?.has_more);
       if (Array.isArray(pendingPerms) && pendingPerms.length > 0) {
         setPendingPermissions(pendingPerms);
+      }
+      // Restore tool activity state from DB — only current (in-progress) turn.
+      // Completed-turn tools are already embedded in agent message content
+      // and rendered inline via splitMessageSegments → ToolLogBubble.
+      if (Array.isArray(toolActs) && toolActs.length > 0) {
+        const lastAgentOrSystem = [...msgs].reverse().find(
+          (m) => m.role === "AGENT" || m.role === "SYSTEM"
+        );
+        const cutoff = lastAgentOrSystem
+          ? new Date(lastAgentOrSystem.completed_at || lastAgentOrSystem.created_at).getTime()
+          : 0;
+        const log = toolActs
+          .filter((ta) => new Date(ta.started_at).getTime() > cutoff)
+          .map((ta) => ({
+            name: ta.tool_name,
+            summary: ta.summary || "",
+            outputSummary: ta.output_summary || null,
+            isError: ta.is_error || false,
+            startTime: new Date(ta.started_at).getTime(),
+            done: !!ta.ended_at,
+            kind: ta.kind || "tool",
+          }));
+        setToolLog(log);
+        // If last entry is still running, restore activeTool + toolStartTime
+        const lastActive = log.filter((e) => !e.done).pop();
+        if (lastActive) {
+          setActiveTool({ name: lastActive.name, summary: lastActive.summary });
+          setToolStartTime(lastActive.startTime);
+          setHookActive(true);
+          lastHookTimeRef.current = Date.now();
+        }
       }
       if (!initialLoadDone.current && agentData.muted != null) {
         setMuted(agentData.muted);
@@ -1877,7 +1941,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     setLoadingMore(true);
     try {
       const oldest = current[0];
-      const data = await fetchMessages(id, { before: oldest.created_at });
+      const data = await fetchMessages(id, { before: oldest.delivered_at || oldest.created_at });
       const older = Array.isArray(data?.messages) ? data.messages : [];
       if (older.length) {
         // Capture scroll height before DOM update for scroll preservation
@@ -1909,10 +1973,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         if (msgs.length) setMessages(msgs);
         return;
       }
-      const newest = current[current.length - 1];
+      // Use delivered_at of the last delivered message as cursor (undelivered
+      // messages have no delivered_at and sit at the bottom — skip them).
+      const lastDelivered = [...current].reverse().find((m) => m.delivered_at);
+      const afterCursor = lastDelivered?.delivered_at || current[current.length - 1].created_at;
       const hasPending = current.some((m) => m.role === "USER" && m.status === "PENDING");
       const needTail = syncHint || agentData.status === "SYNCING" || hasPending;
-      const fetches = [fetchMessages(id, { after: newest.created_at })];
+      const fetches = [fetchMessages(id, { after: afterCursor })];
       if (needTail) fetches.push(fetchMessages(id, { limit: 5 }));
       const [afterData, tailData] = await Promise.all(fetches);
       const newer = Array.isArray(afterData?.messages) ? afterData.messages : [];
@@ -2276,6 +2343,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
+    if (lastEvent.type === "message_delivered" && lastEvent.data?.agent_id === id) {
+      const { message_id, delivered_at } = lastEvent.data;
+      setMessages((prev) => {
+        const updated = prev.map((m) => (m.id === message_id ? { ...m, delivered_at } : m));
+        // Re-sort: delivered messages by delivered_at, undelivered sink to bottom
+        return updated.slice().sort((a, b) => {
+          const aKey = a.delivered_at || "\uffff";
+          const bKey = b.delivered_at || "\uffff";
+          if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+          return (a.created_at || "") < (b.created_at || "") ? -1 : 1;
+        });
+      });
+      return;
+    }
+
     if (lastEvent.type === "message_update" && lastEvent.data?.agent_id === id) {
       const { message_id, status, error_message } = lastEvent.data;
       if (status === "CANCELLED") {
@@ -2348,9 +2430,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const handleSend = async (content) => {
     try {
       const busy = agent.status === "EXECUTING" || (agent.status === "SYNCING" && !agent.tmux_pane);
+      // New turn — clear previous tool activity state
+      setToolLog([]);
+      setActiveTool(null);
+      setToolStartTime(null);
       await sendMessage(id, content, busy ? { queue: true } : {});
       if (busy) showToast("Queued — will send when ready");
-      loadData();
+      refreshMessages();
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
@@ -2471,6 +2557,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     return false;
   }, [messages]);
 
+  // Smooth EXECUTING→off: hold true for 1s to avoid flicker
+  // (must be before early returns to maintain hooks ordering)
+  const isExecutingRaw = agent?.status === "EXECUTING" || (agent?.status === "SYNCING" && (hookActive || agent?.is_generating));
+  const [isExecuting, setIsExecuting] = useState(isExecutingRaw);
+  const execTimerRef = useRef(null);
+  useEffect(() => {
+    if (isExecutingRaw) {
+      clearTimeout(execTimerRef.current);
+      setIsExecuting(true);
+    } else {
+      execTimerRef.current = setTimeout(() => setIsExecuting(false), 1000);
+    }
+    return () => clearTimeout(execTimerRef.current);
+  }, [isExecutingRaw]);
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -2504,7 +2605,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     ? "EXECUTING" : agent.status;
   const statusDot = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
   const statusText = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
-  const isExecuting = agent.status === "EXECUTING";
   const isSyncing = agent.status === "SYNCING";
   const hasTmux = isSyncing && !!agent.tmux_pane;
   const hasTmuxPane = !!agent.tmux_pane;
@@ -2881,7 +2981,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 if (!isDuplicate) return <StreamingBubble content={streamingContent} project={agent.project} activeTool={activeTool} />;
               }
               // Tool activity log — shows completed + in-progress tool calls
-              if (toolLog.length > 0) return <ToolActivityLog toolLog={toolLog} activeTool={activeTool} toolStartTime={toolStartTime} />;
+              if (toolLog.length > 0) return <ToolActivityLog toolLog={toolLog} />;
               return (isExecuting || agent?.is_generating || hookActive) ? <TypingIndicator activeTool={activeTool} toolStartTime={toolStartTime} /> : null;
             })()}
 
@@ -2933,7 +3033,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           try { await escapeAgent(id); loadData(); } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
         escapeDisabled={isStopped || isError}
-        escapeUrgent={isExecuting || hasPendingInteractive || agent.is_generating || hookActive || (hasTmux && (streamingContent || (messages.length > 0 && messages[messages.length - 1].role === "USER")))}
+        escapeUrgent={isExecuting || hasPendingInteractive}
         escapeAvailable={hasTmuxPane}
       />
 
