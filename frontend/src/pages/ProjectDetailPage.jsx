@@ -60,8 +60,9 @@ function projectBotState(proj) {
 
 
 function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isStreaming }) {
-  const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
-  const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
+  const effectiveStatus = (agent.status === "SYNCING" && isStreaming) ? "EXECUTING" : agent.status;
+  const statusDot = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
+  const statusText = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
   const [copied, setCopied] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
 
@@ -119,7 +120,7 @@ function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isS
         </p>
         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDot}${isStreaming ? " animate-pulse" : ""}`} />
-          <span className={`text-xs lowercase ${statusText}`}>{isStreaming ? "streaming" : agent.status.toLowerCase().replace("_", " ")}</span>
+          <span className={`text-xs lowercase ${statusText}`}>{effectiveStatus.toLowerCase().replace("_", " ")}</span>
           {agent.model && (
             <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated">
               {modelDisplayName(agent.model)}

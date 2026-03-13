@@ -23,8 +23,10 @@ const FILTER_TABS = [
 const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle, isStreaming }) {
   const navigate = useNavigate();
   const state = agentBotState(agent.status);
-  const statusDotColor = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
-  const statusTextColor = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
+  // When hook/stream activity indicates work during SYNCING, promote visual status
+  const effectiveStatus = (agent.status === "SYNCING" && isStreaming) ? "EXECUTING" : agent.status;
+  const statusDotColor = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
+  const statusTextColor = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
   const [copied, setCopied] = useState(false);
 
   const handleCopyId = (e) => {
@@ -104,7 +106,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
         <div className="flex items-center gap-1.5 mt-1.5">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDotColor}${isStreaming ? " animate-pulse" : ""}`} />
           <span className={`text-xs lowercase ${statusTextColor}`}>
-            {isStreaming ? "streaming" : agent.status.toLowerCase().replace("_", " ")}
+            {effectiveStatus.toLowerCase().replace("_", " ")}
           </span>
           {agent.model && (
             <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated ml-auto">
