@@ -806,9 +806,13 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             displayContent && <p className="text-sm whitespace-pre-wrap">{displayContent}</p>
           ) : (
             <div className="text-sm" ref={markdownRef} onClick={handleMarkdownClick}>
-              <SafeMarkdown fallback={displayContent}>
-                {renderMarkdown(displayContent, project)}
-              </SafeMarkdown>
+              {message.metadata?.tool_log?.length ? (
+                <InterleavedContent content={displayContent} toolLog={message.metadata.tool_log} project={project} />
+              ) : (
+                <SafeMarkdown fallback={displayContent}>
+                  {renderMarkdown(displayContent, project)}
+                </SafeMarkdown>
+              )}
             </div>
           )}
           <div className={`text-xs mt-1 flex items-center gap-1.5 ${
@@ -873,10 +877,6 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {!isUser && message.metadata?.interactive?.length > 0 && (
           <InteractiveBubbles metadata={message.metadata} agentId={agentId} onAnswered={onRefresh} messageContent={message.content} project={project} />
         )}
-        {!isUser && message.metadata?.tool_log?.length > 0 && (
-          <PersistedToolLog entries={message.metadata.tool_log} />
-        )}
-
         {/* Action popover for scheduled/pending messages */}
         {showActions && (
           <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
@@ -931,61 +931,135 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   );
 }
 
-// --- Persisted Tool Log (saved in message metadata, collapsed by default) ---
+// --- Tool log entry rendering helpers ---
 
-function PersistedToolLog({ entries }) {
+const _tlIcon = (e) => {
+  if (e.kind === "permission") return "⏳";
+  if (e.is_error) return "✗";
+  if (e.kind === "subagent") return "◆";
+  if (e.phase === "start") return "▸";
+  return "✓";
+};
+const _tlColor = (e) => {
+  if (e.kind === "permission") return "text-amber-400";
+  if (e.is_error) return "text-red-400";
+  if (e.kind === "subagent") return "text-violet-400";
+  return "text-cyan-300";
+};
+
+function ToolLogEntry({ entry }) {
+  return (
+    <div className={`flex items-center gap-1.5 ${entry.is_error ? "text-red-400/80" : "text-faint"}`}>
+      <span className="shrink-0">{_tlIcon(entry)}</span>
+      <span className={_tlColor(entry)}>{entry.name}</span>
+      {entry.summary && <span className="truncate max-w-[140px]">{entry.summary}</span>}
+      {entry.output_summary && <span className={entry.is_error ? "text-red-400/60" : ""}>→ {entry.output_summary}</span>}
+    </div>
+  );
+}
+
+// Regex matching tool summary lines in message content: > `ToolName` ...
+const TOOL_SUMMARY_RE = /^> `(\w+)`\s*(.*)/;
+
+/**
+ * Split message content into interleaved text + tool segments.
+ * Tool summary lines (> `Grep` ...) are replaced by richer tool_log entries.
+ * Consecutive tool lines are grouped into collapsible blocks.
+ */
+function InterleavedContent({ content, toolLog, project }) {
   const [expanded, setExpanded] = useState(false);
-  if (!entries?.length) return null;
 
-  const COLLAPSED_LIMIT = 5;
-  const visible = expanded ? entries : entries.slice(-COLLAPSED_LIMIT);
-  const hiddenCount = entries.length - visible.length;
+  const segments = useMemo(() => {
+    if (!toolLog?.length) return [{ type: "text", text: content }];
 
-  const icon = (e) => {
-    if (e.kind === "permission") return "⏳";
-    if (e.is_error) return "✗";
-    if (e.kind === "subagent") return "◆";
-    if (e.phase === "start") return "▸";
-    return "✓";
-  };
-  const color = (e) => {
-    if (e.kind === "permission") return "text-amber-400";
-    if (e.is_error) return "text-red-400";
-    if (e.kind === "subagent") return "text-violet-400";
-    return "text-cyan-300";
-  };
+    const lines = content.split("\n");
+    const result = [];
+    let textBuf = [];
+    let toolBuf = [];
+    let logIdx = 0;
+
+    const flushText = () => {
+      const t = textBuf.join("\n").trim();
+      if (t) result.push({ type: "text", text: t });
+      textBuf = [];
+    };
+    const flushTools = () => {
+      if (toolBuf.length) result.push({ type: "tools", entries: toolBuf });
+      toolBuf = [];
+    };
+
+    for (const line of lines) {
+      const m = line.match(TOOL_SUMMARY_RE);
+      if (m && logIdx < toolLog.length) {
+        // Match tool_log entries for this line — consume start+end pair
+        const toolName = m[1];
+        const matched = [];
+        while (logIdx < toolLog.length) {
+          const entry = toolLog[logIdx];
+          if (entry.name === toolName || entry.name === `Agent:${toolName}`) {
+            matched.push(entry);
+            logIdx++;
+            if (entry.phase === "end") break;
+          } else {
+            // Mismatched — include as-is (subagent, permission, etc.)
+            matched.push(entry);
+            logIdx++;
+            if (entry.phase === "end" || entry.phase === "permission") break;
+          }
+        }
+        // Use the richest entry (prefer "end" which has output_summary)
+        const best = matched.find((e) => e.phase === "end") || matched[matched.length - 1] || { name: toolName, phase: "end", kind: "tool" };
+        if (textBuf.length) { flushText(); flushTools(); }
+        toolBuf.push(best);
+      } else {
+        if (toolBuf.length) flushTools();
+        textBuf.push(line);
+      }
+    }
+    // Flush remaining + any unconsumed tool_log entries
+    if (toolBuf.length) flushTools();
+    flushText();
+    while (logIdx < toolLog.length) {
+      toolBuf.push(toolLog[logIdx++]);
+    }
+    if (toolBuf.length) result.push({ type: "tools", entries: toolBuf });
+
+    return result;
+  }, [content, toolLog]);
 
   return (
-    <div className="mt-1.5 border-t border-divider/30 pt-1.5">
-      {hiddenCount > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="text-faint hover:text-dim text-[11px] font-mono mb-0.5"
-        >
-          + {hiddenCount} more tools...
-        </button>
-      )}
-      <div className="space-y-0 text-[11px] font-mono">
-        {visible.map((e, i) => (
-          <div key={i} className={`flex items-center gap-1.5 ${e.is_error ? "text-red-400/80" : "text-faint"}`}>
-            <span className="shrink-0">{icon(e)}</span>
-            <span className={color(e)}>{e.name}</span>
-            {e.summary && <span className="truncate max-w-[140px]">{e.summary}</span>}
-            {e.output_summary && <span className={e.is_error ? "text-red-400/60" : ""}>→ {e.output_summary}</span>}
+    <>
+      {segments.map((seg, i) => {
+        if (seg.type === "text") {
+          return (
+            <SafeMarkdown key={i} fallback={seg.text}>
+              {renderMarkdown(seg.text, project)}
+            </SafeMarkdown>
+          );
+        }
+        // Tool group — collapsed by default if > 5
+        const entries = seg.entries;
+        const LIMIT = 5;
+        const showAll = expanded || entries.length <= LIMIT;
+        const visible = showAll ? entries : entries.slice(-LIMIT);
+        const hiddenCount = entries.length - visible.length;
+        return (
+          <div key={i} className="my-1 space-y-0 text-[11px] font-mono">
+            {hiddenCount > 0 && (
+              <button type="button" onClick={() => setExpanded(true)} className="text-faint hover:text-dim text-[11px] mb-0.5">
+                + {hiddenCount} more...
+              </button>
+            )}
+            {visible.map((e, j) => <ToolLogEntry key={j} entry={e} />)}
+            {showAll && entries.length > LIMIT && (
+              <button type="button" onClick={() => setExpanded(false)} className="text-faint hover:text-dim text-[11px] mt-0.5">
+                collapse
+              </button>
+            )}
           </div>
-        ))}
-      </div>
-      {expanded && entries.length > COLLAPSED_LIMIT && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="text-faint hover:text-dim text-[11px] font-mono mt-0.5"
-        >
-          collapse
-        </button>
-      )}
-    </div>
+        );
+      })}
+    </>
   );
 }
 
