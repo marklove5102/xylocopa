@@ -297,6 +297,8 @@ async def lifespan(app: FastAPI):
         dispatcher = TaskDispatcher(wm)
         agent_dispatcher = AgentDispatcher(wm)
         gm = GitManager()
+        from permissions import PermissionManager
+        app.state.permission_manager = PermissionManager()
         app.state.dispatcher = dispatcher
         app.state.agent_dispatcher = agent_dispatcher
         app.state.worker_manager = wm
@@ -4015,6 +4017,136 @@ async def hook_agent_tool_activity(request: Request):
     return {}
 
 
+@app.post("/api/hooks/agent-permission")
+async def hook_agent_permission(request: Request):
+    """PreToolUse hook for non-skip-permissions agents.
+
+    Blocks until the user approves or denies the tool call from the web UI.
+    Auto-allows safe read-only tools (Read, Glob, Grep, etc.) and any tool
+    the user has previously marked "always allow" for this agent session.
+    """
+    agent_id = request.headers.get("X-Agent-Id", "").strip()
+    if not agent_id:
+        return {}
+
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+
+    if body.get("hook_event_name") != "PreToolUse":
+        return {}
+
+    tool_name = body.get("tool_name", "")
+    tool_input = body.get("tool_input") or {}
+
+    from permissions import PermissionManager, SAFE_TOOLS
+
+    pm: PermissionManager | None = getattr(app.state, "permission_manager", None)
+    if not pm:
+        return {}
+
+    # Check if the agent actually needs permission gating
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        agent = db.get(Agent, agent_id)
+        if not agent or agent.skip_permissions:
+            return {}
+        agent_name = agent.name or ""
+        agent_project = agent.project or ""
+    finally:
+        db.close()
+
+    # Auto-allow safe read-only tools
+    if tool_name in SAFE_TOOLS:
+        return {"hookSpecificOutput": {"permissionDecision": "allow"}}
+
+    # Check session "always allow" rules
+    if pm.check_always_allow(agent_id, tool_name):
+        return {"hookSpecificOutput": {"permissionDecision": "allow"}}
+
+    # Create pending request and broadcast to frontend
+    from websocket import _tool_input_summary
+    summary = _tool_input_summary(tool_name, tool_input) if tool_input else ""
+    req = pm.create_request(agent_id, tool_name, tool_input, summary)
+
+    await ws_manager.broadcast("permission_request", {
+        "request_id": req.id,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "project": agent_project,
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "summary": summary,
+    })
+
+    # Send push notification
+    from notify import notify
+    notify(
+        "permission", agent_id,
+        f"Permission: {tool_name}",
+        f"{agent_name}: {summary[:100]}" if summary else f"{agent_name} wants to use {tool_name}",
+        url=f"/agents/{agent_id}",
+    )
+
+    # Block until user responds (no timeout — waits indefinitely)
+    decision, reason = await pm.wait_for_decision(req.id)
+
+    if decision == "allow":
+        return {"hookSpecificOutput": {"permissionDecision": "allow"}}
+    else:
+        return {"hookSpecificOutput": {
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason or "Denied by user",
+        }}
+
+
+@app.post("/api/agents/{agent_id}/permission/{request_id}/respond")
+async def respond_permission(
+    agent_id: str, request_id: str,
+    request: Request, db: Session = Depends(get_db),
+):
+    """User responds to a pending tool permission request."""
+    body = await request.json()
+    decision = body.get("decision")  # "allow" | "deny" | "allow_always"
+    reason = body.get("reason", "")
+
+    from permissions import PermissionManager
+    pm: PermissionManager | None = getattr(app.state, "permission_manager", None)
+    if not pm:
+        raise HTTPException(status_code=500, detail="Permission manager not available")
+
+    actual_decision = "allow" if decision in ("allow", "allow_always") else "deny"
+
+    if decision == "allow_always":
+        tool_name = body.get("tool_name", "")
+        if tool_name:
+            pm.add_always_allow(agent_id, tool_name)
+
+    if not pm.respond(request_id, actual_decision, reason):
+        raise HTTPException(status_code=404, detail="Permission request not found or already resolved")
+
+    # Broadcast resolution so all frontend clients update
+    await ws_manager.broadcast("permission_resolved", {
+        "request_id": request_id,
+        "agent_id": agent_id,
+        "decision": actual_decision,
+    })
+
+    return {"detail": "ok"}
+
+
+@app.get("/api/agents/{agent_id}/permissions/pending")
+async def get_pending_permissions(agent_id: str):
+    """Get all pending permission requests for an agent."""
+    from permissions import PermissionManager
+    pm: PermissionManager | None = getattr(app.state, "permission_manager", None)
+    if not pm:
+        return []
+    return pm.get_pending(agent_id)
+
+
 @app.post("/api/hooks/agent-session-start")
 async def hook_agent_session_start(request: Request):
     """Receive SessionStart hook from Claude Code agents.
@@ -4288,6 +4420,17 @@ def _write_agent_hooks_config(project_path: str):
         "allowedEnvVars": ["AHIVE_AGENT_ID"],
     }
 
+    # Permission gate hook — separate URL so Claude Code doesn't dedup
+    # with the activity hook.  Large timeout (24h) so it can block
+    # indefinitely until the user responds from the web UI.
+    _permission_hook = {
+        "type": "http",
+        "url": f"{base_url}/agent-permission",
+        "headers": {"X-Agent-Id": "$AHIVE_AGENT_ID"},
+        "allowedEnvVars": ["AHIVE_AGENT_ID"],
+        "timeout": 86400,
+    }
+
     desired_hooks = {
         "PreToolUse": [
             # Safety guardrails (Bash/Write/Edit only)
@@ -4301,6 +4444,10 @@ def _write_agent_hooks_config(project_path: str):
             # Tool activity broadcast (all tools)
             {
                 "hooks": [_tool_activity_hook],
+            },
+            # Permission gate for supervised agents (all tools)
+            {
+                "hooks": [_permission_hook],
             },
         ],
         "PostToolUse": [{

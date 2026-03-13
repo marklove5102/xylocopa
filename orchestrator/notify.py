@@ -31,6 +31,12 @@ def notify(
 
     Returns decision string: "SEND", "SKIP (reason)", or "DROP (unknown)".
     """
+    if channel == "permission":
+        # Permission requests are urgent — always send, never suppressed
+        logger.info("notify: %s agent=%s → SEND (always)", channel, agent_id[:8])
+        _send(title, body, url)
+        return "SEND"
+
     if channel == "notify_at":
         logger.info("notify: %s → SEND (always)", channel)
         _send(title, body, url)
