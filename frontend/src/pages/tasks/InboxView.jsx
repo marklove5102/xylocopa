@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
-import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import InboxCard from "../../components/cards/InboxCard";
@@ -15,10 +14,8 @@ function SortableTaskCard(props) {
     animateLayoutChanges: noDropAnimation,
   });
   const isGroupDragged = props.isGroupDragged && !isDragging;
-  // Only allow vertical movement during drag — suppress horizontal shift
-  const yOnlyTransform = transform ? { ...transform, x: 0 } : transform;
   const style = {
-    transform: CSS.Transform.toString(yOnlyTransform),
+    transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging || isGroupDragged ? 0.3 : 1,
     // When any drag is active, block browser scroll so dnd-kit owns the touch
@@ -65,7 +62,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 350, tolerance: 10 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 350, tolerance: 999 } }),
   );
 
   const handleDragStart = useCallback((event) => {
@@ -129,7 +126,6 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
     <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        modifiers={[restrictToVerticalAxis]}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
