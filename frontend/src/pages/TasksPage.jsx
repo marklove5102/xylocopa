@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, BellOff, Sparkles } from "lucide-react";
-import { fetchTasksV2, fetchTaskCounts, updateNotificationSettings, dispatchTask, cancelTask, updateTaskV2, batchProcessTasks } from "../lib/api";
+import { Sparkles } from "lucide-react";
+import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, updateTaskV2, batchProcessTasks } from "../lib/api";
 import PageHeader from "../components/PageHeader";
 import usePageVisible from "../hooks/usePageVisible";
-import useWebSocket, { useWsEvent, isTaskNotificationsEnabled, setTaskNotificationsEnabled, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
+import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
 import { useToast } from "../contexts/ToastContext";
 import InboxView from "./tasks/InboxView";
 import { CardSwipeContext } from "../components/cards/CardShell";
@@ -127,30 +127,12 @@ export default function TasksPage({ theme, onToggleTheme }) {
   }, [loadTasks, loadCounts]);
 
 
-  // Notification toggle
-  const [taskNotifsOn, setTaskNotifsOn] = useState(() => isTaskNotificationsEnabled());
   const toast = useToast();
 
   const showToast = useCallback((message, type = "success") => {
     if (type === "error") toast.error(message);
     else toast.success(message);
   }, [toast]);
-
-  const handleToggleTaskNotifs = useCallback(() => {
-    const next = !taskNotifsOn;
-    setTaskNotifsOn(next);
-    setTaskNotificationsEnabled(next);
-    updateNotificationSettings({ tasks_enabled: next }).catch(() => {});
-    showToast(next ? "Task notifications enabled" : "Task notifications disabled");
-    window.dispatchEvent(new CustomEvent("task-notifs-changed", { detail: { enabled: next } }));
-  }, [taskNotifsOn, showToast]);
-
-  // Cross-pane sync: notification toggle
-  useEffect(() => {
-    const onNotifsChanged = (e) => setTaskNotifsOn(e.detail.enabled);
-    window.addEventListener("task-notifs-changed", onNotifsChanged);
-    return () => window.removeEventListener("task-notifs-changed", onNotifsChanged);
-  }, []);
 
   // --- Bulk action handlers ---
   const moveOptions = INBOX_MOVE_OPTIONS;
@@ -232,38 +214,23 @@ export default function TasksPage({ theme, onToggleTheme }) {
         title="Inbox"
         theme={theme}
         onToggleTheme={onToggleTheme}
-        showTaskRing
         actions={!selecting ? (
-          <>
-            {(counts?.INBOX ?? 0) > 0 && (
-              <button
-                type="button"
-                onClick={handleBatchProcess}
-                disabled={batchProcessing}
-                title="AI batch process — refine prompts & move to Planning"
-                className={`h-7 px-2.5 flex items-center gap-1.5 rounded-full text-[11px] font-semibold transition-all ${
-                  batchProcessing
-                    ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white animate-pulse shadow-md shadow-cyan-500/25"
-                    : "bg-gradient-to-r from-cyan-500/15 to-blue-500/15 text-cyan-500 dark:text-cyan-400 hover:from-cyan-500/25 hover:to-blue-500/25 active:scale-95"
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                AI
-              </button>
-            )}
+          (counts?.INBOX ?? 0) > 0 ? (
             <button
               type="button"
-              onClick={handleToggleTaskNotifs}
-              title={taskNotifsOn ? "Mute all task notifications" : "Unmute all task notifications"}
-              className={`w-8 h-8 flex items-center justify-center rounded-lg hover:bg-input transition-colors ${taskNotifsOn ? "text-cyan-400" : "text-dim"}`}
+              onClick={handleBatchProcess}
+              disabled={batchProcessing}
+              title="AI batch process — refine prompts & move to Planning"
+              className={`h-7 px-2.5 flex items-center gap-1.5 rounded-full text-[11px] font-semibold transition-all ${
+                batchProcessing
+                  ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white animate-pulse shadow-md shadow-cyan-500/25"
+                  : "bg-gradient-to-r from-cyan-500/15 to-blue-500/15 text-cyan-500 dark:text-cyan-400 hover:from-cyan-500/25 hover:to-blue-500/25 active:scale-95"
+              }`}
             >
-              {taskNotifsOn ? (
-                <Bell className="w-4 h-4" />
-              ) : (
-                <BellOff className="w-4 h-4" />
-              )}
+              <Sparkles className="w-3.5 h-3.5" />
+              AI
             </button>
-          </>
+          ) : undefined
         ) : undefined}
         selectAction={!selecting ? (
           <button
