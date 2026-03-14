@@ -64,11 +64,14 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
   const isMultiDrag = activeDragId && selecting && selected.has(activeDragId) && selected.size > 1;
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 15 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 750, tolerance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 350, tolerance: 10 } }),
   );
 
-  const handleDragStart = useCallback((event) => setActiveDragId(event.active.id), []);
+  const handleDragStart = useCallback((event) => {
+    if (navigator.vibrate) navigator.vibrate(10);
+    setActiveDragId(event.active.id);
+  }, []);
 
   const handleDragEnd = useCallback((event) => {
     const { active, over } = event;
