@@ -3799,11 +3799,6 @@ Here are the day's conversations (with timestamps):
             db.flush()
             self._auto_detect_cli_sessions(db)
             self._dedup_pane_agents(db)
-            # Commit so _reap_dead_agents starts a fresh transaction and sees
-            # status changes committed by the sync loop's separate DB session
-            # (e.g. SYNCING→STOPPED) that are invisible inside this transaction.
-            db.commit()
-            self._reap_dead_agents(db)
 
         db.commit()
 
@@ -5594,32 +5589,12 @@ Here are the day's conversations (with timestamps):
                     finally:
                         db_chk.close()
 
-                    if pane_alive:
-                        if ctx.getsize_error_count % 20 == 0:
-                            logger.info(
-                                "Sync loop: session file missing for %d polls "
-                                "but pane alive — waiting (agent %s)",
-                                ctx.getsize_error_count, agent_id,
-                            )
-                        continue
-
-                    logger.warning(
-                        "Sync loop: session file missing for %d polls "
-                        "and no live pane — stopping agent %s",
-                        ctx.getsize_error_count, agent_id,
-                    )
-                    db = SessionLocal()
-                    try:
-                        agent = db.get(Agent, agent_id)
-                        if agent and agent.status == AgentStatus.SYNCING:
-                            self.stop_agent_cleanup(
-                                db, agent, "Session file not found — sync stopped",
-                                kill_tmux=False, cancel_tasks=False,
-                            )
-                            db.commit()
-                    finally:
-                        db.close()
-                    break
+                    if ctx.getsize_error_count % 20 == 0:
+                        logger.info(
+                            "Sync loop: session file missing for %d polls "
+                            "(agent %s, pane_alive=%s) — continuing",
+                            ctx.getsize_error_count, agent_id, pane_alive,
+                        )
                 continue
 
             # Compact detection — file shrink
@@ -5677,26 +5652,6 @@ Here are the day's conversations (with timestamps):
                         db_check.close()
 
                     if not pane_alive:
-                        if ctx.idle_polls >= 3:
-                            logger.info(
-                                "Sync loop stopping for agent %s — "
-                                "tmux pane dead for %d idle polls",
-                                agent_id, ctx.idle_polls,
-                            )
-                            db_stop = SessionLocal()
-                            try:
-                                ag_stop = db_stop.get(Agent, agent_id)
-                                if ag_stop and ag_stop.status == AgentStatus.SYNCING:
-                                    self.stop_agent_cleanup(
-                                        db_stop, ag_stop,
-                                        "CLI session ended — sync stopped (tmux pane gone)",
-                                        kill_tmux=False, cancel_tasks=False,
-                                    )
-                                    ag_stop.last_message_at = _utcnow()
-                                    db_stop.commit()
-                            finally:
-                                db_stop.close()
-                            return
                         continue  # tmux is dead, skip continuation check
 
                     new_sid = self._detect_successor_session(
