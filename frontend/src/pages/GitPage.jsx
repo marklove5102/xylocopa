@@ -382,7 +382,7 @@ export default function GitPage({ theme, onToggleTheme }) {
   // --- Render ---
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Git" theme={theme} onToggleTheme={onToggleTheme}>
+      <PageHeader title="Git" theme={theme} onToggleTheme={onToggleTheme} hideMonitor>
         {loadingProjects ? (
           <div className="flex gap-1.5 px-4 pb-3 animate-pulse">
             {Array.from({ length: 3 }).map((_, i) => (

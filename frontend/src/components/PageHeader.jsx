@@ -202,7 +202,7 @@ const MoonIcon = (
   </svg>
 );
 
-export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, children }) {
+export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, hideMonitor, children }) {
   const navigate = useNavigate();
   const health = useHealthStatus();
   const { taskStats } = useMonitor();
@@ -264,88 +264,81 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
             {showStatsPopover && <TaskStatsPopover taskStats={taskStats} onClose={closePopover} containerRef={ringContainerRef} />}
           </div>
         )}
-        <button
-          type="button"
-          onClick={() => navigate("/monitor")}
-          title={health === null ? "Checking system health..." : isHealthy ? "System healthy" : "System issue detected"}
-          className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors hover:opacity-80 ${chipCls}`}
-        >
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
-          {chipLabel}
-        </button>
-        <button
-          type="button"
-          title="Restart AgentHive"
-          disabled={restarting}
-          onClick={async () => {
-            if (!confirm("Restart AgentHive server?")) return;
-            setRestarting(true);
-            // Clean up any previous polling
-            if (pollRef.current) clearInterval(pollRef.current);
-            if (abortRef.current) abortRef.current.abort();
-            const controller = new AbortController();
-            abortRef.current = controller;
-            try {
-              await restartServer();
-              // Wait for old server to die before polling.
-              // _delayed_restart sleeps 0.5s then kills processes,
-              // so the old server can respond for ~1-2s after we get the response.
-              let attempts = 0;
-              let sawDown = false;
-              let consecutiveOk = 0;
-              pollRef.current = setInterval(async () => {
-                if (controller.signal.aborted) {
-                  clearInterval(pollRef.current);
-                  return;
-                }
-                attempts++;
-                if (attempts > 60) {
-                  clearInterval(pollRef.current);
-                  pollRef.current = null;
-                  setRestarting(false);
-                  alert("Server did not restart after 60s. Check logs.");
-                  return;
-                }
+        {!hideMonitor && (
+          <>
+            <button
+              type="button"
+              onClick={() => navigate("/monitor")}
+              title={health === null ? "Checking system health..." : isHealthy ? "System healthy" : "System issue detected"}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors hover:opacity-80 ${chipCls}`}
+            >
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
+              {chipLabel}
+            </button>
+            <button
+              type="button"
+              title="Restart AgentHive"
+              disabled={restarting}
+              onClick={async () => {
+                if (!confirm("Restart AgentHive server?")) return;
+                setRestarting(true);
+                if (pollRef.current) clearInterval(pollRef.current);
+                if (abortRef.current) abortRef.current.abort();
+                const controller = new AbortController();
+                abortRef.current = controller;
                 try {
-                  const h = await fetchHealth();
-                  if (controller.signal.aborted) return;
-                  if (!sawDown) {
-                    // Still hitting old server — ignore until we see it go down
-                    return;
-                  }
-                  // Server is back — require 2 consecutive OKs to be sure
-                  consecutiveOk++;
-                  if (consecutiveOk >= 2 && h?.status === "ok") {
-                    clearInterval(pollRef.current);
-                    pollRef.current = null;
-                    window.location.reload();
-                  }
-                } catch (err) {
-                  if (controller.signal.aborted) return;
-                  // Network errors (TypeError) or 5xx indicate server is down
-                  if (err instanceof TypeError || (err.message && /^HTTP 5\d\d/.test(err.message))) {
-                    sawDown = true;
-                    consecutiveOk = 0;
-                  } else {
-                    // Non-network error (e.g. 4xx, CORS) — still mark as down during restart
-                    // but log for visibility
-                    console.warn("Restart poll unexpected error:", err);
-                    sawDown = true;
-                    consecutiveOk = 0;
-                  }
+                  await restartServer();
+                  let attempts = 0;
+                  let sawDown = false;
+                  let consecutiveOk = 0;
+                  pollRef.current = setInterval(async () => {
+                    if (controller.signal.aborted) {
+                      clearInterval(pollRef.current);
+                      return;
+                    }
+                    attempts++;
+                    if (attempts > 60) {
+                      clearInterval(pollRef.current);
+                      pollRef.current = null;
+                      setRestarting(false);
+                      alert("Server did not restart after 60s. Check logs.");
+                      return;
+                    }
+                    try {
+                      const h = await fetchHealth();
+                      if (controller.signal.aborted) return;
+                      if (!sawDown) return;
+                      consecutiveOk++;
+                      if (consecutiveOk >= 2 && h?.status === "ok") {
+                        clearInterval(pollRef.current);
+                        pollRef.current = null;
+                        window.location.reload();
+                      }
+                    } catch (err) {
+                      if (controller.signal.aborted) return;
+                      if (err instanceof TypeError || (err.message && /^HTTP 5\d\d/.test(err.message))) {
+                        sawDown = true;
+                        consecutiveOk = 0;
+                      } else {
+                        console.warn("Restart poll unexpected error:", err);
+                        sawDown = true;
+                        consecutiveOk = 0;
+                      }
+                    }
+                  }, 1000);
+                } catch (e) {
+                  setRestarting(false);
+                  alert(e.message || "Restart failed");
                 }
-              }, 1000);
-            } catch (e) {
-              setRestarting(false);
-              alert(e.message || "Restart failed");
-            }
-          }}
-          className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${restarting ? "text-amber-400 animate-pulse" : "text-dim hover:text-heading hover:bg-input"}`}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1012.728 0M12 3v9" />
-          </svg>
-        </button>
+              }}
+              className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${restarting ? "text-amber-400 animate-pulse" : "text-dim hover:text-heading hover:bg-input"}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1012.728 0M12 3v9" />
+              </svg>
+            </button>
+          </>
+        )}
         {selectAction}
         {onToggleTheme && (
           <button
