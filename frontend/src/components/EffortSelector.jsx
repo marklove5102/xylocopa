@@ -9,13 +9,12 @@ export default function EffortSelector({ value, onChange }) {
           key={lvl}
           type="button"
           onClick={() => onChange(lvl)}
-          className="flex-1 px-1 py-1.5 rounded-md flex items-center justify-center cursor-pointer"
+          className="flex-1 px-0.5 py-1.5 rounded-md flex items-center justify-center cursor-pointer"
         >
           <span
-            className={`block w-full rounded-[2px] transition-colors ${
+            className={`block h-3 w-3 rounded-[2px] transition-colors ${
               i <= activeIdx ? "bg-cyan-500" : "bg-current/15"
             }`}
-            style={{ aspectRatio: "1" }}
           />
         </button>
       ))}
