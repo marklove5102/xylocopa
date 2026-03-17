@@ -168,8 +168,12 @@ export const revertTaskChanges = (id) =>
   request(`/api/v2/tasks/${id}/revert-try`, { method: "POST" });
 export const verifyTask = (id) =>
   request(`/api/v2/tasks/${id}/verify`, { method: "POST" });
-export const batchProcessTasks = () =>
-  request("/api/v2/tasks/batch-process", { method: "POST" });
+export const batchProcessTasks = (taskIds) =>
+  request("/api/v2/tasks/batch-process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(taskIds ? { task_ids: taskIds } : {}),
+  });
 
 // --- Agents ---
 export const fetchAgents = (params = "") =>

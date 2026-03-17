@@ -3253,13 +3253,18 @@ async def get_task_v2(task_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/v2/tasks/batch-process")
 async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
-    """Spawn an agent to triage inbox tasks: refine prompts, assign projects, move to planning."""
-    inbox_tasks = (
-        db.query(Task)
-        .filter(Task.status == TaskStatus.INBOX)
-        .order_by(Task.sort_order, Task.created_at.desc())
-        .all()
-    )
+    """Spawn an agent to triage inbox tasks: refine prompts, assign projects, dispatch."""
+    # Accept optional task_ids to process only selected tasks
+    try:
+        body_raw = await request.json()
+    except Exception:
+        body_raw = {}
+    task_ids = body_raw.get("task_ids")
+
+    query = db.query(Task).filter(Task.status == TaskStatus.INBOX)
+    if task_ids:
+        query = query.filter(Task.id.in_(task_ids))
+    inbox_tasks = query.order_by(Task.sort_order, Task.created_at.desc()).all()
     if not inbox_tasks:
         raise HTTPException(400, "No inbox tasks to process")
 
@@ -3284,9 +3289,9 @@ async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
 
 FOR EACH TASK:
 1. **Title**: Rewrite to be clear, specific, and actionable (<80 chars). Keep good titles unchanged.
-2. **Description**: Focus on making the problem definition crystal clear — what is the current behavior, what is the desired outcome, and why it matters. Do NOT add implementation steps or technical solutions; that's the executing agent's job. Preserve existing good content. Keep the original language.
+2. **Description**: Focus on making the problem definition crystal clear — what is the current behavior, what is the desired outcome, and why it matters. Do NOT add implementation steps or technical solutions — the executing agent will explore the codebase and figure out the approach itself. Preserve existing good content. Keep the original language.
 3. **Project**: If project_name is null, assign the best-matching project. If none fits, leave null.
-4. **Move to Planning**: If the task has enough detail AND a project, move it to the PLANNING queue.
+4. **Dispatch**: If the task has enough detail AND a project, dispatch it for execution.
 
 AVAILABLE PROJECTS:
 {json.dumps(project_list, ensure_ascii=False, indent=2)}
@@ -3296,10 +3301,10 @@ INBOX TASKS:
 
 HOW TO UPDATE:
 - Update a task: curl -s -X PUT {api_base}/api/v2/tasks/TASK_ID -H "Content-Type: application/json" -d '{{"title":"...","description":"...","project_name":"..."}}'
-- Move to planning: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/plan
+- Dispatch for execution: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/dispatch
 
 SAFETY RULES:
-- You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/plan (move to planning)
+- You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/dispatch (start execution)
 - Do NOT call any other endpoints (no /api/agents/*, /api/git/*, /api/projects/*, DELETE endpoints, etc.)
 - Do NOT write to memory files (.claude/memory/, MEMORY.md) or modify CLAUDE.md
 
@@ -3308,7 +3313,7 @@ INSTRUCTIONS:
 2. If anything is ambiguous — unclear intent, multiple possible projects, vague descriptions that could go different directions — ask the user to clarify before proceeding. Don't guess on important decisions.
 3. Ask the user to confirm before applying changes
 4. After confirmation, execute the curl commands to update each task
-5. Report a final summary of what was changed and moved"""
+5. Report a final summary of what was changed and dispatched"""
 
     # Create the agent via the same flow as POST /api/agents
     body = AgentCreate(
@@ -4381,11 +4386,6 @@ async def hook_agent_tool_activity(request: Request):
         output_summary = _tool_output_summary(tool_name, tool_output, is_error) if tool_output else ""
         await emit_tool_activity(agent_id, tool_name, phase, tool_input=tool_input,
                                   tool_output=tool_output, is_error=is_error)
-        # User interrupted during tool execution — clear generating state
-        if hook_event == "PostToolUseFailure" and body.get("is_interrupt"):
-            if ad:
-                logger.info("PostToolUseFailure(interrupt): clearing generating for %s", agent_id[:8])
-                ad._stop_generating(agent_id)
     # --- Subagent lifecycle ---
     elif hook_event == "SubagentStart":
         agent_type = body.get("agent_type", "subagent")
@@ -7357,8 +7357,39 @@ async def send_escape_to_agent(agent_id: str, db: Session = Depends(get_db)):
     if not send_tmux_keys(agent.tmux_pane, ["Escape"]):
         raise HTTPException(status_code=500, detail="Failed to send Escape to tmux")
 
+    # Wait briefly for Claude Code to write "[Request interrupted by user]"
+    # to JSONL, then verify the interrupt actually happened before clearing state.
+    interrupted = False
+    ad = getattr(app.state, "agent_dispatcher", None)
+    if ad and agent.session_id:
+        await asyncio.sleep(0.15)  # 150ms for Claude to write JSONL
+        # Read only new JSONL data since last sync offset
+        ctx = ad._sync_contexts.get(agent_id)
+        jsonl_path = ctx.jsonl_path if ctx else None
+        read_from = ctx.last_offset if ctx else 0
+        if not jsonl_path:
+            from agent_dispatcher import _resolve_session_jsonl
+            project_obj = db.query(Project).filter(Project.name == agent.project).first()
+            proj_path = project_obj.path if project_obj else ""
+            jsonl_path = _resolve_session_jsonl(agent.session_id, proj_path, agent.worktree)
+        if jsonl_path:
+            try:
+                with open(jsonl_path, "rb") as f:
+                    f.seek(read_from)
+                    new_data = f.read().decode("utf-8", errors="replace")
+                if "[Request interrupted by user" in new_data:
+                    interrupted = True
+            except OSError:
+                pass
+
+    if interrupted and ad:
+        ad._stop_generating(agent_id)
+        logger.info("escape: interrupt confirmed in JSONL for %s, cleared generating", agent_id[:8])
+    elif not interrupted:
+        logger.warning("escape: no interrupt entry in JSONL for %s after 150ms", agent_id[:8])
+
     logger.info("Sent Escape to agent %s pane %s", agent_id, agent.tmux_pane)
-    return {"detail": "ok"}
+    return {"detail": "ok", "interrupted": interrupted}
 
 
 # ---- Processes ----

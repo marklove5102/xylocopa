@@ -172,12 +172,13 @@ export default function TasksPage({ theme, onToggleTheme }) {
   // --- AI batch process (triage agent) ---
   const [batchProcessing, setBatchProcessing] = useState(false);
 
-  const handleBatchProcess = useCallback(async () => {
+  const handleBatchProcess = useCallback(async (taskIds) => {
     if (batchProcessing) return;
     setBatchProcessing(true);
     try {
-      const res = await batchProcessTasks();
+      const res = await batchProcessTasks(taskIds);
       if (res.agent_id) {
+        if (selecting) exitSelectMode();
         navigate(`/agents/${res.agent_id}`);
       } else {
         showToast(res.message || "No tasks to process");
@@ -187,7 +188,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
     } finally {
       setBatchProcessing(false);
     }
-  }, [batchProcessing, showToast, navigate]);
+  }, [batchProcessing, selecting, exitSelectMode, showToast, navigate]);
 
   return (
     <div className="h-full flex flex-col">
@@ -200,7 +201,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
           (counts?.INBOX ?? 0) > 0 ? (
             <button
               type="button"
-              onClick={handleBatchProcess}
+              onClick={() => handleBatchProcess()}
               disabled={batchProcessing}
               title="AI batch process — refine prompts & assign projects"
               className={`h-7 px-2.5 flex items-center gap-1.5 rounded-full text-[11px] font-semibold transition-all ${
@@ -285,6 +286,20 @@ export default function TasksPage({ theme, onToggleTheme }) {
       {selecting && selected.size > 0 && (
         <div className="fixed bottom-20 left-0 right-0 z-20 px-4 pb-2 animate-bar-slide-up">
           <div className="max-w-xl mx-auto bg-surface border border-divider rounded-xl shadow-lg p-3 flex items-center justify-center gap-3">
+            {/* AI batch process selected */}
+            <button
+              type="button"
+              onClick={() => handleBatchProcess([...selected])}
+              disabled={batchProcessing || actionLoading}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
+                batchProcessing
+                  ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white animate-pulse"
+                  : "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500"
+              } disabled:opacity-50`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              AI {selected.size}
+            </button>
             {/* Start */}
             {dispatchableCount > 0 && (
               <button

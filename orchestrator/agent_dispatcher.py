@@ -2991,6 +2991,12 @@ Here are the day's conversations (with timestamps):
         # Kill tmux + clear pane
         self._clear_agent_pane(db, agent, kill_tmux=kill_tmux)
 
+        # Clear generating state — _cancel_sync_task pops the task before
+        # cancel, so the sync loop's finally block skips _stop_generating.
+        if agent.id in self._generating_agents:
+            self._stop_generating(agent.id)
+        agent.generating_msg_id = None
+
         agent.status = AgentStatus.STOPPED
 
         if fail_executing:
@@ -3324,12 +3330,6 @@ Here are the day's conversations (with timestamps):
         if task.description:
             parts.append(f"\n{task.description}")
 
-        # Approved plan from planning phase (stored in retry_context for attempt 1)
-        if task.attempt_number <= 1 and task.retry_context:
-            parts.append(f"\n## Approved Implementation Plan")
-            parts.append("Follow this plan. It was reviewed and approved by the user.")
-            parts.append(task.retry_context)
-
         if task.attempt_number > 1 and task.retry_context:
             parts.append(f"\n## Previous Attempt Context (attempt #{task.attempt_number})")
             parts.append(task.retry_context)
@@ -3357,12 +3357,15 @@ Here are the day's conversations (with timestamps):
                 logger.debug("Failed to query insights for task %s", task.id, exc_info=True)
 
         parts.append("\n## Before You Start")
+        parts.append("- **Explore first** — read relevant files, trace the full code flow, understand the architecture before writing any code")
+        parts.append("- **Ask questions** if anything is unclear or ambiguous — don't assume, ask early. The user is here to help clarify.")
         if insights_block:
             parts.append("- Review these relevant past insights and lessons (avoid repeating past mistakes):")
             parts.append(insights_block)
         else:
             parts.append("- Read PROGRESS.md in the project root (if it exists), focusing on entries relevant to this task — avoid repeating past mistakes")
         parts.append("\n## Guidelines")
+        parts.append("- Discuss your approach with the user before making large changes — share what you found and your plan")
         parts.append("- Commit all changes with descriptive messages")
         parts.append("- Before your final message, append a short entry to PROGRESS.md with today's date, task title, and any lessons learned (gotchas, workarounds, or 'straightforward — no issues' if none)")
         parts.append("- Leave a summary of what was done as your final message")
