@@ -31,6 +31,7 @@ from database import SessionLocal, get_db, init_db
 from log_config import setup_logging
 from models import (
     Agent,
+    AgentInsightSuggestion,
     AgentMode,
     AgentStatus,
     Message,
@@ -47,6 +48,7 @@ from utils import utcnow as _utcnow
 from schemas import (
     AgentBrief,
     AgentCreate,
+    AgentInsightSuggestionOut,
     AgentOut,
     AgentTaskBrief,
     AgentTaskDetail,
@@ -270,6 +272,8 @@ async def lifespan(app: FastAPI):
             sys.exit(1)
 
     logger.info("AgentHive starting up...")
+    global _main_event_loop
+    _main_event_loop = asyncio.get_event_loop()
     init_db()
     logger.info("Database initialized")
 
@@ -2478,6 +2482,7 @@ async def apply_claudemd(name: str, body: ApplyClaudeMdRequest, db: Session = De
 
 _progress_jobs: dict[str, dict] = {}
 _progress_jobs_lock = threading.Lock()
+_main_event_loop: asyncio.AbstractEventLoop | None = None  # set during lifespan
 _PROGRESS_CACHE_TTL = 600  # 10 minutes
 
 
@@ -2641,6 +2646,171 @@ Here are today's conversations (with timestamps):
     # For manual flow: show proposed section for user review before appending
     data = {"proposed": new_section, "is_append": True}
     _progress_job_set(project_name, status="complete", data=data)
+
+
+def _gather_agent_conversation_context(db, agent_id: str) -> str:
+    """Gather all messages for a single agent as context for insight extraction."""
+    from agent_dispatcher import _strip_agent_preamble
+
+    messages = (
+        db.query(Message)
+        .filter(Message.agent_id == agent_id)
+        .order_by(Message.created_at)
+        .all()
+    )
+    if not messages:
+        return ""
+
+    parts = []
+    total = 0
+    max_msg = 4000  # per-message truncation (tool outputs can be huge)
+    max_total = 200_000
+
+    for msg in messages:
+        role = msg.role.value
+        content = _strip_agent_preamble(msg.content or "")
+        if len(content) > max_msg:
+            content = content[:max_msg] + "\n...(truncated)"
+        line = f"[{role}] {content}"
+        total += len(line)
+        if total > max_total:
+            parts.append("...(remaining messages omitted)")
+            break
+        parts.append(line)
+
+    return "\n".join(parts)
+
+
+def _run_agent_summary_background(agent_id: str, agent_name: str,
+                                  task_title: str, project_name: str,
+                                  project_path: str):
+    """Run claude -p in a background thread to extract insights from an agent conversation."""
+    from config import CLAUDE_BIN
+    from session_cache import session_source_dir as _ssd
+    from agent_dispatcher import _write_session_owner
+
+    own_db = SessionLocal()
+    try:
+        context = _gather_agent_conversation_context(own_db, agent_id)
+    finally:
+        own_db.close()
+
+    if not context:
+        logger.info("No conversation context for agent %s — skipping summary", agent_id)
+        return
+
+    prompt = f"""You are a project analyst. Read the following agent conversation and extract insights worth remembering for PROGRESS.md.
+
+STRICT RULES:
+1. Output ONLY numbered insights — no preamble, no explanation, no markdown fences.
+2. Focus on: architectural decisions, bug root causes & fixes, design choices, gotchas, and lessons learned.
+3. Omit routine/trivial activity. Only include things worth remembering for future work.
+4. Each insight must be self-contained — readable without the original conversation.
+5. Max 15 items. Be concise but specific — include file names, function names, concrete details.
+
+Agent: {agent_name} | Task: {task_title}
+
+{context}"""
+
+    # Snapshot existing session files so we can mark new ones as "system"
+    _session_dir = _ssd(project_path)
+    _pre_sessions: set[str] = set()
+    try:
+        _pre_sessions = {
+            f.replace(".jsonl", "")
+            for f in os.listdir(_session_dir)
+            if f.endswith(".jsonl")
+        }
+    except OSError:
+        pass
+
+    try:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            input=prompt,
+            capture_output=True, text=True, timeout=300,
+            cwd=project_path,
+        )
+
+        # Mark any new sessions created by this subprocess as "system"
+        try:
+            for f in os.listdir(_session_dir):
+                if not f.endswith(".jsonl"):
+                    continue
+                sid = f.replace(".jsonl", "")
+                if sid not in _pre_sessions:
+                    _write_session_owner(_session_dir, sid, "system")
+                    logger.info("Marked agent-summary session %s as system-owned", sid[:12])
+        except OSError:
+            pass
+
+        if result.returncode != 0:
+            logger.warning("Agent summary failed for %s: %s", agent_id, result.stderr[:500])
+            return
+
+        raw_output = result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.warning("Agent summary timed out for %s", agent_id)
+        return
+    except FileNotFoundError:
+        logger.warning("Claude CLI not found for agent summary")
+        return
+    except Exception:
+        logger.exception("Unexpected error in agent summary for %s", agent_id)
+        return
+
+    if not raw_output:
+        logger.info("Claude returned empty output for agent %s summary", agent_id)
+        return
+
+    # Strip markdown fences if LLM wrapped output
+    if raw_output.startswith("```"):
+        lines = raw_output.split("\n")
+        if lines[-1].strip() == "```":
+            lines = lines[1:-1]
+        else:
+            lines = lines[1:]
+        raw_output = "\n".join(lines).strip()
+
+    # Parse numbered insights
+    insight_items = re.findall(r"^\d+\.\s+(.+)", raw_output, re.MULTILINE)
+    if not insight_items:
+        logger.info("No insights parsed from agent %s summary", agent_id)
+        return
+
+    # Store as AgentInsightSuggestion rows
+    own_db = SessionLocal()
+    try:
+        for content in insight_items:
+            own_db.add(AgentInsightSuggestion(
+                agent_id=agent_id,
+                content=content.strip(),
+            ))
+        agent = own_db.get(Agent, agent_id)
+        if agent:
+            agent.has_pending_suggestions = True
+        own_db.commit()
+        logger.info("Stored %d insight suggestions for agent %s", len(insight_items), agent_id)
+    except Exception:
+        logger.exception("Failed to store insight suggestions for agent %s", agent_id)
+        own_db.rollback()
+        return
+    finally:
+        own_db.close()
+
+    # Emit WS event (from background thread → use stored main event loop)
+    from websocket import emit_progress_suggestions_ready
+    try:
+        loop = _main_event_loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                emit_progress_suggestions_ready(agent_id, len(insight_items), project_name),
+                loop,
+            )
+        else:
+            logger.debug("Main event loop not available for WS emit")
+    except Exception:
+        logger.debug("Failed to emit progress_suggestions_ready WS event", exc_info=True)
 
 
 @app.post("/api/projects/{name}/summarize-progress")
@@ -2807,6 +2977,11 @@ async def update_project_settings(name: str, request: Request, db: Session = Dep
         proj.auto_progress_summary = bool(body["auto_progress_summary"])
     if "ai_insights" in body:
         proj.ai_insights = bool(body["ai_insights"])
+    if "max_concurrent" in body:
+        val = int(body["max_concurrent"])
+        if val < 1:
+            raise HTTPException(status_code=400, detail="max_concurrent must be >= 1")
+        proj.max_concurrent = val
 
     db.commit()
     db.refresh(proj)
@@ -3133,6 +3308,39 @@ async def task_counts(db: Session = Depends(get_db)):
         "weekly_cancelled": weekly_by.get("CANCELLED", 0),
         "weekly_rejected": weekly_by.get("REJECTED", 0),
         "daily": daily,
+    }
+
+
+@app.get("/api/v2/tasks/queue")
+async def task_queue_status(db: Session = Depends(get_db)):
+    """Return queue status: pending/executing tasks + per-project capacity."""
+    active_statuses = [AgentStatus.STARTING, AgentStatus.EXECUTING, AgentStatus.SYNCING]
+
+    # Pending + executing tasks
+    queue_tasks = (
+        db.query(Task)
+        .filter(Task.status.in_([TaskStatus.PENDING, TaskStatus.EXECUTING]))
+        .order_by(Task.priority.desc(), Task.created_at.asc())
+        .all()
+    )
+
+    # Per-project capacity
+    projects = db.query(Project).filter(Project.archived == False).all()
+    capacity = {}
+    for proj in projects:
+        active = (
+            db.query(func.count(Agent.id))
+            .filter(Agent.project == proj.name, Agent.status.in_(active_statuses))
+            .scalar()
+        )
+        capacity[proj.name] = {
+            "max_concurrent": proj.max_concurrent,
+            "active": active,
+        }
+
+    return {
+        "tasks": [TaskOut.model_validate(t) for t in queue_tasks],
+        "capacity": capacity,
     }
 
 
@@ -6380,13 +6588,27 @@ async def get_agent(agent_id: str, request: Request, db: Session = Depends(get_d
 
 
 @app.delete("/api/agents/{agent_id}", response_model=AgentOut)
-async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
+async def stop_agent(agent_id: str, request: Request,
+                     generate_summary: bool = False,
+                     db: Session = Depends(get_db)):
     """Stop an agent — marks STOPPED."""
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is already stopped")
+
+    # Capture task info before stopping (needed for background summary)
+    _task_title = None
+    _project_path = None
+    _should_summarize = generate_summary and agent.task_id
+    if _should_summarize:
+        task = db.get(Task, agent.task_id)
+        _task_title = task.title if task else "Unknown task"
+        project = db.get(Project, agent.project)
+        _project_path = project.path if project else None
+        if not _project_path:
+            _should_summarize = False
 
     # Kill the tmux pane/session if this is a CLI-synced agent
     if agent.cli_sync and agent.tmux_pane:
@@ -6445,7 +6667,145 @@ async def stop_agent(agent_id: str, request: Request, db: Session = Depends(get_
     db.commit()
     db.refresh(agent)
     logger.info("Agent %s stopped", agent.id)
+
+    # Spawn background summary thread if requested
+    if _should_summarize:
+        thread = threading.Thread(
+            target=_run_agent_summary_background,
+            args=(agent.id, agent.name, _task_title, agent.project, _project_path),
+            daemon=True,
+        )
+        thread.start()
+        logger.info("Spawned background summary for agent %s", agent.id)
+
     return agent
+
+
+# --- Agent Insight Suggestions ---
+
+@app.get("/api/agents/{agent_id}/suggestions", response_model=list[AgentInsightSuggestionOut])
+async def get_agent_suggestions(agent_id: str, db: Session = Depends(get_db)):
+    """Return pending insight suggestions for an agent."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    rows = (
+        db.query(AgentInsightSuggestion)
+        .filter(
+            AgentInsightSuggestion.agent_id == agent_id,
+            AgentInsightSuggestion.status == "pending",
+        )
+        .order_by(AgentInsightSuggestion.id)
+        .all()
+    )
+    return rows
+
+
+class _ApplySuggestionsBody(BaseModel):
+    accepted: list[dict] = []  # [{id, edited_content?}]
+    rejected_ids: list[int] = []
+
+
+@app.post("/api/agents/{agent_id}/apply-suggestions")
+async def apply_agent_suggestions(agent_id: str, body: _ApplySuggestionsBody,
+                                  db: Session = Depends(get_db)):
+    """Accept/reject insight suggestions — write accepted ones to PROGRESS.md + FTS5."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    project = db.get(Project, agent.project)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    accepted_ids = {item["id"] for item in body.accepted}
+    edits = {item["id"]: item.get("edited_content") for item in body.accepted}
+
+    # Build PROGRESS.md section from accepted suggestions
+    accepted_contents = []
+    for item in body.accepted:
+        row = db.get(AgentInsightSuggestion, item["id"])
+        if not row or row.agent_id != agent_id:
+            continue
+        content = item.get("edited_content") or row.content
+        row.edited_content = item.get("edited_content")
+        row.status = "accepted"
+        accepted_contents.append(content)
+
+    # Mark rejected
+    for rid in body.rejected_ids:
+        row = db.get(AgentInsightSuggestion, rid)
+        if row and row.agent_id == agent_id:
+            row.status = "rejected"
+
+    # Mark remaining pending as rejected too
+    remaining = (
+        db.query(AgentInsightSuggestion)
+        .filter(
+            AgentInsightSuggestion.agent_id == agent_id,
+            AgentInsightSuggestion.status == "pending",
+            AgentInsightSuggestion.id.notin_(accepted_ids),
+        )
+        .all()
+    )
+    for r in remaining:
+        r.status = "rejected"
+
+    # Clear flag
+    agent.has_pending_suggestions = False
+    db.commit()
+
+    # Write accepted insights to PROGRESS.md
+    if accepted_contents:
+        from agent_dispatcher import store_insights
+        today = datetime.now(timezone.utc).date().isoformat()
+        progress_path = os.path.join(project.path, "PROGRESS.md")
+
+        # Build section text
+        task = db.get(Task, agent.task_id) if agent.task_id else None
+        task_label = task.title if task else agent.name
+        section_lines = [f"## {today} — {task_label}"]
+        for i, c in enumerate(accepted_contents, 1):
+            section_lines.append(f"{i}. {c}")
+        new_section = "\n".join(section_lines)
+
+        try:
+            existing = ""
+            if os.path.isfile(progress_path):
+                with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
+                    existing = f.read()
+            separator = "\n\n" if existing and not existing.endswith("\n\n") else (
+                "\n" if existing and not existing.endswith("\n") else "")
+            with open(progress_path, "w", encoding="utf-8") as f:
+                f.write(existing + separator + new_section + "\n")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+        # Store in FTS5
+        try:
+            n = store_insights(db, agent.project, today, new_section, agent_id=agent_id)
+            if n:
+                logger.info("Stored %d agent insights in FTS5 for %s", n, agent.project)
+        except Exception:
+            logger.warning("Failed to store FTS5 insights for %s", agent.project, exc_info=True)
+
+    return {"success": True, "accepted": len(accepted_contents)}
+
+
+@app.delete("/api/agents/{agent_id}/suggestions")
+async def discard_agent_suggestions(agent_id: str, db: Session = Depends(get_db)):
+    """Reject all pending suggestions for an agent."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    db.query(AgentInsightSuggestion).filter(
+        AgentInsightSuggestion.agent_id == agent_id,
+        AgentInsightSuggestion.status == "pending",
+    ).update({"status": "rejected"})
+    agent.has_pending_suggestions = False
+    db.commit()
+    return {"success": True}
 
 
 @app.delete("/api/agents/{agent_id}/permanent")

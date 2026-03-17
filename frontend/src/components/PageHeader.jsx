@@ -2,11 +2,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
 import { useMonitor } from "../contexts/MonitorContext";
-import { restartServer, fetchHealth } from "../lib/api";
+import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings } from "../lib/api";
 import { isSystemHealthy } from "../lib/constants";
 
 /* ── Task Stats Popover ── */
 function TaskStatsPopover({ taskStats, onClose, containerRef }) {
+  const [queueData, setQueueData] = useState(null);
+  const [editingCap, setEditingCap] = useState(null);
+
   useEffect(() => {
     const handler = (e) => {
       if (containerRef.current && !containerRef.current.contains(e.target)) onClose();
@@ -14,6 +17,31 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose, containerRef]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetchQueueStatus();
+        if (!cancelled) setQueueData(res);
+      } catch { /* ignore */ }
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const handleCapSave = async (project) => {
+    if (!editingCap || editingCap.project !== project) return;
+    const val = parseInt(editingCap.value, 10);
+    if (isNaN(val) || val < 1) { setEditingCap(null); return; }
+    try {
+      await updateProjectSettings(project, { max_concurrent: val });
+      const res = await fetchQueueStatus();
+      setQueueData(res);
+    } catch { /* skip */ }
+    setEditingCap(null);
+  };
 
   const wTotal = taskStats?.weekly_total ?? 0;
   const wCompleted = taskStats?.weekly_completed ?? 0;
@@ -185,6 +213,65 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
             ))}
           </div>
         </div>
+
+        {/* Queue Capacity */}
+        {queueData && (() => {
+          const { capacity } = queueData;
+          const activeProjects = Object.entries(capacity).filter(([, c]) => c.active > 0 || c.max_concurrent > 0);
+          if (activeProjects.length === 0) return null;
+          return (
+            <div className="border-t border-divider px-4 py-2.5">
+              <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-2">Queue Capacity</div>
+              <div className="space-y-2">
+                {activeProjects.map(([name, cap]) => {
+                  const pct = cap.max_concurrent > 0 ? Math.min(100, (cap.active / cap.max_concurrent) * 100) : 0;
+                  const isEditing = editingCap?.project === name;
+                  return (
+                    <div key={name} className="space-y-0.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-body font-medium truncate max-w-[120px]">{name}</span>
+                        <span className="text-dim tabular-nums">
+                          {cap.active}/
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min={1}
+                              value={editingCap.value}
+                              onChange={(e) => setEditingCap({ project: name, value: e.target.value })}
+                              onBlur={() => handleCapSave(name)}
+                              onKeyDown={(e) => { if (e.key === "Enter") handleCapSave(name); if (e.key === "Escape") setEditingCap(null); }}
+                              autoFocus
+                              className="w-8 bg-input text-heading text-center rounded px-0.5 outline-none border border-edge/30 focus:border-cyan-500/50"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setEditingCap({ project: name, value: String(cap.max_concurrent) }); }}
+                              className="text-dim hover:text-heading transition-colors cursor-pointer"
+                              title="Click to edit capacity"
+                            >
+                              {cap.max_concurrent}
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "var(--color-input)" }}>
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: pct >= 100 ? "#f59e0b" : pct >= 70 ? "#eab308" : "#06b6d4",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -241,7 +328,7 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
     <div className="shrink-0 bg-page border-b border-divider z-10">
       <div className="flex items-center gap-3 px-4 pb-2" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))" }}>
         <h1 className="text-xl font-bold text-heading flex-1 shrink-0">{title}</h1>
-        {showTaskRing && taskStats && wTotal > 0 && (
+        {showTaskRing && taskStats && (
           <div className="relative" ref={ringContainerRef}>
             <button
               type="button"
