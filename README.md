@@ -333,7 +333,7 @@ After installing the certificate, restart your browser. The security warning sho
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 <!-- AUTO-GENERATED: Project details from CLAUDE.md scaffold -->
 
