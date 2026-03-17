@@ -196,6 +196,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
         title="Inbox"
         theme={theme}
         onToggleTheme={onToggleTheme}
+        showTaskRing
         hideMonitor
         actions={!selecting ? (
           (counts?.INBOX ?? 0) > 0 ? (

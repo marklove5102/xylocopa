@@ -168,6 +168,7 @@ export const revertTaskChanges = (id) =>
   request(`/api/v2/tasks/${id}/revert-try`, { method: "POST" });
 export const verifyTask = (id) =>
   request(`/api/v2/tasks/${id}/verify`, { method: "POST" });
+export const fetchQueueStatus = () => request("/api/v2/tasks/queue");
 export const batchProcessTasks = (taskIds) =>
   request("/api/v2/tasks/batch-process", {
     method: "POST",
@@ -197,8 +198,8 @@ export const adoptUnlinkedSession = (sessionId, data) =>
     method: "POST",
     body: JSON.stringify(data),
   });
-export const stopAgent = (id) =>
-  request(`/api/agents/${id}`, { method: "DELETE" });
+export const stopAgent = (id, generateSummary = false) =>
+  request(`/api/agents/${id}${generateSummary ? "?generate_summary=true" : ""}`, { method: "DELETE" });
 export const deleteAgent = (id) =>
   request(`/api/agents/${id}/permanent`, { method: "DELETE" });
 export const resumeAgent = (id, body = null) =>
@@ -246,6 +247,16 @@ export const respondPermission = (agentId, requestId, payload) =>
   });
 export const fetchPendingPermissions = (agentId) =>
   request(`/api/agents/${agentId}/permissions/pending`);
+// --- Agent Insight Suggestions ---
+export const fetchAgentSuggestions = (agentId) =>
+  request(`/api/agents/${agentId}/suggestions`);
+export const applyAgentSuggestions = (agentId, payload) =>
+  request(`/api/agents/${agentId}/apply-suggestions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+export const discardAgentSuggestions = (agentId) =>
+  request(`/api/agents/${agentId}/suggestions`, { method: "DELETE" });
 
 // --- Message search ---
 export const searchMessages = (query, { project, role, limit } = {}) => {
