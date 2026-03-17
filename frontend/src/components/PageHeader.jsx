@@ -5,10 +5,9 @@ import { useMonitor } from "../contexts/MonitorContext";
 import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings } from "../lib/api";
 import { isSystemHealthy } from "../lib/constants";
 
-/* ── Task Stats Popover ── */
-function TaskStatsPopover({ taskStats, onClose, containerRef }) {
-  const [queueData, setQueueData] = useState(null);
-  const [editingCap, setEditingCap] = useState(null);
+/* ── Queue Capacity Popover ── */
+function QueuePopover({ onClose, containerRef }) {
+  const [data, setData] = useState(null);
 
   useEffect(() => {
     const handler = (e) => {
@@ -18,30 +17,161 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose, containerRef]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetchQueueStatus();
-        if (!cancelled) setQueueData(res);
-      } catch { /* ignore */ }
-    };
-    load();
-    const interval = setInterval(load, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
+  const load = useCallback(async () => {
+    try {
+      const res = await fetchQueueStatus();
+      setData(res);
+    } catch { /* ignore */ }
   }, []);
 
-  const handleCapSave = async (project) => {
-    if (!editingCap || editingCap.project !== project) return;
-    const val = parseInt(editingCap.value, 10);
-    if (isNaN(val) || val < 1) { setEditingCap(null); return; }
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 4000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const adjustCap = async (project, delta) => {
+    if (!data) return;
+    const cur = data.capacity[project]?.max_concurrent ?? 2;
+    const next = Math.max(1, cur + delta);
+    if (next === cur) return;
     try {
-      await updateProjectSettings(project, { max_concurrent: val });
-      const res = await fetchQueueStatus();
-      setQueueData(res);
+      await updateProjectSettings(project, { max_concurrent: next });
+      load();
     } catch { /* skip */ }
-    setEditingCap(null);
   };
+
+  const tasks = data?.tasks ?? [];
+  const capacity = data?.capacity ?? {};
+  const pending = tasks.filter(t => t.status === "PENDING");
+  const running = tasks.filter(t => t.status === "EXECUTING");
+  const activeProjects = Object.entries(capacity)
+    .filter(([, c]) => c.active > 0 || pending.some(t => t.project_name === arguments[0]) || c.max_concurrent > 0)
+    .sort(([, a], [, b]) => b.active - a.active);
+
+  return (
+    <div className="absolute right-0 top-full mt-2 z-50" style={{ minWidth: 280, maxWidth: 320 }}>
+      <div className="absolute -top-1.5 right-3"
+        style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
+      <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
+
+        {/* Summary header */}
+        <div className="px-4 pt-3.5 pb-3 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+            <svg className="w-4.5 h-4.5 text-cyan-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-heading text-sm font-semibold">Agent Queue</div>
+            <div className="text-dim text-xs mt-0.5 flex items-center gap-2">
+              {running.length > 0 && <span className="text-cyan-500">{running.length} running</span>}
+              {running.length > 0 && pending.length > 0 && <span>·</span>}
+              {pending.length > 0 && <span className="text-amber-500">{pending.length} waiting</span>}
+              {running.length === 0 && pending.length === 0 && <span>idle</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Per-project slot grid */}
+        {activeProjects.length > 0 && (
+          <div className="border-t border-divider px-4 py-3 space-y-3">
+            {activeProjects.map(([name, cap]) => {
+              const max = cap.max_concurrent;
+              const active = cap.active;
+              const projPending = pending.filter(t => t.project_name === name).length;
+              return (
+                <div key={name}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-medium text-body truncate max-w-[140px]">{name}</span>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => adjustCap(name, -1)}
+                        className="w-5 h-5 rounded flex items-center justify-center text-faint hover:text-heading hover:bg-input transition-colors text-xs font-bold">
+                        -
+                      </button>
+                      <span className="text-[11px] tabular-nums text-dim font-medium w-7 text-center">{active}/{max}</span>
+                      <button type="button" onClick={() => adjustCap(name, 1)}
+                        className="w-5 h-5 rounded flex items-center justify-center text-faint hover:text-heading hover:bg-input transition-colors text-xs font-bold">
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  {/* Dot grid: each dot = 1 slot */}
+                  <div className="flex flex-wrap gap-[5px]">
+                    {Array.from({ length: Math.max(max, active) }, (_, i) => {
+                      const isActive = i < active;
+                      const isOver = i >= max; // over capacity
+                      return (
+                        <div key={i} className="relative">
+                          <div
+                            className={`w-[10px] h-[10px] rounded-sm transition-all ${
+                              isOver ? "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)]"
+                                : isActive ? "bg-cyan-500 shadow-[0_0_4px_rgba(6,182,212,0.4)]"
+                                : "bg-elevated border border-edge/40"
+                            }`}
+                          />
+                        </div>
+                      );
+                    })}
+                    {/* Pending indicators */}
+                    {Array.from({ length: projPending }, (_, i) => (
+                      <div key={`p${i}`} className="w-[10px] h-[10px] rounded-sm border border-amber-500/60 bg-amber-500/15 animate-pulse" />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Task list */}
+        {(pending.length > 0 || running.length > 0) && (
+          <div className="border-t border-divider px-4 py-2.5 space-y-1.5 max-h-[180px] overflow-y-auto">
+            {pending.map((t, i) => (
+              <div key={t.id} className="flex items-center gap-2 text-xs">
+                <span className="w-4 h-4 rounded-full bg-amber-500/15 text-amber-500 flex items-center justify-center text-[9px] font-bold shrink-0">
+                  {i + 1}
+                </span>
+                <span className="text-body truncate flex-1 min-w-0">{t.title}</span>
+                <span className="text-faint text-[10px] shrink-0">{(t.project_name || "").slice(0, 8)}</span>
+              </div>
+            ))}
+            {running.map(t => (
+              <div key={t.id} className="flex items-center gap-2 text-xs">
+                <span className="w-4 h-4 rounded-full bg-cyan-500/15 text-cyan-500 flex items-center justify-center shrink-0">
+                  <svg className="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </span>
+                <span className="text-body truncate flex-1 min-w-0">{t.title}</span>
+                <span className="text-faint text-[10px] shrink-0">{(t.project_name || "").slice(0, 8)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!data && (
+          <div className="px-4 py-4 text-center text-dim text-xs animate-pulse">Loading...</div>
+        )}
+        {data && activeProjects.length === 0 && tasks.length === 0 && (
+          <div className="border-t border-divider px-4 py-4 text-center text-faint text-xs">No projects configured</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Task Stats Popover ── */
+function TaskStatsPopover({ taskStats, onClose, containerRef }) {
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose, containerRef]);
 
   const wTotal = taskStats?.weekly_total ?? 0;
   const wCompleted = taskStats?.weekly_completed ?? 0;
@@ -214,64 +344,6 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           </div>
         </div>
 
-        {/* Queue Capacity */}
-        {queueData && (() => {
-          const { capacity } = queueData;
-          const activeProjects = Object.entries(capacity).filter(([, c]) => c.active > 0 || c.max_concurrent > 0);
-          if (activeProjects.length === 0) return null;
-          return (
-            <div className="border-t border-divider px-4 py-2.5">
-              <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-2">Queue Capacity</div>
-              <div className="space-y-2">
-                {activeProjects.map(([name, cap]) => {
-                  const pct = cap.max_concurrent > 0 ? Math.min(100, (cap.active / cap.max_concurrent) * 100) : 0;
-                  const isEditing = editingCap?.project === name;
-                  return (
-                    <div key={name} className="space-y-0.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-body font-medium truncate max-w-[120px]">{name}</span>
-                        <span className="text-dim tabular-nums">
-                          {cap.active}/
-                          {isEditing ? (
-                            <input
-                              type="number"
-                              min={1}
-                              value={editingCap.value}
-                              onChange={(e) => setEditingCap({ project: name, value: e.target.value })}
-                              onBlur={() => handleCapSave(name)}
-                              onKeyDown={(e) => { if (e.key === "Enter") handleCapSave(name); if (e.key === "Escape") setEditingCap(null); }}
-                              autoFocus
-                              className="w-8 bg-input text-heading text-center rounded px-0.5 outline-none border border-edge/30 focus:border-cyan-500/50"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); setEditingCap({ project: name, value: String(cap.max_concurrent) }); }}
-                              className="text-dim hover:text-heading transition-colors cursor-pointer"
-                              title="Click to edit capacity"
-                            >
-                              {cap.max_concurrent}
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "var(--color-input)" }}>
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${pct}%`,
-                            backgroundColor: pct >= 100 ? "#f59e0b" : pct >= 70 ? "#eab308" : "#06b6d4",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
       </div>
     </div>
   );
@@ -289,16 +361,19 @@ const MoonIcon = (
   </svg>
 );
 
-export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, hideMonitor, children }) {
+export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, showQueueButton, hideMonitor, children }) {
   const navigate = useNavigate();
   const health = useHealthStatus();
   const { taskStats } = useMonitor();
   const [restarting, setRestarting] = useState(false);
   const [showStatsPopover, setShowStatsPopover] = useState(false);
+  const [showQueuePopover, setShowQueuePopover] = useState(false);
   const ringContainerRef = useRef(null);
+  const queueContainerRef = useRef(null);
   const pollRef = useRef(null);
   const abortRef = useRef(null);
   const closePopover = useCallback(() => setShowStatsPopover(false), []);
+  const closeQueuePopover = useCallback(() => setShowQueuePopover(false), []);
 
   // Cleanup restart polling on unmount
   useEffect(() => {
@@ -362,6 +437,21 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
           </button>
         )}
         {actions}
+        {showQueueButton && (
+          <div className="relative" ref={queueContainerRef}>
+            <button
+              type="button"
+              onClick={() => setShowQueuePopover(v => !v)}
+              title="Agent queue"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+              </svg>
+            </button>
+            {showQueuePopover && <QueuePopover onClose={closeQueuePopover} containerRef={queueContainerRef} />}
+          </div>
+        )}
         <button
           type="button"
           title="Restart AgentHive"
