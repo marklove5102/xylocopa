@@ -3561,7 +3561,12 @@ Here are the day's conversations (with timestamps):
                 logger.exception("Failed to launch planning agent for task %s", task.id)
 
     def _harvest_task_completions(self, db: Session):
-        """Check EXECUTING v2 tasks — if agent is done, move to REVIEW."""
+        """Check EXECUTING v2 tasks — update summaries, handle errors.
+
+        New lifecycle: tasks stay EXECUTING until user manually stops.
+        Agent stopping just means it finished a response — user can send
+        more messages to continue the conversation.
+        """
         tasks = (
             db.query(Task)
             .filter(Task.status == TaskStatus.EXECUTING)
@@ -3591,56 +3596,29 @@ Here are the day's conversations (with timestamps):
                 )
                 if has_pending and agent.status == AgentStatus.IDLE:
                     continue
-                # Agent finished — extract summary from last message
+                # Agent finished a response — update summary but keep task EXECUTING.
+                # User can continue chatting; only manual stop ends the task.
                 last_msg = (
                     db.query(Message)
                     .filter(Message.agent_id == agent.id, Message.role == MessageRole.AGENT)
                     .order_by(Message.created_at.desc())
                     .first()
                 )
-                # Use Message content (most complete), fall back to Stop hook cache
                 from main import read_stop_summary
                 hook_summary = read_stop_summary(agent.id)
                 msg_summary = last_msg.content[:2000] if (last_msg and last_msg.content) else None
-                task.agent_summary = msg_summary or hook_summary
-                if task.agent_summary and (task.project_name or task.project):
-                    # Auto-store agent summary as an insight for RAG
-                    try:
-                        today_str = _utcnow().strftime("%Y-%m-%d")
-                        clean_summary = " ".join(task.agent_summary[:500].split())
-                        summary_line = f"1. {task.title[:80]}: {clean_summary}"
-                        store_insights(db, task.project_name or task.project, today_str, summary_line, agent_id=agent.id)
-                    except Exception:
-                        logger.debug("Failed to store task-completion insight for task %s", task.id, exc_info=True)
-                # If agent died without producing any output → FAILED, not REVIEW
-                if not last_msg and not hook_summary:
-                    TaskStateMachine.transition(task, TaskStatus.FAILED)
-                    task.error_message = "Agent stopped without producing output"
+                if msg_summary or hook_summary:
+                    task.agent_summary = msg_summary or hook_summary
+                    if task.agent_summary and (task.project_name or task.project):
+                        try:
+                            today_str = _utcnow().strftime("%Y-%m-%d")
+                            clean_summary = " ".join(task.agent_summary[:500].split())
+                            summary_line = f"1. {task.title[:80]}: {clean_summary}"
+                            store_insights(db, task.project_name or task.project, today_str, summary_line, agent_id=agent.id)
+                        except Exception:
+                            logger.debug("Failed to store task-completion insight for task %s", task.id, exc_info=True)
                     db.commit()
-                    from websocket import emit_task_update
-                    self._emit(emit_task_update(
-                        task.id, task.status.value, task.project_name or "",
-                        title=task.title,
-                    ))
-                    logger.info("Task %s FAILED (agent %s died without output)", task.id, agent.id)
-                    continue
-                TaskStateMachine.transition(task, TaskStatus.REVIEW)
-                # Stop agent — it has finished its task
-                saved_pane = agent.tmux_pane  # save before stop clears it
-                self.stop_agent_cleanup(
-                    db, agent, "",
-                    add_message=False, cancel_tasks=False, emit=False,
-                )
-                db.commit()
-                from websocket import emit_task_update, emit_agent_update
-                self._emit(emit_task_update(
-                    task.id, task.status.value, task.project_name or "",
-                    title=task.title, agent_id=task.agent_id,
-                ))
-                self._emit(emit_agent_update(agent.id, "STOPPED", agent.project))
-                from notify import notify
-                notify("task_complete", agent.id, "Task Ready for Review", task.title[:60], f"/tasks/{task.id}")
-                logger.info("Task %s moved to REVIEW (agent %s stopped)", task.id, agent.id)
+                # Task stays EXECUTING — no auto-transition, no agent cleanup
             elif agent.status == AgentStatus.ERROR:
                 TaskStateMachine.transition(task, TaskStatus.FAILED)
                 task.error_message = "Agent encountered an error"

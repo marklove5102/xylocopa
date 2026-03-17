@@ -68,9 +68,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const data = await fetchTaskCounts();
       setCounts({
         INBOX: data.INBOX ?? 0,
-        PLANNING: data.PLANNING ?? 0,
         EXECUTING: (data.QUEUE ?? 0) + (data.ACTIVE ?? 0),
-        REVIEW: data.REVIEW ?? 0,
         DONE: data.DONE ?? 0,
         DONE_COMPLETED: data.DONE_COMPLETED ?? 0,
       });

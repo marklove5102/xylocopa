@@ -162,6 +162,8 @@ export const rejectTask = (id, reason) =>
   request(`/api/v2/tasks/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
 export const cancelTask = (id) =>
   request(`/api/v2/tasks/${id}/cancel`, { method: "POST" });
+export const completeTask = (id) =>
+  request(`/api/v2/tasks/${id}/complete`, { method: "POST" });
 export const tryTaskChanges = (id) =>
   request(`/api/v2/tasks/${id}/try-changes`, { method: "POST" });
 export const revertTaskChanges = (id) =>

@@ -4139,6 +4139,27 @@ async def cancel_task_v2(task_id: str, request: Request, db: Session = Depends(g
     return TaskOut.model_validate(task)
 
 
+@app.post("/api/v2/tasks/{task_id}/complete", response_model=TaskOut)
+async def complete_task_v2(task_id: str, request: Request, db: Session = Depends(get_db)):
+    """Manually complete a task. Stops agent and marks COMPLETE."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if not can_transition(task.status, TaskStatus.COMPLETE):
+        raise HTTPException(409, f"Cannot complete task in {task.status.value} state")
+    ad = getattr(request.app.state, "agent_dispatcher", None)
+    _stop_task_agents(db, task, ad, "Agent stopped — task completed")
+    TaskStateMachine.transition(task, TaskStatus.COMPLETE)
+    task.completed_at = _utcnow()
+    db.commit()
+    db.refresh(task)
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "",
+        title=task.title,
+    ))
+    return TaskOut.model_validate(task)
+
+
 # ---- Agents ----
 
 def _generate_worktree_name_local(prompt: str) -> str:
