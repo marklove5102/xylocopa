@@ -40,3 +40,7 @@
 23. `_update_stale_interactive_metadata` only backfills answers found in JSONL — if a conversation moves past an interactive card without a parseable `tool_result`, the card stays `answer=null` forever with no correction mechanism.
 24. Stress tests confirmed: 10 rapid-fire messages and messages up to 5000 chars are accepted, but agents under load only process 1-2 of 5 queued messages before session stops — the queue dispatch pipeline doesn't reliably drain under concurrent load.
 25. Direct tmux send is non-atomic: text is sent to tmux first, then the `Message` row is created — a server crash between those steps means Claude received the prompt but the DB never records it.
+
+### 2026-03-17 | Task: Switch license from MIT to Apache 2.0 | Status: success
+- What: Created root LICENSE file with Apache 2.0 text, updated README.md reference from MIT to Apache 2.0
+- Lesson: Straightforward — no issues
