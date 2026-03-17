@@ -46,8 +46,8 @@ function QueuePopover({ onClose, containerRef }) {
   const pending = tasks.filter(t => t.status === "PENDING");
   const running = tasks.filter(t => t.status === "EXECUTING");
   const activeProjects = Object.entries(capacity)
-    .filter(([name, c]) => c.active > 0 || pending.some(t => t.project_name === name))
-    .sort(([, a], [, b]) => b.active - a.active);
+    .filter(([name, c]) => (c.alive ?? c.active) > 0 || pending.some(t => t.project_name === name))
+    .sort(([, a], [, b]) => (b.alive ?? b.active) - (a.alive ?? a.active));
 
   return (
     <div className="absolute right-0 top-full mt-2 z-50" style={{ width: 260 }}>
@@ -78,7 +78,9 @@ function QueuePopover({ onClose, containerRef }) {
           <div className="border-t border-divider px-4 py-3 space-y-3">
             {activeProjects.map(([name, cap]) => {
               const max = cap.max_concurrent;
-              const active = cap.active;
+              const active = cap.active;       // dispatcher-counted (STARTING/EXECUTING/SYNCING)
+              const alive = cap.alive ?? active; // all non-stopped (includes IDLE)
+              const idle = alive - active;       // IDLE agents (not consuming dispatch capacity)
               const projPending = pending.filter(t => t.project_name === name).length;
               return (
                 <div key={name}>
@@ -89,31 +91,32 @@ function QueuePopover({ onClose, containerRef }) {
                         className="w-5 h-5 rounded flex items-center justify-center text-faint hover:text-heading hover:bg-input transition-colors text-xs font-bold">
                         -
                       </button>
-                      <span className="text-[11px] tabular-nums text-dim font-medium w-7 text-center">{active}/{max}</span>
+                      <span className="text-[11px] tabular-nums text-dim font-medium w-7 text-center">{alive}/{max}</span>
                       <button type="button" onClick={() => adjustCap(name, 1)}
                         className="w-5 h-5 rounded flex items-center justify-center text-faint hover:text-heading hover:bg-input transition-colors text-xs font-bold">
                         +
                       </button>
                     </div>
                   </div>
-                  {/* Dot grid: each dot = 1 slot */}
+                  {/* Dot grid: each dot = 1 agent slot */}
                   <div className="flex flex-wrap gap-[5px]">
-                    {Array.from({ length: Math.max(max, active) }, (_, i) => {
-                      const isActive = i < active;
-                      const isOver = i >= max; // over capacity
-                      return (
-                        <div key={i} className="relative">
-                          <div
-                            className={`w-[10px] h-[10px] rounded-sm transition-all ${
-                              isOver ? "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)]"
-                                : isActive ? "bg-cyan-500 shadow-[0_0_4px_rgba(6,182,212,0.4)]"
-                                : "bg-elevated border border-edge/40"
-                            }`}
-                          />
-                        </div>
-                      );
-                    })}
-                    {/* Pending indicators */}
+                    {/* Active agents (EXECUTING/SYNCING/STARTING) — cyan */}
+                    {Array.from({ length: active }, (_, i) => (
+                      <div key={`a${i}`} className={`w-[10px] h-[10px] rounded-sm transition-all ${
+                        i >= max
+                          ? "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)]"
+                          : "bg-cyan-500 shadow-[0_0_4px_rgba(6,182,212,0.4)]"
+                      }`} />
+                    ))}
+                    {/* Idle agents — dimmer, half-filled look */}
+                    {Array.from({ length: idle }, (_, i) => (
+                      <div key={`i${i}`} className="w-[10px] h-[10px] rounded-sm bg-cyan-500/30 border border-cyan-500/40" />
+                    ))}
+                    {/* Empty slots */}
+                    {Array.from({ length: Math.max(0, max - alive) }, (_, i) => (
+                      <div key={`e${i}`} className="w-[10px] h-[10px] rounded-sm bg-elevated border border-edge/40" />
+                    ))}
+                    {/* Pending task indicators */}
                     {Array.from({ length: projPending }, (_, i) => (
                       <div key={`p${i}`} className="w-[10px] h-[10px] rounded-sm border border-amber-500/60 bg-amber-500/15 animate-pulse" />
                     ))}

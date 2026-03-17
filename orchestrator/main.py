@@ -3314,7 +3314,10 @@ async def task_counts(db: Session = Depends(get_db)):
 @app.get("/api/v2/tasks/queue")
 async def task_queue_status(db: Session = Depends(get_db)):
     """Return queue status: pending/executing tasks + per-project capacity."""
-    active_statuses = [AgentStatus.STARTING, AgentStatus.EXECUTING, AgentStatus.SYNCING]
+    # Dispatcher uses these to gate capacity
+    dispatcher_active = [AgentStatus.STARTING, AgentStatus.EXECUTING, AgentStatus.SYNCING]
+    # All non-stopped agents (full picture for UI)
+    alive_statuses = [AgentStatus.STARTING, AgentStatus.IDLE, AgentStatus.EXECUTING, AgentStatus.SYNCING]
 
     # Pending + executing tasks
     queue_tasks = (
@@ -3330,12 +3333,18 @@ async def task_queue_status(db: Session = Depends(get_db)):
     for proj in projects:
         active = (
             db.query(func.count(Agent.id))
-            .filter(Agent.project == proj.name, Agent.status.in_(active_statuses))
+            .filter(Agent.project == proj.name, Agent.status.in_(dispatcher_active))
+            .scalar()
+        )
+        alive = (
+            db.query(func.count(Agent.id))
+            .filter(Agent.project == proj.name, Agent.status.in_(alive_statuses))
             .scalar()
         )
         capacity[proj.name] = {
             "max_concurrent": proj.max_concurrent,
             "active": active,
+            "alive": alive,
         }
 
     return {
