@@ -60,3 +60,7 @@
 ### 2026-03-17 | Task: Voice toggle OFF doesn't stop recording | Status: success
 - What: Voice toggle (`autoVoice`) only gated auto-start on mount. Toggling OFF didn't stop active recording, and the mic button stayed visible/clickable. Fixed by: (1) adding `useEffect` to stop recording when `autoVoice` turns OFF, (2) hiding mic button + timer when `autoVoice` is OFF. Persistence was already implemented correctly via localStorage.
 - Lesson: A toggle that controls "auto-start" behavior must also have side effects on the current state — otherwise the UI becomes contradictory (toggle OFF but recording active)
+
+### 2026-03-17 | Task: Make voice recording duration configurable | Status: success
+- What: `useVoiceRecorder` had a hardcoded `MAX_RECORDING_MS`. Refactored to accept `maxDurationMs` param (default `DEFAULT_MAX_RECORDING_MS = 300000`). Used a ref (`limitRef`) so in-flight timer closures always read the latest limit. Added effect to reset countdown display when limit changes while idle.
+- Lesson: Any value captured inside `useCallback` closures with minimal deps arrays must use refs to avoid stale reads — especially timers set once at recording start.
