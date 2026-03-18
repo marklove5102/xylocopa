@@ -2862,20 +2862,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               </h1>
             )}
 
-            {agent.task_id && (
-              <button
-                type="button"
-                onClick={() => navigate(`/tasks/${agent.task_id}`)}
-                className="shrink-0 flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 font-medium px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
-                title="Working on task"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                task
-              </button>
-            )}
-
             {compactHeader ? (
               /* Compact: status dot + stop/resume + expand chevron */
               <div className="shrink-0 flex items-center gap-1.5">
@@ -3094,6 +3080,19 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
               Continued from previous session
+            </button>
+          )}
+          {agent.task_id && (
+            <button
+              type="button"
+              onClick={() => navigate(`/tasks/${agent.task_id}`)}
+              className="shrink-0 flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 font-medium px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
+              title="Working on task"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              task
             </button>
           )}
           <span className="ml-auto flex items-center gap-2">
