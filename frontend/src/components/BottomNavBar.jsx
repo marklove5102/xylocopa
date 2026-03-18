@@ -62,15 +62,15 @@ function CenterFab({ tab }) {
   const longPressedRef = useRef(false);
 
   const handlers = useLongPress(
-    // Long press → navigate to voice-first NewTaskPage (overlay)
+    // Long press → navigate to the /new landing page (all creation options)
     () => {
       longPressedRef.current = true;
       if (navigator.vibrate) navigator.vibrate(30);
-      navigate("/new/task", { state: { backgroundLocation: location } });
-    },
-    // Normal tap → navigate to the /new landing page (all creation options)
-    () => {
       navigate("/new", { replace: true });
+    },
+    // Normal tap → navigate to voice-first NewTaskPage (overlay)
+    () => {
+      navigate("/new/task", { state: { backgroundLocation: location } });
     },
     500,
   );
