@@ -56,3 +56,7 @@
 ### 2026-03-17 | Task: Monitor page token usage auto-refresh (10 min) | Status: success
 - What: Token usage was manual-refresh only. Added `fetchUsage` to mount effect and a 10-minute `setInterval` in the active polling `useEffect`. Backend already has 120s cache TTL so no rate-limit concerns.
 - Lesson: Straightforward — `fetchUsage` was already defined but just wasn't wired into any polling interval
+
+### 2026-03-17 | Task: Voice toggle OFF doesn't stop recording | Status: success
+- What: Voice toggle (`autoVoice`) only gated auto-start on mount. Toggling OFF didn't stop active recording, and the mic button stayed visible/clickable. Fixed by: (1) adding `useEffect` to stop recording when `autoVoice` turns OFF, (2) hiding mic button + timer when `autoVoice` is OFF. Persistence was already implemented correctly via localStorage.
+- Lesson: A toggle that controls "auto-start" behavior must also have side effects on the current state — otherwise the UI becomes contradictory (toggle OFF but recording active)

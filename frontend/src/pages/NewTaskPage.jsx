@@ -101,6 +101,11 @@ export default function NewTaskPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Stop recording when voice toggle is turned off
+  useEffect(() => {
+    if (!autoVoice && voice.recording) voice.stopRecording();
+  }, [autoVoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
@@ -440,21 +445,23 @@ export default function NewTaskPage() {
                     </svg>
                   </button>
                   <div />
-                  <div className="flex items-center gap-1.5">
-                    {voice.recording && voice.remainingSeconds != null && (
-                      <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
-                        {voice.remainingSeconds >= 60
-                          ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
-                          : voice.remainingSeconds}
-                      </span>
-                    )}
-                    <VoiceRecorder
-                      recording={voice.recording}
-                      voiceLoading={voice.voiceLoading}
-                      micError={voice.micError}
-                      onToggle={voice.toggleRecording}
-                    />
-                  </div>
+                  {autoVoice && (
+                    <div className="flex items-center gap-1.5">
+                      {voice.recording && voice.remainingSeconds != null && (
+                        <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
+                          {voice.remainingSeconds >= 60
+                            ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
+                            : voice.remainingSeconds}
+                        </span>
+                      )}
+                      <VoiceRecorder
+                        recording={voice.recording}
+                        voiceLoading={voice.voiceLoading}
+                        micError={voice.micError}
+                        onToggle={voice.toggleRecording}
+                      />
+                    </div>
+                  )}
                   <div className="relative">
                     <button
                       type="button"
