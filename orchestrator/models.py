@@ -174,6 +174,7 @@ class Agent(Base):
     is_subagent: Mapped[bool] = mapped_column(Boolean, default=False)
     claude_agent_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     generating_msg_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    has_pending_suggestions: Mapped[bool] = mapped_column(Boolean, default=False)
 
     @property
     def is_generating(self) -> bool:
@@ -250,7 +251,7 @@ class Project(Base):
     path: Mapped[str] = mapped_column(String(500), nullable=False)
     git_remote: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    max_concurrent: Mapped[int] = mapped_column(Integer, default=2)
+    max_concurrent: Mapped[int] = mapped_column(Integer, default=8)
     default_model: Mapped[str] = mapped_column(
         String(100), default="claude-opus-4-6"
     )
@@ -297,6 +298,19 @@ class ProgressInsight(Base):
     )
     date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class AgentInsightSuggestion(Base):
+    __tablename__ = "agent_insight_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    edited_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending/accepted/rejected
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
