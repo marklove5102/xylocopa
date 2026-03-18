@@ -4307,6 +4307,11 @@ async def hook_agent_session_end(request: Request):
         logger.warning("hook_agent_session_end: no agent_dispatcher on app.state for agent %s", agent_id[:8])
         return {}
 
+    # Mark any EXECUTING /loop command as completed — Stop hook skips /loop
+    # because Stop fires after each iteration, but SessionEnd is terminal.
+    import slash_commands as _sc
+    _sc.mark_loop_completed(agent_id)
+
     # Trigger final sync via the sync loop
     asyncio.create_task(ad.trigger_sync(agent_id))
 
