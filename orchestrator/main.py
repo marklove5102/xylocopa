@@ -43,7 +43,7 @@ from models import (
     Task,
     TaskStatus,
 )
-from agent_dispatcher import ALIVE_STATUSES, TERMINAL_STATUSES, _query_verify_agents
+from agent_dispatcher import ACTIVE_STATUSES, ALIVE_STATUSES, TERMINAL_STATUSES, _query_verify_agents
 from utils import utcnow as _utcnow
 from schemas import (
     AgentBrief,
@@ -112,6 +112,27 @@ _IMPORT_CHECK_TIMEOUT = 15
 
 # Anthropic API request timeout (seconds)
 _API_REQUEST_TIMEOUT = 10
+
+
+def _check_project_capacity(db, project_name: str) -> tuple[int, int]:
+    """Return (active_count, max_concurrent) for a project.
+
+    Raises HTTPException 429 if at capacity.
+    """
+    proj = db.get(Project, project_name)
+    if not proj:
+        return (0, 8)
+    active = (
+        db.query(func.count(Agent.id))
+        .filter(Agent.project == project_name, Agent.status.in_(ACTIVE_STATUSES))
+        .scalar() or 0
+    )
+    if active >= proj.max_concurrent:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Project '{project_name}' at capacity ({active}/{proj.max_concurrent}) — wait for an agent to finish or increase the limit",
+        )
+    return (active, proj.max_concurrent)
 
 
 def _create_tmux_claude_session(
@@ -236,7 +257,7 @@ def load_registry(db: Session):
             existing.path = p.get("path", f'/projects/{p["name"]}')
             existing.git_remote = p.get("git_remote")
             existing.description = p.get("description")
-            existing.max_concurrent = p.get("max_concurrent", 2)
+            existing.max_concurrent = p.get("max_concurrent", 8)
             existing.default_model = raw_model
         else:
             db.add(Project(
@@ -245,7 +266,7 @@ def load_registry(db: Session):
                 path=p.get("path", f'/projects/{p["name"]}'),
                 git_remote=p.get("git_remote"),
                 description=p.get("description"),
-                max_concurrent=p.get("max_concurrent", 2),
+                max_concurrent=p.get("max_concurrent", 8),
                 default_model=raw_model,
             ))
     db.commit()
@@ -5210,6 +5231,9 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
     if project.archived:
         raise HTTPException(status_code=400, detail="Cannot create agents for archived projects — activate first")
 
+    # Enforce per-project capacity
+    _check_project_capacity(db, body.project)
+
     # Generate agent name from first ~50 chars of prompt
     name = body.prompt[:50].strip()
     if len(body.prompt) > 50:
@@ -5630,6 +5654,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
     if not os.path.isdir(proj.path):
         raise HTTPException(status_code=400, detail="Project directory not found on disk")
+
+    # Enforce per-project capacity
+    _check_project_capacity(db, project_name)
 
     # Each agent gets its own tmux session: "ah-{agent_id_prefix}"
     # Pre-generate agent ID, ensuring no DB or tmux session name collision
@@ -6421,6 +6448,10 @@ async def adopt_unlinked_session(
     proj = db.get(Project, project_name)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    # Enforce per-project capacity (only for new agents, not rebinding existing ones)
+    if not existing_agent_id:
+        _check_project_capacity(db, project_name)
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if not ad:

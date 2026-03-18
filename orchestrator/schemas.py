@@ -163,6 +163,7 @@ class _AgentBase(BaseModel):
     is_subagent: bool = False
     claude_agent_id: str | None = None
     is_generating: bool = False
+    has_pending_suggestions: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -286,7 +287,7 @@ class ProjectOut(BaseModel):
     path: str
     git_remote: str | None = None
     description: str | None = None
-    max_concurrent: int = 2
+    max_concurrent: int = 8
     default_model: str = "claude-opus-4-6"
     archived: bool = False
     auto_progress_summary: bool = False
@@ -330,6 +331,24 @@ class SessionSummary(BaseModel):
 
 
 # --- System schemas ---
+
+class AgentInsightSuggestionOut(BaseModel):
+    id: int
+    agent_id: str
+    content: str
+    edited_content: str | None = None
+    status: str = "pending"
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def ensure_utc_suggestion(cls, v):
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
 
 class HealthResponse(BaseModel):
     status: str
