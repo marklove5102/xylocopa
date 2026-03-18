@@ -48,3 +48,7 @@
 ### 2026-03-17 | Task: Rewrite README as user-facing documentation | Status: success
 - What: Rewrote README from developer-internal docs to user-facing project documentation. Removed ~600 lines of internal architecture (models, API endpoints, execution details — already in CLAUDE.md). Added compelling feature highlights (zero migration, voice capture, monitoring, concurrency, sessions, project memory), Tailscale section, collapsible cert install instructions. Kept installation, config, troubleshooting.
 - Lesson: Straightforward — the key was separating "what users need to know" from "what developers need to know" (the latter already lives in CLAUDE.md)
+
+### 2026-03-17 | Task: NewTaskPage launch agent button | Status: success
+- What: Added "Launch Agent" button (cyan send icon) to NewTaskPage bottom sheet that appears when a project is selected. Calls `launchTmuxAgent` directly, navigates to agent chat page. Grid columns adjust dynamically (6 → 7 cols when project selected).
+- Lesson: Straightforward — reused existing `launchTmuxAgent` API and matched the button pattern from NewAgentForm
