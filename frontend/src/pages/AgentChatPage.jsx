@@ -22,6 +22,9 @@ import {
   respondPermission,
   fetchPendingPermissions,
   fetchToolActivities,
+  fetchAgentSuggestions,
+  applyAgentSuggestions,
+  discardAgentSuggestions,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
@@ -411,6 +414,148 @@ function _detectPlanIdx(answer) {
 function _isPlanDismissed(item) {
   if (!item.answer || typeof item.answer !== "string") return false;
   return item.answer.startsWith("The user doesn't want to proceed") || item.answer.startsWith("User declined") || item.answer.startsWith("Tool use rejected");
+}
+
+function ProgressSuggestionsCard({ agentId, onDone }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(new Set());
+  const [edits, setEdits] = useState({});
+  const [editingId, setEditingId] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null); // "applied" | "discarded"
+
+  useEffect(() => {
+    fetchAgentSuggestions(agentId)
+      .then((data) => {
+        setSuggestions(data);
+        setSelected(new Set(data.map((s) => s.id)));
+      })
+      .catch((err) => console.error("Failed to fetch suggestions:", err))
+      .finally(() => setLoading(false));
+  }, [agentId]);
+
+  const handleApply = async () => {
+    setSubmitting(true);
+    try {
+      const accepted = [...selected].map((id) => ({
+        id,
+        ...(edits[id] ? { edited_content: edits[id] } : {}),
+      }));
+      const rejected_ids = suggestions
+        .filter((s) => !selected.has(s.id))
+        .map((s) => s.id);
+      await applyAgentSuggestions(agentId, { accepted, rejected_ids });
+      setResult("applied");
+      onDone?.();
+    } catch (err) {
+      console.error("Failed to apply suggestions:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDiscard = async () => {
+    setSubmitting(true);
+    try {
+      await discardAgentSuggestions(agentId);
+      setResult("discarded");
+      onDone?.();
+    } catch (err) {
+      console.error("Failed to discard suggestions:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return null;
+  if (!suggestions.length && !result) return null;
+
+  if (result) {
+    return (
+      <div className="mt-4 rounded-xl bg-amber-500/10 border border-amber-500/20 p-4">
+        <p className="text-sm text-amber-300 font-medium">
+          {result === "applied" ? "Insights applied to PROGRESS.md" : "Suggestions dismissed"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-xl bg-amber-500/10 border border-amber-500/20 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        <span className="text-sm font-medium text-amber-300">Progress Insights</span>
+        <span className="text-xs text-dim ml-auto">{selected.size}/{suggestions.length} selected</span>
+      </div>
+      <div className="space-y-2 mb-3">
+        {suggestions.map((s) => (
+          <div key={s.id} className="flex items-start gap-2 group">
+            <input
+              type="checkbox"
+              checked={selected.has(s.id)}
+              onChange={() => {
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(s.id)) next.delete(s.id);
+                  else next.add(s.id);
+                  return next;
+                });
+              }}
+              className="mt-1 w-4 h-4 rounded border-divider bg-input text-amber-500 focus:ring-amber-500/50 shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              {editingId === s.id ? (
+                <input
+                  type="text"
+                  autoFocus
+                  value={edits[s.id] ?? s.content}
+                  onChange={(e) => setEdits((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                  onBlur={() => setEditingId(null)}
+                  onKeyDown={(e) => { if (e.key === "Enter") setEditingId(null); }}
+                  className="w-full bg-input border border-divider rounded px-2 py-1 text-sm text-body focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                />
+              ) : (
+                <p className="text-sm text-body leading-relaxed">
+                  {edits[s.id] ?? s.content}
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(s.id)}
+                    className="ml-1.5 text-dim hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity inline-flex"
+                    title="Edit"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={submitting || selected.size === 0}
+          onClick={handleApply}
+          className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+        >
+          {submitting ? "Applying..." : `Apply Selected (${selected.size})`}
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={handleDiscard}
+          className="px-3 py-1.5 rounded-lg bg-input hover:bg-elevated text-body text-sm transition-colors"
+        >
+          Discard All
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PlanBubble({ item, agentId, onAnswered }) {
@@ -1834,6 +1979,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const toastCtx = useToast();
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [generateSummary, setGenerateSummary] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [showResumeModal, setShowResumeModal] = useState(false);
   const [starred, setStarred] = useState(false);
@@ -2424,6 +2570,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       }
       refreshMessagesRef.current();
     }
+
+    if (event.type === "progress_suggestions_ready") {
+      loadData();
+      showToast("Insights ready for review");
+    }
   }, [id]);
 
   // Cleanup
@@ -2527,8 +2678,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const handleStop = async () => {
     setStopping(true);
     try {
-      await stopAgent(id);
-      showToast("Agent stopped");
+      await stopAgent(id, generateSummary && !!agent?.task_id);
+      showToast(generateSummary && agent?.task_id ? "Agent stopped — generating insights..." : "Agent stopped");
       loadData();
       window.dispatchEvent(new CustomEvent("agents-data-changed"));
     } catch (err) {
@@ -3049,6 +3200,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         )}
 
 
+        {/* Progress suggestions card */}
+        {agent?.has_pending_suggestions && agent?.status === "STOPPED" && (
+          <ProgressSuggestionsCard agentId={id} onDone={loadData} />
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -3077,6 +3233,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             <p className="text-sm text-label">
               This will stop the agent. You won't be able to send more messages.
             </p>
+            {agent?.task_id && (
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={generateSummary}
+                  onChange={(e) => setGenerateSummary(e.target.checked)}
+                  className="w-4 h-4 rounded border-divider bg-input text-amber-500 focus:ring-amber-500/50"
+                />
+                <span className="text-sm text-body">Generate progress summary</span>
+              </label>
+            )}
             <div className="flex gap-3">
               <button
                 type="button"
