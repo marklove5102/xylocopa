@@ -288,7 +288,7 @@ function QuestionBubble({ item, agentId, onAnswered }) {
     <div className="mt-3 space-y-3">
       {questions.map((q, qi) => {
         const answeredIdx = resolveIdx(q, qi);
-        const isAnswered = answeredIdx != null || isDismissed;
+        const isAnswered = answeredIdx != null || isDismissed || item.auto_approved;
         // Sequential lock: question qi is locked if any prior question is unanswered
         const isLocked = qi > 0 && !isDismissed && resolveIdx(questions[qi - 1], qi - 1) == null;
 
@@ -298,6 +298,9 @@ function QuestionBubble({ item, agentId, onAnswered }) {
         if (isDismissed) {
           badgeText = "Dismissed";
           badgeClass = "bg-red-500/20 text-red-300";
+        } else if (item.auto_approved) {
+          badgeText = "Auto-approved";
+          badgeClass = "bg-amber-500/20 text-amber-300";
         } else if (answeredIdx != null) {
           badgeText = "Choice Sent";
           badgeClass = "bg-cyan-500/20 text-cyan-300";
@@ -569,7 +572,7 @@ function PlanBubble({ item, agentId, onAnswered }) {
   // When dismissed, do NOT fall back to index detection — no option should highlight
   const serverIdx = isDismissed ? null : (item.selected_index ?? (item.answer != null ? _detectPlanIdx(item.answer) : null));
   const effectiveIdx = isDismissed ? null : (serverIdx ?? chosenIdx);
-  const isAnswered = effectiveIdx != null || isDismissed;
+  const isAnswered = effectiveIdx != null || isDismissed || item.auto_approved;
 
   // Plan content comes directly from metadata (extracted from ExitPlanMode tool_input)
   const planContent = item.plan || null;
@@ -606,6 +609,9 @@ function PlanBubble({ item, agentId, onAnswered }) {
   if (isDismissed) {
     badgeText = "Dismissed";
     badgeClass = "bg-red-500/20 text-red-300";
+  } else if (item.auto_approved) {
+    badgeText = "Auto-approved";
+    badgeClass = "bg-amber-500/20 text-amber-300";
   } else if (effectiveIdx != null) {
     badgeText = "Choice Sent";
     badgeClass = effectiveIdx <= 1
@@ -2028,6 +2034,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const initialLoadDone = useRef(false);
   const abortRef = useRef(null);
   const messagesRef = useRef([]);
+  const hasPendingInteractiveRef = useRef(false);
   // Buffer for message_delivered events that arrive before the message
   // exists in state (race condition: WS event beats HTTP POST response).
   const pendingDeliveriesRef = useRef(new Map());
@@ -2187,7 +2194,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const lastDelivered = [...current].reverse().find((m) => m.delivered_at);
       const afterCursor = lastDelivered?.delivered_at || current[current.length - 1].created_at;
       const hasPending = current.some((m) => m.role === "USER" && m.status === "PENDING");
-      const needTail = syncHint || agentData.status === "SYNCING" || hasPending;
+      const needTail = syncHint || agentData.status === "SYNCING" || hasPending || hasPendingInteractiveRef.current;
       const fetches = [fetchMessages(id, { after: afterCursor })];
       if (needTail) fetches.push(fetchMessages(id, { limit: 5 }));
       const [afterData, tailData] = await Promise.all(fetches);
@@ -2235,14 +2242,59 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     return () => { abortRef.current?.abort(); unregisterViewing(id); };
   }, [loadData, id]);
 
+  // Check if any interactive cards are waiting for an answer
+  // (must be before polling useEffect which depends on it)
+  const hasPendingInteractive = useMemo(() => {
+    // Only block input when agent is actively waiting (SYNCING) for a response
+    if (agent?.status !== "SYNCING") return false;
+
+    // Only check the LAST agent message with interactive metadata
+    // (old cards are stale — agent has continued past them)
+    let lastInteractiveMsg = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "AGENT" && msg.metadata?.interactive?.length) {
+        lastInteractiveMsg = msg;
+        break;
+      }
+    }
+    if (!lastInteractiveMsg) return false;
+
+    for (const item of lastInteractiveMsg.metadata.interactive) {
+      // Skip auto-approved items
+      if (item.auto_approved) continue;
+      // Skip dismissed items
+      const answer = item.answer;
+      if (typeof answer === "string" && (
+        answer.startsWith("The user doesn't want to proceed") ||
+        answer.startsWith("User declined") ||
+        answer.startsWith("Tool use rejected")
+      )) continue;
+
+      const questions = item.questions || [];
+      if (questions.length > 1) {
+        // Multi-question: pending if any question lacks a selection
+        const indices = item.selected_indices || {};
+        for (let qi = 0; qi < questions.length; qi++) {
+          if (indices[String(qi)] == null && answer == null) return true;
+        }
+      } else {
+        // Single-question or ExitPlanMode
+        if (answer == null && item.selected_index == null) return true;
+      }
+    }
+    return false;
+  }, [messages, agent?.status]);
+  hasPendingInteractiveRef.current = hasPendingInteractive;
+
   // Polling — faster when executing, pauses when page hidden
   useEffect(() => {
     if (!visible) return;
-    const isActive = agent?.status === "EXECUTING" || agent?.status === "SYNCING";
+    const isActive = agent?.status === "EXECUTING" || agent?.status === "SYNCING" || hasPendingInteractiveRef.current;
     const interval = isActive ? POLL_ACTIVE_INTERVAL : POLL_IDLE_INTERVAL;
     const timer = setInterval(refreshMessages, interval);
     return () => clearInterval(timer);
-  }, [refreshMessages, agent?.status, visible]);
+  }, [refreshMessages, agent?.status, visible, hasPendingInteractive]);
 
   // Mark as read on mount and when new messages arrive
   useEffect(() => {
@@ -2538,6 +2590,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
+    if (event.type === "metadata_update") {
+      const { message_id, metadata } = event.data;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === message_id ? { ...m, metadata } : m))
+      );
+      return;
+    }
+
     if (event.type === "message_delivered") {
       const { message_id, delivered_at } = event.data;
       setMessages((prev) => {
@@ -2732,29 +2792,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Check if any interactive cards are waiting for an answer
-  // (must be before early returns to maintain hooks ordering)
-  const hasPendingInteractive = useMemo(() => {
-    for (const msg of messages) {
-      const meta = msg.metadata;
-      if (!meta?.interactive) continue;
-      for (const item of meta.interactive) {
-        const questions = item.questions || [];
-        if (questions.length > 1) {
-          // Multi-question: pending if any question lacks a selection
-          const indices = item.selected_indices || {};
-          for (let qi = 0; qi < questions.length; qi++) {
-            if (indices[String(qi)] == null && item.answer == null) return true;
-          }
-        } else {
-          // Single-question: existing backward-compat logic
-          if (item.answer == null && item.selected_index == null) return true;
-        }
-      }
-    }
-    return false;
-  }, [messages]);
-
   // Smooth EXECUTING→off: hold true for 1s to avoid flicker
   // (must be before early returns to maintain hooks ordering)
   const isExecutingRaw = agent?.status === "EXECUTING" || (agent?.status === "SYNCING" && (hookActive || agent?.is_generating));
@@ -2813,7 +2850,26 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   let disabledReason = "";
   if (isStopped) disabledReason = "Agent is stopped — click Resume to restart";
   else if (isError) disabledReason = "Agent errored — click Resume to restart";
-  else if (hasPendingInteractive) disabledReason = "Answer the question above first";
+  else if (hasPendingInteractive) {
+    // Determine if the pending card is a plan or question
+    let pendingType = "question";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const meta = messages[i].metadata;
+      if (messages[i].role === "AGENT" && meta?.interactive?.length) {
+        for (const item of meta.interactive) {
+          if (item.auto_approved) continue;
+          if (item.answer == null && item.selected_index == null) {
+            pendingType = item.type === "exit_plan_mode" ? "plan" : "question";
+            break;
+          }
+        }
+        break;
+      }
+    }
+    disabledReason = pendingType === "plan"
+      ? "Approve or reject the plan above"
+      : "Answer the question above first";
+  }
 
   return (
     <div className="flex flex-col h-full relative">
@@ -3069,7 +3125,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       {/* Agent ID + session size + parent link */}
       {!compactHeader && <div className="shrink-0 bg-surface border-b border-divider px-4 py-1">
-        <div className={`${embedded ? "" : "max-w-2xl"} mx-auto flex items-center gap-2`}>
+        <div className={`${embedded ? "" : "max-w-2xl"} mx-auto flex items-center gap-2 pl-2.5`}>
           {agent.parent_id && (
             <button
               type="button"
