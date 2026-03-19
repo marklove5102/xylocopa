@@ -4350,6 +4350,16 @@ async def hook_agent_user_prompt(request: Request):
         asyncio.ensure_future(emit_agent_update(agent_id, "EXECUTING", project))
         ad.wake_sync(agent_id)
 
+        # UserPromptSubmit fires BEFORE Claude writes the user turn to JSONL.
+        # The immediate wake above picks up any prior unsynced content, but
+        # the new turn isn't on disk yet.  Schedule a delayed wake so the
+        # sync loop catches the JSONL write right after Claude flushes it.
+        async def _post_prompt_sync(_aid):
+            from config import JSONL_FLUSH_DELAY
+            await asyncio.sleep(JSONL_FLUSH_DELAY)
+            ad.wake_sync(_aid)
+        asyncio.ensure_future(_post_prompt_sync(agent_id))
+
     return {}
 
 
@@ -4415,7 +4425,8 @@ async def hook_agent_stop(request: Request):
                 # the hook.  Schedule a delayed wake so the sync loop
                 # picks up the new content right after we return.
                 async def _post_stop_sync(_aid):
-                    await asyncio.sleep(0.1)  # let Claude flush JSONL
+                    from config import JSONL_FLUSH_DELAY
+                    await asyncio.sleep(JSONL_FLUSH_DELAY)
                     ad.wake_sync(_aid)
                 asyncio.ensure_future(_post_stop_sync(agent_id))
 
@@ -4600,7 +4611,7 @@ async def hook_agent_tool_activity(request: Request):
                         status=MessageStatus.COMPLETED,
                         source="cli",
                         meta_json=_meta,
-                        jsonl_uuid=body.get("tool_use_id", ""),
+                        jsonl_uuid=f"hook-{body.get('tool_use_id', '')}",
                         completed_at=_utcnow(),
                         delivered_at=_utcnow(),
                     )
@@ -4624,6 +4635,61 @@ async def hook_agent_tool_activity(request: Request):
         output_summary = _tool_output_summary(tool_name, tool_output, is_error) if tool_output else ""
         await emit_tool_activity(agent_id, tool_name, phase, tool_input=tool_input,
                                   tool_output=tool_output, is_error=is_error)
+        # Backfill interactive card answers from PostToolUse
+        if tool_name in ("AskUserQuestion", "ExitPlanMode") and tool_output:
+            tool_use_id = body.get("tool_use_id", "")
+            if tool_use_id:
+                from database import SessionLocal as _SL
+                _db = _SL()
+                try:
+                    # Check if agent has skip_permissions (auto-approval)
+                    _ag = _db.get(Agent, agent_id)
+                    is_auto = bool(_ag and _ag.skip_permissions) if _ag else False
+
+                    # Find ALL card messages with this tool_use_id and patch any
+                    # that still have answer=None (handles duplicate messages from
+                    # hook-created + JSONL-sourced cards).
+                    _answer_text = str(tool_output)[:500]
+                    _patched_any = False
+                    _msgs = _db.query(Message).filter(
+                        Message.agent_id == agent_id,
+                        Message.meta_json.is_not(None),
+                    ).order_by(Message.created_at.desc()).limit(20).all()
+                    for _msg in _msgs:
+                        try:
+                            _meta = json.loads(_msg.meta_json)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        _msg_changed = False
+                        for _item in _meta.get("interactive", []):
+                            if _item.get("tool_use_id") != tool_use_id:
+                                continue
+                            if _item.get("answer") is not None:
+                                continue  # already answered, check next msg
+                            _item["answer"] = _answer_text
+                            if is_auto:
+                                _item["auto_approved"] = True
+                            from agent_dispatcher import _derive_selected_index
+                            _derive_selected_index(_item)
+                            _msg_changed = True
+                        if _msg_changed:
+                            _msg.meta_json = json.dumps(_meta)
+                            _patched_any = True
+                    if _patched_any:
+                        _db.commit()
+                        # Re-read and emit for each patched message
+                        for _msg in _msgs:
+                            try:
+                                _meta = json.loads(_msg.meta_json)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                            for _item in _meta.get("interactive", []):
+                                if _item.get("tool_use_id") == tool_use_id and _item.get("answer") == _answer_text:
+                                    from websocket import emit_metadata_update
+                                    await emit_metadata_update(agent_id, _msg.id, _meta)
+                                    break
+                finally:
+                    _db.close()
     # --- Subagent lifecycle ---
     elif hook_event == "SubagentStart":
         agent_type = body.get("agent_type", "subagent")
@@ -7509,13 +7575,13 @@ def _patch_interactive_answer(
                 item["answer"] = _PLAN_LABELS[selected_index] if selected_index < len(_PLAN_LABELS) else str(selected_index)
             msg.meta_json = json.dumps(meta)
             db.commit()
-            return True
+            return {"message_id": msg.id, "metadata": meta}
 
     logger.debug(
         "No interactive item found for tool_use_id=%s agent=%s (type=%s)",
         tool_use_id, agent_id, answer_type,
     )
-    return False
+    return None
 
 
 def _count_interactive_questions(db: Session, agent_id: str, tool_use_id: str) -> int:
@@ -7577,6 +7643,9 @@ async def answer_agent_interactive(
         patched = _patch_interactive_answer(db, agent_id, body.tool_use_id, body.selected_index, body.type, body.question_index)
         if not patched:
             logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
+        else:
+            from websocket import emit_metadata_update
+            await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
 
         if has_tmux:
             # Multi-question TUI: after the last question, Claude Code shows a
@@ -7638,6 +7707,9 @@ async def answer_agent_interactive(
             patched = _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
             if not patched:
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
+            else:
+                from websocket import emit_metadata_update
+                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
 
             try:
                 # Store approved plan on task for the execution agent
@@ -7694,6 +7766,9 @@ async def answer_agent_interactive(
             patched = _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
             if not patched:
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
+            else:
+                from websocket import emit_metadata_update
+                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
 
             # Capture pane content AFTER sending keys for diagnostics
             await asyncio.sleep(0.5)
@@ -7711,6 +7786,9 @@ async def answer_agent_interactive(
             patched = _patch_interactive_answer(db, agent_id, body.tool_use_id, effective_index, body.type)
             if not patched:
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
+            else:
+                from websocket import emit_metadata_update
+                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
 
         return {"detail": "ok", "keys_sent": len(keys) if has_tmux else 0, "prompt_type": prompt_type, "auto_approved": not has_tmux}
 
@@ -7752,7 +7830,8 @@ async def send_escape_to_agent(agent_id: str, db: Session = Depends(get_db)):
     interrupted = False
     ad = getattr(app.state, "agent_dispatcher", None)
     if ad and agent.session_id:
-        await asyncio.sleep(0.15)  # 150ms for Claude to write JSONL
+        from config import JSONL_FLUSH_DELAY
+        await asyncio.sleep(JSONL_FLUSH_DELAY)
         # Read only new JSONL data since last sync offset
         ctx = ad._sync_contexts.get(agent_id)
         jsonl_path = ctx.jsonl_path if ctx else None
