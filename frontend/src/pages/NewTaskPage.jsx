@@ -101,6 +101,11 @@ export default function NewTaskPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Stop recording when voice toggle is turned off
+  useEffect(() => {
+    if (!autoVoice && voice.recording) voice.stopRecording();
+  }, [autoVoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
@@ -186,7 +191,6 @@ export default function NewTaskPage() {
   const dismiss = async () => {
     if (dismissClosingRef.current || submittingRef.current) return;
     dismissClosingRef.current = true;
-    const hasContent = description.trim() || title.trim() || attachments.some((a) => a.uploadedPath);
     if (hasContent) {
       try {
         const uploaded = attachments.filter((a) => a.uploadedPath);
@@ -265,6 +269,7 @@ export default function NewTaskPage() {
   };
 
   // ---- Launch agent directly (when project is selected) ----
+  // Creates a task first, then launches a tmux agent linked to it.
   const launchAgent = async () => {
     if (submittingRef.current || !project) return;
     const hasText = description.trim() || title.trim() || attachments.some((a) => a.uploadedPath);
@@ -274,6 +279,21 @@ export default function NewTaskPage() {
     try {
       const uploaded = attachments.filter((a) => a.uploadedPath);
       const fullPrompt = buildDescriptionText(description.trim() || title.trim(), uploaded);
+      let finalTitle = title.trim() || deriveTitle(description);
+      if (!finalTitle && uploaded.length > 0) finalTitle = "Untitled task";
+      // Create task first
+      const task = await createTaskV2({
+        title: finalTitle,
+        description: fullPrompt || undefined,
+        project_name: project,
+        priority,
+        model: model || undefined,
+        effort: effort || undefined,
+        skip_permissions: skipPermissions,
+        use_worktree: !!worktree,
+        auto_dispatch: false,
+      });
+      // Launch agent linked to task
       const agent = await launchTmuxAgent({
         project,
         prompt: fullPrompt,
@@ -281,6 +301,7 @@ export default function NewTaskPage() {
         effort: effort || undefined,
         worktree: worktree || undefined,
         skip_permissions: skipPermissions,
+        task_id: task.id,
       });
       clearAllDrafts();
       clearAttachments();
@@ -440,21 +461,23 @@ export default function NewTaskPage() {
                     </svg>
                   </button>
                   <div />
-                  <div className="flex items-center gap-1.5">
-                    {voice.recording && voice.remainingSeconds != null && (
-                      <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
-                        {voice.remainingSeconds >= 60
-                          ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
-                          : voice.remainingSeconds}
-                      </span>
-                    )}
-                    <VoiceRecorder
-                      recording={voice.recording}
-                      voiceLoading={voice.voiceLoading}
-                      micError={voice.micError}
-                      onToggle={voice.toggleRecording}
-                    />
-                  </div>
+                  {autoVoice && (
+                    <div className="flex items-center gap-1.5">
+                      {voice.recording && voice.remainingSeconds != null && (
+                        <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
+                          {voice.remainingSeconds >= 60
+                            ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
+                            : voice.remainingSeconds}
+                        </span>
+                      )}
+                      <VoiceRecorder
+                        recording={voice.recording}
+                        voiceLoading={voice.voiceLoading}
+                        micError={voice.micError}
+                        onToggle={voice.toggleRecording}
+                      />
+                    </div>
+                  )}
                   <div className="relative">
                     <button
                       type="button"

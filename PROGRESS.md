@@ -56,3 +56,15 @@
 ### 2026-03-17 | Task: Monitor page token usage auto-refresh (10 min) | Status: success
 - What: Token usage was manual-refresh only. Added `fetchUsage` to mount effect and a 10-minute `setInterval` in the active polling `useEffect`. Backend already has 120s cache TTL so no rate-limit concerns.
 - Lesson: Straightforward — `fetchUsage` was already defined but just wasn't wired into any polling interval
+
+### 2026-03-17 | Task: Voice toggle OFF doesn't stop recording | Status: success
+- What: Voice toggle (`autoVoice`) only gated auto-start on mount. Toggling OFF didn't stop active recording, and the mic button stayed visible/clickable. Fixed by: (1) adding `useEffect` to stop recording when `autoVoice` turns OFF, (2) hiding mic button + timer when `autoVoice` is OFF. Persistence was already implemented correctly via localStorage.
+- Lesson: A toggle that controls "auto-start" behavior must also have side effects on the current state — otherwise the UI becomes contradictory (toggle OFF but recording active)
+
+### 2026-03-17 | Task: Make voice recording duration configurable | Status: success
+- What: `useVoiceRecorder` had a hardcoded `MAX_RECORDING_MS`. Refactored to accept `maxDurationMs` param (default `DEFAULT_MAX_RECORDING_MS = 300000`). Used a ref (`limitRef`) so in-flight timer closures always read the latest limit. Added effect to reset countdown display when limit changes while idle.
+- Lesson: Any value captured inside `useCallback` closures with minimal deps arrays must use refs to avoid stale reads — especially timers set once at recording start.
+
+### 2026-03-17 | Task: Unify split screen nav bar with main nav bar | Status: success
+- What: SplitScreenPage had its own `paneTabs` with different tab order, labels ("Tasks" vs "Inbox"), icon sizes, and center button — visually and behaviorally inconsistent with the main App.jsx nav. Extracted `tabs`, `CenterFab`, and nav rendering into a shared `BottomNavBar` component (`frontend/src/components/BottomNavBar.jsx`). Both App.jsx and SplitScreenPage now reuse it.
+- Lesson: Straightforward — no issues. Net reduction of ~56 lines. Key design: accept `badges`, `onDoubleTap`, `onProjectsTap`, and `className` as optional props so the same component works in both fixed-position (main app) and inline (split pane) contexts.
