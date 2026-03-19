@@ -74,6 +74,10 @@ DB_PATH = _resolve(os.getenv("DB_PATH", "data/orchestrator.db"))
 LOG_DIR = _resolve(os.getenv("LOG_DIR", "logs"))
 BACKUP_DIR = _resolve(os.getenv("BACKUP_DIR", "backups"))  # also configurable via .env BACKUP_DIR=/your/path
 
+# Delay (seconds) before waking sync after a hook returns, giving Claude
+# time to flush the JSONL entry to disk.
+JSONL_FLUSH_DELAY = float(os.getenv("JSONL_FLUSH_DELAY", "0.15"))
+
 # Session cache
 SESSION_CACHE_INTERVAL = int(os.getenv("SESSION_CACHE_INTERVAL", "30"))
 
