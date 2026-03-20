@@ -394,7 +394,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [skipPermissions, setSkipPermissions] = useState(() => {
     try { return localStorage.getItem("pref:project-agent:skipPermissions") !== "false"; } catch { return true; }
   });
-  const clearAllDrafts = () => { clearPrompt(); clearModel(); clearEffort(); };
+  const clearAllDrafts = () => { clearPrompt(); };
   const [submitting, setSubmitting] = useState(false);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const attachmentCacheKey = `draft:project-agent:${name}:attachments`;
