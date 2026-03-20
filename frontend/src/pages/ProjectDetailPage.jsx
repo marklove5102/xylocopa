@@ -54,6 +54,27 @@ const AGENT_TABS = [
   { key: "sessions", label: "Sessions" },
 ];
 
+function TaskRing({ total, completed, size = 22 }) {
+  if (!total) return null;
+  const pct = Math.round(completed / total * 100);
+  const r = (size - 4) / 2, c = 2 * Math.PI * r;
+  const offset = c * (1 - pct / 100);
+  const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#f87171";
+  const half = size / 2;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <circle cx={half} cy={half} r={r} fill="transparent" stroke={color} strokeWidth={2} opacity={0.18} />
+      <circle cx={half} cy={half} r={r} fill="transparent" stroke={color} strokeWidth={2}
+        strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset}
+        transform={`rotate(-90 ${half} ${half})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+      <text x={half} y={half} textAnchor="middle" dominantBaseline="central"
+        fill={color} style={{ fontSize: `${size * 0.32}px`, fontWeight: 700 }}>
+        {pct}
+      </text>
+    </svg>
+  );
+}
+
 function projectBotState(proj) {
   if (!proj.active) return "idle";
   if ((proj.agent_active || 0) > 0) return "running";
@@ -1118,6 +1139,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 )}
                 {project.active && (project.agent_active || 0) > 0 && (
                   <span className="text-cyan-400">{project.agent_active} active</span>
+                )}
+                {(project.task_total || 0) > 0 && (
+                  <>
+                    <span className="text-label">
+                      <span className="font-medium text-heading">{project.task_total}</span> task{project.task_total !== 1 ? "s" : ""}
+                    </span>
+                    <TaskRing total={project.task_total} completed={project.task_completed || 0} />
+                  </>
                 )}
               </div>
             </div>
