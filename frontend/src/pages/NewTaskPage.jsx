@@ -77,7 +77,7 @@ export default function NewTaskPage() {
   const [dragOver, setDragOver] = useState(false);
   const dragCountRef = useRef(0);
 
-  const clearAllDrafts = () => { clearTitle(); clearDesc(); clearProject(); clearModel(); clearEffort(); };
+  const clearAllDrafts = () => { clearTitle(); clearDesc(); };
 
   const toast = useToast();
   const showToast = (message, type = "success") => type === "error" ? toast.error(message) : toast.success(message);
