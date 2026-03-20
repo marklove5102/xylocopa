@@ -717,9 +717,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Fetch project + agents
   const loadData = useCallback(async () => {
     try {
-      const [folders, agentList] = await Promise.all([
+      const [folders, agentList, stats] = await Promise.all([
         fetchAllFolders(),
         fetchProjectAgents(name),
+        fetchTaskCounts(name).catch(() => null),
       ]);
       const folder = folders.find((f) => f.name === name);
       if (!folder) {
@@ -728,6 +729,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       }
       setProject(folder);
       setAgents(agentList);
+      if (stats) setProjectStats(stats);
       setLoadError(null);
     } catch (err) {
       console.error("Failed to load project data:", err);
@@ -1246,10 +1248,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                           }
                           setShowStats(v => !v);
                         }}
-                        title={`${project.task_completed || 0}/${project.task_total} tasks completed`}
+                        title={`Weekly: ${projectStats?.weekly_completed ?? (project.task_completed || 0)}/${projectStats?.weekly_total ?? project.task_total} tasks completed`}
                         className="shrink-0 flex items-center justify-center rounded-md hover:bg-white/5 transition-colors p-0.5"
                       >
-                        <TaskRing total={project.task_total} completed={project.task_completed || 0} size={24} />
+                        <TaskRing total={projectStats?.weekly_total ?? project.task_total} completed={projectStats?.weekly_completed ?? (project.task_completed || 0)} size={24} />
                       </button>
                       {showStats && projectStats && (
                         <ProjectStatsPopover stats={projectStats} onClose={() => setShowStats(false)} containerRef={statsRingRef} />
