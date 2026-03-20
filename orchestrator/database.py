@@ -370,6 +370,12 @@ def init_db():
             ))
             conn.commit()
 
+        if "use_tmux" not in task_cols:
+            conn.execute(text(
+                "ALTER TABLE tasks ADD COLUMN use_tmux BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+
         # --- Unique index on agents.session_id ---
         # Enforces one-agent-per-session at the DB level, preventing
         # cross-agent session theft even if application logic races.
