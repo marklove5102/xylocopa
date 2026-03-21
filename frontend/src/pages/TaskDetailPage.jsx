@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2, dispatchTask, cancelTask } from "../lib/api";
 import { TASK_STATUS_COLORS, TASK_STATUS_TEXT_COLORS, projectBadgeColor, modelDisplayName, POLL_INTERVAL } from "../lib/constants";
-import { relativeTime, renderMarkdown } from "../lib/formatters";
+import { relativeTime, renderMarkdown, durationDisplay, elapsedDisplay } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
 import ProjectSelector from "../components/ProjectSelector";
 import usePageVisible from "../hooks/usePageVisible";
@@ -274,17 +274,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
               {/* Description */}
               {task.description && (
                 <div className="rounded-xl bg-surface shadow-card p-3">
-                  <div className="text-sm text-body whitespace-pre-wrap">{task.description}</div>
-                </div>
-              )}
-
-              {/* Branch info */}
-              {task.branch_name && (
-                <div className="flex items-center gap-2 px-1">
-                  <svg className="w-3.5 h-3.5 text-purple-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-                  </svg>
-                  <code className="text-xs text-dim font-mono truncate">{task.branch_name}</code>
+                  <div className="text-sm text-body prose-sm">{renderMarkdown(task.description, task.project_name)}</div>
                 </div>
               )}
 
@@ -314,24 +304,113 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
             </>
           )}
 
-          {/* EXECUTING: link to agent */}
-          {task.status === "EXECUTING" && task.agent_id && (
+          {/* ── Timeline card ── */}
+          {(() => {
+            const fmtTs = (iso) => {
+              if (!iso) return null;
+              let s = String(iso);
+              if (/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(s)) s += "Z";
+              return new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+            };
+            const steps = [
+              { label: "Created", ts: task.created_at, icon: "plus", color: "text-blue-400", bg: "bg-blue-500" },
+            ];
+            if (task.started_at) {
+              steps.push({ label: "Started", ts: task.started_at, icon: "play", color: "text-cyan-400", bg: "bg-cyan-500",
+                dur: durationDisplay(task.created_at, task.started_at) });
+            }
+            if (task.completed_at) {
+              const termLabel = task.status === "COMPLETE" ? "Completed" : task.status === "FAILED" ? "Failed" : task.status === "TIMEOUT" ? "Timed Out" : task.status === "CANCELLED" ? "Cancelled" : task.status === "REJECTED" ? "Rejected" : "Ended";
+              const termColor = task.status === "COMPLETE" ? "text-green-400" : task.status === "CANCELLED" ? "text-gray-400" : "text-red-400";
+              const termBg = task.status === "COMPLETE" ? "bg-green-500" : task.status === "CANCELLED" ? "bg-gray-500" : "bg-red-500";
+              steps.push({ label: termLabel, ts: task.completed_at, icon: "end", color: termColor, bg: termBg,
+                dur: task.started_at ? durationDisplay(task.started_at, task.completed_at) : null });
+            }
+            if (steps.length < 2) return null;
+            return (
+              <div className="rounded-xl bg-surface shadow-card p-3">
+                <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-2.5">Timeline</div>
+                <div className="relative pl-5">
+                  {/* Vertical line */}
+                  <div className="absolute left-[7px] top-1 bottom-1 w-px bg-edge" />
+                  {steps.map((step, i) => (
+                    <div key={step.label} className={`relative flex items-start gap-3 ${i < steps.length - 1 ? "pb-4" : ""}`}>
+                      {/* Dot */}
+                      <div className={`absolute -left-5 top-0.5 w-[15px] h-[15px] rounded-full border-2 border-page flex items-center justify-center ${step.bg}`}>
+                        {step.icon === "plus" && (
+                          <svg className="w-2 h-2 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={4}>
+                            <path strokeLinecap="round" d="M12 5v14M5 12h14" />
+                          </svg>
+                        )}
+                        {step.icon === "play" && (
+                          <svg className="w-2 h-2 text-white" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        )}
+                        {step.icon === "end" && (
+                          <svg className="w-2 h-2 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={4}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </div>
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-medium ${step.color}`}>{step.label}</span>
+                          {step.dur && <span className="text-[10px] text-faint">{step.dur}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[11px] text-dim">{fmtTs(step.ts)}</span>
+                          <span className="text-[10px] text-faint">{relativeTime(step.ts)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Agent card — shown for any status with agent_id ── */}
+          {task.agent_id && (
             <div className="rounded-xl bg-surface shadow-card p-3">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
-                <span className="text-sm text-label">Agent executing...</span>
+                {task.status === "EXECUTING" ? (
+                  <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+                ) : (
+                  <svg className="w-3.5 h-3.5 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 00.659 1.591L19 14.5M14.25 3.104c.251.023.501.05.75.082M19 14.5l-2.47-2.47" />
+                  </svg>
+                )}
+                <span className="text-xs text-label font-medium">Agent</span>
+                <code className="text-[10px] text-faint font-mono">{task.agent_id.slice(0, 8)}</code>
                 <button
                   type="button"
                   onClick={() => navigate(`/agents/${task.agent_id}`)}
-                  className="ml-auto text-xs text-cyan-400 hover:text-cyan-300 underline"
+                  className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 text-xs text-cyan-400 hover:bg-cyan-500/20 transition-colors font-medium"
                 >
-                  View agent
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  View conversation
                 </button>
               </div>
             </div>
           )}
 
-          {/* REVIEW: agent summary + actions */}
+          {/* ── Last agent message preview ── */}
+          {task.last_agent_message && (
+            <div className="rounded-xl bg-surface shadow-card p-3">
+              <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Last Agent Message</div>
+              <div className="text-sm text-body bg-inset rounded-lg p-2.5 max-h-[120px] overflow-y-auto">
+                <p className="line-clamp-4 whitespace-pre-wrap">{task.last_agent_message}</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Status-specific cards ── */}
+
+          {/* REVIEW: agent summary + verification */}
           {task.status === "REVIEW" && (
             <div className="rounded-xl bg-surface shadow-card p-3 space-y-3">
               <h3 className="text-sm font-medium text-amber-400">Ready for Review</h3>
@@ -341,18 +420,6 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 </div>
               ) : (
                 <p className="text-sm text-dim">Agent completed — review the conversation below.</p>
-              )}
-              {task.agent_id && (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/agents/${task.agent_id}`)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/10 text-sm text-cyan-400 hover:bg-cyan-500/20 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  View agent conversation
-                </button>
               )}
               {(() => {
                 const arts = task.review_artifacts ? (() => { try { return JSON.parse(task.review_artifacts); } catch { return {}; } })() : {};
@@ -409,18 +476,11 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
             </div>
           )}
 
-          {/* COMPLETE */}
-          {task.status === "COMPLETE" && (
+          {/* COMPLETE: agent summary */}
+          {task.status === "COMPLETE" && task.agent_summary && (
             <div className="rounded-xl bg-surface shadow-card p-3 space-y-2">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-green-400">Completed</h3>
-                {task.completed_at && (
-                  <span className="text-[10px] text-faint ml-auto">{relativeTime(task.completed_at)}</span>
-                )}
-              </div>
-              {task.agent_summary && (
-                <div className="text-sm text-body">{renderMarkdown(task.agent_summary, task.project_name)}</div>
-              )}
+              <div className="text-faint text-[10px] uppercase tracking-wider font-medium">Agent Summary</div>
+              <div className="text-sm text-body">{renderMarkdown(task.agent_summary, task.project_name)}</div>
             </div>
           )}
 
@@ -434,12 +494,12 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
             </div>
           )}
 
-          {/* FAILED / TIMEOUT */}
+          {/* FAILED / TIMEOUT: error message */}
           {(task.status === "FAILED" || task.status === "TIMEOUT") && (
             <div className="rounded-xl bg-surface shadow-card p-3 space-y-2">
               <h3 className="text-sm font-medium text-red-400">{task.status === "TIMEOUT" ? "Timed Out" : "Failed"}</h3>
               {task.error_message && (
-                <p className="text-sm text-body">{task.error_message}</p>
+                <pre className="text-xs text-body bg-inset rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">{task.error_message}</pre>
               )}
             </div>
           )}
@@ -455,6 +515,95 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
               </pre>
             </details>
           )}
+
+          {/* ── Metadata details ── */}
+          <details className="rounded-xl bg-surface shadow-card p-3">
+            <summary className="text-xs font-medium text-label cursor-pointer flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dim" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+              </svg>
+              Details
+            </summary>
+            <div className="mt-2.5 space-y-2">
+              {/* Task ID */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-label">Task ID</span>
+                <code className="text-[11px] text-dim font-mono select-all">{task.id}</code>
+              </div>
+              {/* Agent ID */}
+              {task.agent_id && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Agent ID</span>
+                  <code className="text-[11px] text-dim font-mono select-all">{task.agent_id}</code>
+                </div>
+              )}
+              {/* Project */}
+              {task.project_name && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Project</span>
+                  <span className="text-[11px] text-dim">{task.project_name}</span>
+                </div>
+              )}
+              {/* Model */}
+              {task.model && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Model</span>
+                  <span className="text-[11px] text-dim">{modelDisplayName(task.model)}</span>
+                </div>
+              )}
+              {/* Effort */}
+              {task.effort && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Effort</span>
+                  <span className="text-[11px] text-dim capitalize">{task.effort}</span>
+                </div>
+              )}
+              {/* Branch */}
+              {task.branch_name && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Branch</span>
+                  <code className="text-[11px] text-dim font-mono truncate max-w-[180px] select-all">{task.branch_name}</code>
+                </div>
+              )}
+              {/* Worktree */}
+              {task.worktree_name && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Worktree</span>
+                  <span className="text-[11px] text-dim truncate max-w-[180px]">{task.worktree_name}</span>
+                </div>
+              )}
+              {/* Attempt */}
+              {task.attempt_number > 1 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Attempt</span>
+                  <span className="text-[11px] text-dim">#{task.attempt_number}</span>
+                </div>
+              )}
+              {/* Priority */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-label">Priority</span>
+                <span className="text-[11px] text-dim">{task.priority === 1 ? "High" : "Normal"}</span>
+              </div>
+              {/* Flags */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-label">Flags</span>
+                <div className="flex items-center gap-1.5">
+                  {task.use_worktree && <span className="text-[10px] px-1.5 py-px rounded bg-purple-500/15 text-purple-400">Worktree</span>}
+                  {task.sync_mode && <span className="text-[10px] px-1.5 py-px rounded bg-emerald-500/15 text-emerald-400">Sync</span>}
+                  {task.use_tmux && <span className="text-[10px] px-1.5 py-px rounded bg-cyan-500/15 text-cyan-400">Tmux</span>}
+                  {task.skip_permissions && <span className="text-[10px] px-1.5 py-px rounded bg-amber-500/15 text-amber-400">Skip perms</span>}
+                  {!task.use_worktree && !task.sync_mode && !task.use_tmux && !task.skip_permissions && <span className="text-[11px] text-faint">None</span>}
+                </div>
+              </div>
+              {/* Elapsed */}
+              {elapsed != null && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-label">Elapsed</span>
+                  <span className="text-[11px] text-dim">{fmtElapsed(elapsed)}</span>
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       </div>
 
