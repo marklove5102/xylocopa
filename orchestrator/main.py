@@ -2894,12 +2894,19 @@ Task: {task_title}{reason_line}
 
 {context}"""
 
+    # Strip AHIVE_AGENT_ID so the subprocess doesn't trigger a session
+    # rotation signal for the parent agent (the claude -p process fires
+    # SessionStart with X-Agent-Id from env, which would make the sync
+    # loop adopt this one-shot session as the agent's new session).
+    clean_env = {k: v for k, v in os.environ.items() if k != "AHIVE_AGENT_ID"}
+
     try:
         result = subprocess.run(
             [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
             input=prompt,
             capture_output=True, text=True, timeout=120,
             cwd=project_path,
+            env=clean_env,
         )
         if result.returncode != 0:
             logger.warning("Retry summary failed for task %s: %s", task_id, result.stderr[:300])
