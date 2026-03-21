@@ -76,7 +76,7 @@ export default function PromptInputBar({
       {fileInputRef && (
         <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; if (files.length > 0) onAddFiles?.(files); }} />
       )}
-      <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-1.5 items-center px-1">
+      <div className="flex items-center gap-1.5 px-1">
         {/* Attach button */}
         {fileInputRef ? (
           <button
@@ -90,7 +90,7 @@ export default function PromptInputBar({
             </svg>
           </button>
         ) : <div />}
-        <div className="flex items-center gap-1.5">
+        <div className="flex-1 min-w-0 flex items-center justify-end gap-1.5">
           {voice.recording && voice.remainingSeconds != null && (
             <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
               {voice.remainingSeconds >= 60
