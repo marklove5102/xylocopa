@@ -33,6 +33,7 @@ const TasksPage = lazy(() => import("./TasksPage"));
 const TaskDetailPage = lazy(() => import("./TaskDetailPage"));
 const MonitorPage = lazy(() => import("./MonitorPage"));
 const NewPage = lazy(() => import("./NewPage"));
+const NewTaskPage = lazy(() => import("./NewTaskPage"));
 const GitPage = lazy(() => import("./GitPage"));
 
 // --- Layout definitions ---
@@ -98,6 +99,7 @@ function PaneShell({ theme, onToggleTheme, onPathChange }) {
   const location = usePaneLocation();
   const paneNav = usePaneNavigate();
   const themeProps = { theme, onToggleTheme };
+  const bgLocation = location.state?.backgroundLocation;
 
   // Report path changes back to parent for persistence
   useEffect(() => {
@@ -120,9 +122,9 @@ function PaneShell({ theme, onToggleTheme, onPathChange }) {
 
   return (
     <div className="flex flex-col h-full bg-page text-heading overflow-hidden">
-      <main className="flex-1 min-h-0 overflow-hidden">
+      <main className="flex-1 min-h-0 overflow-hidden relative">
         <Suspense fallback={<div className="flex items-center justify-center h-full text-dim text-sm animate-pulse">Loading...</div>}>
-          <Routes>
+          <Routes location={bgLocation || location}>
             <Route path="/" element={<Navigate to="/agents" replace />} />
             <Route path="/projects" element={<ProjectsPage {...themeProps} />} />
             <Route path="/projects/trash" element={<TrashPage {...themeProps} />} />
@@ -131,10 +133,16 @@ function PaneShell({ theme, onToggleTheme, onPathChange }) {
             <Route path="/agents/:id" element={<AgentChatPage {...themeProps} embedded onClose={onCloseChat} onNavigateAgent={onNavigateAgent} />} />
             <Route path="/tasks" element={<TasksPage {...themeProps} />} />
             <Route path="/tasks/:id" element={<TaskDetailPage {...themeProps} />} />
+            {!bgLocation && <Route path="/new/task" element={<NewTaskPage />} />}
             <Route path="/new" element={<NewPage {...themeProps} />} />
             <Route path="/monitor" element={<MonitorPage {...themeProps} />} />
             <Route path="/git" element={<GitPage {...themeProps} />} />
           </Routes>
+          {bgLocation && (
+            <Routes>
+              <Route path="/new/task" element={<NewTaskPage />} />
+            </Routes>
+          )}
         </Suspense>
       </main>
 
