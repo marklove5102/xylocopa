@@ -84,3 +84,9 @@
 ### 2026-03-20 | Task: Fix agent conversation discontinuity from claude -p session rotation | Status: success
 - What: Agent 709ed0f8's conversation became discontinuous because its `claude -p` subprocess (for retry summary generation) inherited `AHIVE_AGENT_ID` from the tmux env. The subprocess fired SessionStart hook with the agent's ID, causing the sync loop to rotate the agent to the one-shot `claude -p` session. Fixed by stripping `AHIVE_AGENT_ID` from the env passed to `subprocess.run` in `_generate_retry_summary_background`.
 - Lesson: Any `claude -p` subprocess started from within an agent's tmux session inherits `AHIVE_AGENT_ID`, which makes its SessionStart hook look like a session rotation for the parent agent. Always strip `AHIVE_AGENT_ID` from env when spawning `claude -p` subprocesses.
+
+
+## 2026-03-21 — 709ed0f80ee2
+1. `claude -p` subprocess run inside an agent's tmux session inherits `AHIVE_AGENT_ID`, causing SessionStart hook to fire with that agent's ID — the sync loop then falsely adopts the one-shot session as a "session rotation," replacing the agent's real conversation with the subprocess output.
+2. Fix in `_generate_retry_summary_background` (main.py): strip `AHIVE_AGENT_ID` from the env dict passed to `subprocess.run` so the `claude -p` subprocess doesn't trigger session rotation. Minimal one-line change, no-op when the function runs from the orchestrator backend (which lacks that env var).
+3. `worker_manager.py` already has `_clean_env()` for subprocess calls but the orchestrator backend process normally doesn't have `AHIVE_AGENT_ID` set — the bug only manifests when an agent itself invokes `claude -p` from within its tmux session (e.g., via a Bash tool call that imports `main.py` inline).
