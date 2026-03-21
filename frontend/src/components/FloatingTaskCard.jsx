@@ -144,7 +144,11 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
             {task.agent_summary && (
               <div className="rounded-lg bg-input p-3 space-y-1">
                 <p className="text-xs font-semibold text-dim">Agent Summary</p>
-                <p className="text-xs text-body whitespace-pre-wrap">{task.agent_summary}</p>
+                {task.agent_summary === ":::generating:::" ? (
+                  <p className="text-xs text-dim/50 italic">Generating summary...</p>
+                ) : (
+                  <p className="text-xs text-body whitespace-pre-wrap">{task.agent_summary}</p>
+                )}
               </div>
             )}
 

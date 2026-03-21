@@ -3231,7 +3231,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 {taskData.agent_summary && (
                   <div className="mb-2">
                     <p className="text-[10px] font-medium text-dim mb-0.5">Agent summary</p>
-                    <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.agent_summary}</p>
+                    {taskData.agent_summary === ":::generating:::" ? (
+                      <p className="text-xs text-dim/50 italic">Generating summary...</p>
+                    ) : (
+                      <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.agent_summary}</p>
+                    )}
                   </div>
                 )}
                 {taskData.retry_context && (

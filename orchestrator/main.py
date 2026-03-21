@@ -2861,6 +2861,107 @@ Agent: {agent_name} | Task: {task_title}
         logger.debug("Failed to emit progress_suggestions_ready WS event", exc_info=True)
 
 
+def _generate_retry_summary_background(agent_id: str, task_id: str,
+                                       task_title: str, project_name: str,
+                                       project_path: str,
+                                       incomplete_reason: str | None):
+    """Generate a concise retry summary via claude -p: what the agent tried,
+    user feedback, and why the task failed."""
+    from config import CLAUDE_BIN
+
+    own_db = SessionLocal()
+    try:
+        context = _gather_agent_conversation_context(own_db, agent_id)
+    finally:
+        own_db.close()
+
+    if not context:
+        logger.info("No conversation context for agent %s — skipping retry summary", agent_id)
+        return
+
+    reason_line = ""
+    if incomplete_reason:
+        reason_line = f"\nUser's reason for stopping: {incomplete_reason}"
+
+    prompt = f"""Summarize this agent conversation for a retry attempt. Be concise (3-5 bullet points max, under 500 chars total).
+
+Cover:
+1. What the agent tried (key actions/approaches)
+2. What feedback the user gave (if any)
+3. Why it ended / what went wrong
+
+Task: {task_title}{reason_line}
+
+{context}"""
+
+    try:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            input=prompt,
+            capture_output=True, text=True, timeout=120,
+            cwd=project_path,
+        )
+        if result.returncode != 0:
+            logger.warning("Retry summary failed for task %s: %s", task_id, result.stderr[:300])
+            _fallback_retry_summary(task_id, agent_id)
+            return
+        summary = result.stdout.strip()[:2000]
+    except subprocess.TimeoutExpired:
+        logger.warning("Retry summary timed out for task %s", task_id)
+        _fallback_retry_summary(task_id, agent_id)
+        return
+    except Exception:
+        logger.exception("Retry summary error for task %s", task_id)
+        _fallback_retry_summary(task_id, agent_id)
+        return
+
+    if not summary:
+        _fallback_retry_summary(task_id, agent_id)
+        return
+
+    # Save summary and notify frontend
+    own_db = SessionLocal()
+    try:
+        task = own_db.get(Task, task_id)
+        if task:
+            task.agent_summary = summary
+            own_db.commit()
+            logger.info("Saved retry summary for task %s (%d chars)", task_id, len(summary))
+    except Exception:
+        logger.exception("Failed to save retry summary for task %s", task_id)
+        own_db.rollback()
+        return
+    finally:
+        own_db.close()
+
+    # Emit task_update so frontend refreshes
+    from websocket import emit_task_update
+    try:
+        loop = _main_event_loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                emit_task_update(task_id, "INBOX", project_name, title=task_title),
+                loop,
+            )
+    except Exception:
+        logger.debug("Failed to emit task_update for retry summary", exc_info=True)
+
+
+def _fallback_retry_summary(task_id: str, agent_id: str):
+    """If AI summary fails, fall back to last_message_preview."""
+    own_db = SessionLocal()
+    try:
+        task = own_db.get(Task, task_id)
+        agent = own_db.get(Agent, agent_id)
+        if task and task.agent_summary == ":::generating:::":
+            task.agent_summary = (agent.last_message_preview if agent else None) or None
+            own_db.commit()
+    except Exception:
+        own_db.rollback()
+    finally:
+        own_db.close()
+
+
 @app.post("/api/projects/{name}/summarize-progress")
 async def summarize_progress(name: str, db: Session = Depends(get_db)):
     """Start a background Claude agent to summarize today's tasks into PROGRESS.md."""
@@ -6256,13 +6357,17 @@ async def stop_agent(agent_id: str, request: Request,
     # Capture task info before stopping (needed for background summary)
     _task_title = None
     _project_path = None
+    _retry_task_id = None
+    _retry_project_name = ""
+    _retry_task_title = "Unknown task"
     _should_summarize = generate_summary and agent.task_id
-    if _should_summarize:
-        task = db.get(Task, agent.task_id)
-        _task_title = task.title if task else "Unknown task"
-        project = db.get(Project, agent.project)
-        _project_path = project.path if project else None
-        if not _project_path:
+    if agent.task_id:
+        _t = db.get(Task, agent.task_id)
+        if _t:
+            _task_title = _t.title or "Unknown task"
+        _p = db.get(Project, agent.project)
+        _project_path = _p.path if _p else None
+        if _should_summarize and not _project_path:
             _should_summarize = False
 
     # Kill the tmux pane/session if this is a CLI-synced agent
@@ -6338,13 +6443,16 @@ async def stop_agent(agent_id: str, request: Request,
                     _ctx_parts.append(f"User feedback: {incomplete_reason}")
                 if _ctx_parts:
                     _linked_task.retry_context = "\n".join(_ctx_parts)
-                # Save agent's last message as a basic summary
-                if agent.last_message_preview:
-                    _linked_task.agent_summary = agent.last_message_preview
+                # Mark summary as generating — background thread will replace
+                _linked_task.agent_summary = ":::generating:::"
                 _linked_task.attempt_number = (_linked_task.attempt_number or 0) + 1
                 TaskStateMachine.transition(_linked_task, TaskStatus.INBOX, strict=False)
                 logger.info("Task %s returned to INBOX attempt=%d (agent %s stopped by user)",
                             _linked_task.id, _linked_task.attempt_number, agent.id)
+                # Always generate retry summary for incomplete tasks
+                _retry_task_id = _linked_task.id
+                _retry_project_name = _linked_task.project_name or ""
+                _retry_task_title = _linked_task.title or "Unknown task"
             db.commit()
             asyncio.ensure_future(emit_task_update(
                 _linked_task.id, _linked_task.status.value, _linked_task.project_name or "",
@@ -6360,6 +6468,17 @@ async def stop_agent(agent_id: str, request: Request,
         )
         thread.start()
         logger.info("Spawned background summary for agent %s", agent.id)
+
+    # Spawn retry summary for incomplete tasks (always, no toggle needed)
+    if not task_complete and _retry_task_id and _project_path:
+        thread = threading.Thread(
+            target=_generate_retry_summary_background,
+            args=(agent.id, _retry_task_id, _retry_task_title,
+                  _retry_project_name, _project_path, incomplete_reason),
+            daemon=True,
+        )
+        thread.start()
+        logger.info("Spawned retry summary for task %s", _retry_task_id)
 
     return agent
 
