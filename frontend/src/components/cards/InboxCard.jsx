@@ -282,7 +282,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
 
             {/* Description — flexible middle, grows to fill space */}
             {isExpanded ? (
-              <div className="flex-1 min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
+              <div className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
                 <div
                   ref={editRef}
                   contentEditable={editing}
