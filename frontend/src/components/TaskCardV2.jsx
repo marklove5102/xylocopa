@@ -44,7 +44,7 @@ export default memo(function TaskCardV2({ task }) {
             {task.model.replace(/^claude-/, "").replace(/-\d{8}$/, "")}
           </span>
         )}
-        {task.agent_summary && (
+        {task.agent_summary && task.agent_summary !== ":::generating:::" && (
           <span className="text-xs text-dim truncate max-w-[200px]">
             {task.agent_summary.slice(0, 80)}
           </span>
