@@ -110,6 +110,17 @@ _IMPORT_CHECK_TIMEOUT = 15
 # Anthropic API request timeout (seconds)
 _API_REQUEST_TIMEOUT = 10
 
+# Env vars stripped from claude -p subprocesses to prevent false session
+# rotation signals.  AHIVE_AGENT_ID would make the hook look managed,
+# TMUX/TMUX_PANE would let the unmanaged-pane-ownership check falsely
+# match the subprocess to a running agent.
+_SUBPROCESS_STRIP_VARS = {"AHIVE_AGENT_ID", "TMUX", "TMUX_PANE"}
+
+
+def _subprocess_clean_env() -> dict[str, str]:
+    """Return os.environ without vars that can trigger false session rotation."""
+    return {k: v for k, v in os.environ.items() if k not in _SUBPROCESS_STRIP_VARS}
+
 
 def _check_project_capacity(db, project_name: str) -> tuple[int, int]:
     """Return (active_count, max_concurrent) for a project.
@@ -2306,6 +2317,7 @@ Here is recent agent activity in this project (last 50 messages):
             [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
             capture_output=True, text=True, timeout=600,
             cwd=project_path,
+            env=_subprocess_clean_env(),
         )
         if result.returncode != 0:
             logger.warning("claude -p failed for %s: %s", project_name, result.stderr[:500])
@@ -2615,6 +2627,7 @@ Here are today's conversations (with timestamps):
             input=prompt,
             capture_output=True, text=True, timeout=600,
             cwd=project_path,
+            env=_subprocess_clean_env(),
         )
 
         # Mark any new sessions created by this subprocess as "system"
@@ -2770,6 +2783,7 @@ Agent: {agent_name} | Task: {task_title}
             input=prompt,
             capture_output=True, text=True, timeout=300,
             cwd=project_path,
+            env=_subprocess_clean_env(),
         )
 
         # Mark any new sessions created by this subprocess as "system"
@@ -2896,19 +2910,13 @@ Task: {task_title}{reason_line}
 
 {context}"""
 
-    # Strip AHIVE_AGENT_ID so the subprocess doesn't trigger a session
-    # rotation signal for the parent agent (the claude -p process fires
-    # SessionStart with X-Agent-Id from env, which would make the sync
-    # loop adopt this one-shot session as the agent's new session).
-    clean_env = {k: v for k, v in os.environ.items() if k != "AHIVE_AGENT_ID"}
-
     try:
         result = subprocess.run(
             [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
             input=prompt,
             capture_output=True, text=True, timeout=120,
             cwd=project_path,
-            env=clean_env,
+            env=_subprocess_clean_env(),
         )
         if result.returncode != 0:
             logger.warning("Retry summary failed for task %s: %s", task_id, result.stderr[:300])
