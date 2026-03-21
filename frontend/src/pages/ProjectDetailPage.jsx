@@ -1409,7 +1409,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </div>
           )}
           <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={handleFileSelect} />
-          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-1.5 items-center px-1">
+          <div className="flex items-center gap-1.5 px-1">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -1420,7 +1420,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
             </button>
-            <div className="flex items-center gap-1.5">
+            <div className="flex-1 min-w-0 flex items-center justify-end gap-1.5">
               {voice.recording && voice.remainingSeconds != null && (
                 <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
                   {voice.remainingSeconds >= 60
