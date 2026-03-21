@@ -3432,11 +3432,13 @@ Here are the day's conversations (with timestamps):
 
         Returns ``(prompt_text, insights_list)``.
         """
-        parts = [f"# Task: {task.title}"]
+        is_retry = task.attempt_number and task.attempt_number > 1
+        task_label = "Original Task" if is_retry else "Task"
+        parts = [f"# {task_label}: {task.title}"]
         if task.description:
             parts.append(f"\n{task.description}")
 
-        if task.attempt_number > 1:
+        if is_retry:
             # Include AI-generated summary of what was tried
             if task.agent_summary and task.agent_summary != ":::generating:::":
                 parts.append(f"\n## What Was Tried (attempt #{task.attempt_number - 1})")

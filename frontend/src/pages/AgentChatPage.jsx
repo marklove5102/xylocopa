@@ -1607,8 +1607,10 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
   const fileInputRef = useRef(null);
   const pendingSendRef = useRef(null);
 
+  // Voice target ref — redirects transcription to feedback textarea when stop modal is open
+  const voiceTargetRef = useRef(setText);
   const voice = useVoiceRecorder({
-    onTranscript: (t) => setText((prev) => (prev ? prev + " " + t : t)),
+    onTranscript: (t) => voiceTargetRef.current((prev) => (prev ? prev + " " + t : t)),
     onError: (msg) => setVoiceError(msg),
   });
   const [voiceError, setVoiceError] = useState(null);
@@ -2029,6 +2031,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [generateSummary, setGenerateSummary] = useState(false);
   const [taskComplete, setTaskComplete] = useState(true);
   const [incompleteReason, setIncompleteReason] = useState("");
+  const [feedbackAttachments, setFeedbackAttachments] = useState([]);
+  const feedbackFileInputRef = useRef(null);
   const [showTaskCard, setShowTaskCard] = useState(false);
   // Sync generateSummary with per-project localStorage preference
   const generateSummaryInitialized = useRef(false);
@@ -2042,6 +2046,50 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     if (!agent?.project || !generateSummaryInitialized.current) return;
     localStorage.setItem(`pref:generateSummary:${agent.project}`, String(generateSummary));
   }, [generateSummary, agent?.project]);
+
+  // Redirect voice transcription when stop modal is open
+  useEffect(() => {
+    if (showStopConfirm && !taskComplete) {
+      voiceTargetRef.current = setIncompleteReason;
+    } else {
+      voiceTargetRef.current = setText;
+    }
+  }, [showStopConfirm, taskComplete]);
+
+  // Feedback attachment helpers
+  const addFeedbackFiles = (files) => {
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024) continue;
+      const fid = Math.random().toString(36).slice(2, 10);
+      const isImage = file.type.startsWith("image/");
+      const previewUrl = isImage ? URL.createObjectURL(file) : null;
+      setFeedbackAttachments((prev) => [...prev, { id: fid, file, previewUrl, uploading: true, uploadedPath: null, originalName: file.name, size: file.size, mimeType: file.type }]);
+      uploadFile(file).then((result) => {
+        setFeedbackAttachments((prev) => prev.map((a) => a.id === fid ? { ...a, uploading: false, uploadedPath: result.path } : a));
+      }).catch(() => {
+        setFeedbackAttachments((prev) => prev.filter((a) => a.id !== fid));
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+      });
+    }
+  };
+  const removeFeedbackAttachment = (fid) => {
+    setFeedbackAttachments((prev) => {
+      const att = prev.find((a) => a.id === fid);
+      if (att?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((a) => a.id !== fid);
+    });
+  };
+  const clearFeedbackAttachments = () => {
+    setFeedbackAttachments((prev) => { prev.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); }); return []; });
+  };
+  const handleFeedbackPaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files = [];
+    for (const item of items) { if (item.kind === "file") { const f = item.getAsFile(); if (f) files.push(f); } }
+    if (files.length > 0) { e.preventDefault(); addFeedbackFiles(files); }
+  };
+
   const [resuming, setResuming] = useState(false);
   const [showResumeModal, setShowResumeModal] = useState(false);
   const [starred, setStarred] = useState(false);
@@ -2799,10 +2847,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const handleStop = async () => {
     setStopping(true);
     try {
+      // Build feedback text with any attached files
+      let feedbackText = incompleteReason.trim();
+      const uploaded = feedbackAttachments.filter((a) => a.uploadedPath);
+      if (uploaded.length > 0) {
+        for (const a of uploaded) feedbackText += `\n[Attached file: ${a.uploadedPath}]`;
+      }
       await stopAgent(id, {
         generateSummary: generateSummary && !!agent?.task_id,
         taskComplete: agent?.task_id ? taskComplete : true,
-        incompleteReason: (!taskComplete && incompleteReason.trim()) ? incompleteReason.trim() : null,
+        incompleteReason: (!taskComplete && feedbackText) ? feedbackText : null,
       });
       const label = !agent?.task_id
         ? "Agent stopped"
@@ -2819,6 +2873,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setShowStopConfirm(false);
       setTaskComplete(true);
       setIncompleteReason("");
+      clearFeedbackAttachments();
     }
   };
 
@@ -3407,15 +3462,78 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     Incomplete
                   </button>
                 </div>
-                {/* Incomplete reason */}
+                {/* Incomplete reason with file + voice support */}
                 {!taskComplete && (
-                  <textarea
-                    value={incompleteReason}
-                    onChange={(e) => setIncompleteReason(e.target.value)}
-                    placeholder="What should be done differently? (optional)"
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-lg bg-input border border-divider text-body text-sm placeholder:text-dim resize-none focus:outline-none focus:ring-1 focus:ring-amber-500/50"
-                  />
+                  <div className="space-y-2">
+                    <textarea
+                      value={incompleteReason}
+                      onChange={(e) => setIncompleteReason(e.target.value)}
+                      onPaste={handleFeedbackPaste}
+                      placeholder="What should be done differently? (optional)"
+                      rows={3}
+                      className="w-full px-3 py-2 rounded-lg bg-input border border-divider text-body text-sm placeholder:text-dim resize-none focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                    />
+                    {/* Feedback attachment previews */}
+                    {feedbackAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {feedbackAttachments.map((att) => (
+                          <div key={att.id} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-elevated text-xs max-w-[140px]">
+                            {att.previewUrl ? (
+                              <img src={att.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                            ) : (
+                              <svg className="w-4 h-4 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                              </svg>
+                            )}
+                            <span className="truncate text-label flex-1 min-w-0">{att.originalName}</span>
+                            {att.uploading ? (
+                              <svg className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            ) : (
+                              <button type="button" onClick={() => removeFeedbackAttachment(att.id)} className="text-dim hover:text-heading shrink-0">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Toolbar: attach + voice */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => feedbackFileInputRef.current?.click()}
+                        title="Attach files"
+                        className="w-8 h-8 rounded-full flex items-center justify-center bg-elevated hover:bg-hover text-label transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                      </button>
+                      <input ref={feedbackFileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; if (files.length > 0) addFeedbackFiles(files); }} />
+                      <div className="flex-1" />
+                      {voice.recording && voice.remainingSeconds != null && (
+                        <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
+                          {voice.remainingSeconds >= 60
+                            ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
+                            : voice.remainingSeconds}
+                        </span>
+                      )}
+                      <VoiceRecorder
+                        recording={voice.recording}
+                        voiceLoading={voice.voiceLoading}
+                        micError={voice.micError}
+                        onToggle={voice.toggleRecording}
+                      />
+                    </div>
+                    {voice.streamingText && (
+                      <div className="px-1 text-xs text-amber-400/80 italic animate-pulse">{voice.streamingText}</div>
+                    )}
+                  </div>
                 )}
                 {/* Generate summary checkbox */}
                 <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -3440,7 +3558,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               </button>
               <button
                 type="button"
-                onClick={() => { setShowStopConfirm(false); setTaskComplete(true); setIncompleteReason(""); }}
+                onClick={() => { setShowStopConfirm(false); setTaskComplete(true); setIncompleteReason(""); clearFeedbackAttachments(); }}
                 className="flex-1 min-h-[44px] rounded-lg bg-input hover:bg-elevated text-body text-sm transition-colors"
               >
                 Cancel
