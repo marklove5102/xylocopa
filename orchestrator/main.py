@@ -3512,7 +3512,6 @@ async def get_task_v2(task_id: str, db: Session = Depends(get_db)):
         conversation = [MessageOut.model_validate(m, from_attributes=True) for m in msgs]
     return TaskDetailOut(
         **TaskOut.model_validate(task).model_dump(),
-        retry_context=task.retry_context,
         conversation=conversation,
     )
 
