@@ -18,6 +18,7 @@ const FILTER_TABS = [
   { key: "SYNCING", label: "Syncing" },
   { key: "ACTIVE", label: "Active" },
   { key: "STOPPED", label: "Stopped" },
+  { key: "INSIGHTS", label: "Insights" },
 ];
 
 const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle, isStreaming }) {
@@ -288,7 +289,9 @@ export default function AgentsPage({ theme, onToggleTheme }) {
         ? agents.filter((a) => a.status === "SYNCING")
         : filter === "ACTIVE"
           ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
-          : agents.filter((a) => a.status === "STOPPED"),
+          : filter === "INSIGHTS"
+            ? agents.filter((a) => a.has_pending_suggestions)
+            : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
   const filtered = useMemo(() =>
@@ -339,6 +342,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     SYNCING: agents.filter(a => a.status === "SYNCING").length,
     ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "SYNCING").length,
     STOPPED: agents.filter(a => a.status === "STOPPED").length,
+    INSIGHTS: agents.filter(a => a.has_pending_suggestions).length,
   }), [agents]);
 
   // Count how many selected agents are stoppable (not already stopped)
