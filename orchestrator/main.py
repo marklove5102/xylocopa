@@ -3001,7 +3001,7 @@ def _generate_retry_summary_background(agent_id: str, task_id: str,
                                      project_name, project_path, incomplete_reason)
     except Exception:
         logger.exception("Unhandled error in retry summary thread for task %s", task_id)
-        _fallback_retry_summary(task_id, agent_id)
+        _clear_generating_marker(task_id)
 
 
 def _generate_retry_summary_impl(agent_id: str, task_id: str,
@@ -3074,20 +3074,20 @@ Task: {task_title}{reason_line}
 
         if result.returncode != 0:
             logger.warning("Retry summary failed for task %s: %s", task_id, result.stderr[:300])
-            _fallback_retry_summary(task_id, agent_id)
+            _clear_generating_marker(task_id)
             return
         summary = result.stdout.strip()[:2000]
     except subprocess.TimeoutExpired:
         logger.warning("Retry summary timed out for task %s", task_id)
-        _fallback_retry_summary(task_id, agent_id)
+        _clear_generating_marker(task_id)
         return
     except Exception:
         logger.exception("Retry summary error for task %s", task_id)
-        _fallback_retry_summary(task_id, agent_id)
+        _clear_generating_marker(task_id)
         return
 
     if not summary:
-        _fallback_retry_summary(task_id, agent_id)
+        _clear_generating_marker(task_id)
         return
 
     # Save summary and notify frontend
@@ -3118,20 +3118,16 @@ Task: {task_title}{reason_line}
         logger.debug("Failed to emit task_update for retry summary", exc_info=True)
 
 
-def _fallback_retry_summary(task_id: str, agent_id: str):
-    """If AI summary fails, fall back to last_message_preview."""
+def _clear_generating_marker(task_id: str):
+    """Clear :::generating::: so the UI shows the 'Generate summary' button."""
     own_db = SessionLocal()
     try:
         task = own_db.get(Task, task_id)
-        agent = own_db.get(Agent, agent_id)
         if task and task.agent_summary == ":::generating:::":
-            fallback = (agent.last_message_preview if agent else None) or None
-            task.agent_summary = fallback
+            task.agent_summary = None
             own_db.commit()
-            logger.info("Fallback retry summary for task %s: %s", task_id,
-                        (fallback[:80] + "...") if fallback and len(fallback) > 80 else fallback)
     except Exception:
-        logger.exception("Fallback retry summary failed for task %s", task_id)
+        logger.exception("Failed to clear generating marker for task %s", task_id)
         own_db.rollback()
     finally:
         own_db.close()
