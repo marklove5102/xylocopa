@@ -2,7 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
-import { scanOrphans, cleanOrphans, fetchBackupStatus, purgeBackups } from "../lib/api";
+import {
+  scanOrphans, cleanOrphans, fetchBackupStatus, purgeBackups,
+  triggerBackup, deleteSingleBackup, restoreBackup, updateBackupConfig,
+  importBackup, downloadBackupUrl,
+} from "../lib/api";
 import { useMonitor } from "../contexts/MonitorContext";
 
 const HEALTH_COLORS = {
@@ -220,6 +224,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
   const [orphanResult, setOrphanResult] = useState(null);
   const [backupInfo, setBackupInfo] = useState(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [backupListOpen, setBackupListOpen] = useState(false);
+  const [backupConfigOpen, setBackupConfigOpen] = useState(false);
 
   const loadBackupInfo = useCallback(async () => {
     try {
@@ -255,6 +261,72 @@ export default function MonitorPage({ theme, onToggleTheme }) {
       setBackupBusy(false);
     }
   }, [backupInfo, loadBackupInfo, refresh]);
+
+  const handleManualBackup = useCallback(async () => {
+    setBackupBusy(true);
+    try {
+      await triggerBackup();
+      await loadBackupInfo();
+    } catch {
+      /* ignore */
+    } finally {
+      setBackupBusy(false);
+    }
+  }, [loadBackupInfo]);
+
+  const handleDeleteBackup = useCallback(async (name) => {
+    if (!window.confirm(`Delete backup "${name}"?`)) return;
+    try {
+      await deleteSingleBackup(name);
+      await loadBackupInfo();
+    } catch {
+      /* ignore */
+    }
+  }, [loadBackupInfo]);
+
+  const handleRestoreBackup = useCallback(async (name) => {
+    if (!window.confirm(
+      `Restore from "${name}"?\n\nThis will overwrite the current database. The server will need to be restarted.`
+    )) return;
+    setBackupBusy(true);
+    try {
+      await restoreBackup(name);
+      window.alert("Restore complete. Please restart the server for changes to take effect.");
+    } catch (err) {
+      window.alert(`Restore failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  }, []);
+
+  const handleImportBackup = useCallback(async () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip";
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setBackupBusy(true);
+      try {
+        await importBackup(file);
+        await loadBackupInfo();
+      } catch (err) {
+        window.alert(`Import failed: ${err.message || "Unknown error"}`);
+      } finally {
+        setBackupBusy(false);
+      }
+    };
+    input.click();
+  }, [loadBackupInfo]);
+
+  const handleUpdateConfig = useCallback(async (updates) => {
+    try {
+      await updateBackupConfig(updates);
+      await loadBackupInfo();
+    } catch {
+      /* ignore */
+    }
+  }, [loadBackupInfo]);
 
   const handleOrphanClean = useCallback(async () => {
     setOrphanBusy(true);
@@ -398,38 +470,174 @@ export default function MonitorPage({ theme, onToggleTheme }) {
           <section>
             <h2 className="text-xs font-semibold text-dim uppercase tracking-wider mb-2">Backup</h2>
             <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">
+              {/* Header row: status + action buttons */}
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
                   <p className="text-sm text-heading font-medium">
-                    {backupInfo.enabled ? "Enabled" : "Disabled"}
+                    {backupInfo.backup_count} snapshots
+                    {backupInfo.total_bytes > 0 && ` (${formatBytes(backupInfo.total_bytes)})`}
                   </p>
                   <p className="text-xs text-dim mt-0.5">
                     {backupInfo.enabled
-                      ? `Every ${backupInfo.interval_hours}h, keep ${backupInfo.max_backups} max`
-                      : "Set BACKUP_ENABLED=1 in .env to enable"}
+                      ? `Auto: every ${backupInfo.interval_hours}h, keep ${backupInfo.max_backups} max`
+                      : "Auto backup disabled"}
                   </p>
                 </div>
-                <div className={`px-2 py-0.5 rounded text-xs font-medium ${backupInfo.enabled ? "bg-green-500/20 text-green-400" : "bg-zinc-600/30 text-zinc-400"}`}>
-                  {backupInfo.enabled ? "ON" : "OFF"}
-                </div>
-              </div>
-              {backupInfo.backup_count > 0 && (
-                <div className="flex items-center justify-between pt-2 border-t border-divider">
-                  <span className="text-xs text-dim">
-                    {backupInfo.backup_count} snapshots ({formatBytes(backupInfo.total_bytes)})
-                  </span>
+                <div className="flex items-center gap-1.5">
+                  {/* Settings gear */}
                   <button
                     type="button"
-                    disabled={backupBusy}
-                    onClick={handlePurgeBackups}
-                    className="px-2.5 py-1 rounded-lg text-xs font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors disabled:opacity-50"
+                    onClick={() => setBackupConfigOpen(!backupConfigOpen)}
+                    title="Settings"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
                   >
-                    {backupBusy ? "Deleting..." : "Purge all"}
+                    <svg className="w-3.5 h-3.5 text-label" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
                   </button>
                 </div>
+              </div>
+
+              {/* Config panel (collapsible) */}
+              {backupConfigOpen && (
+                <div className="pt-2 border-t border-divider space-y-3">
+                  {/* Enable/disable toggle */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-label">Auto backup</span>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateConfig({ enabled: !backupInfo.enabled })}
+                      className={`relative w-9 h-5 rounded-full transition-colors ${backupInfo.enabled ? "bg-cyan-500" : "bg-zinc-600"}`}
+                    >
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${backupInfo.enabled ? "left-[18px]" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                  {/* Interval */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-label">Interval</span>
+                    <select
+                      value={backupInfo.interval_hours}
+                      onChange={(e) => handleUpdateConfig({ interval_hours: parseInt(e.target.value) })}
+                      className="text-xs bg-input text-heading rounded-lg px-2 py-1 border border-divider"
+                    >
+                      <option value={1}>1h</option>
+                      <option value={6}>6h</option>
+                      <option value={12}>12h</option>
+                      <option value={24}>24h</option>
+                      <option value={48}>48h</option>
+                    </select>
+                  </div>
+                  {/* Max backups */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-label">Keep max</span>
+                    <select
+                      value={backupInfo.max_backups}
+                      onChange={(e) => handleUpdateConfig({ max_backups: parseInt(e.target.value) })}
+                      className="text-xs bg-input text-heading rounded-lg px-2 py-1 border border-divider"
+                    >
+                      <option value={7}>7</option>
+                      <option value={14}>14</option>
+                      <option value={30}>30</option>
+                      <option value={48}>48</option>
+                      <option value={90}>90</option>
+                    </select>
+                  </div>
+                </div>
               )}
-              {backupInfo.backup_count === 0 && (
-                <p className="text-xs text-faint pt-1 border-t border-divider">No backup snapshots on disk</p>
+
+              {/* Action buttons row */}
+              <div className="flex items-center gap-2 pt-2 border-t border-divider">
+                <button
+                  type="button"
+                  disabled={backupBusy}
+                  onClick={handleManualBackup}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 transition-colors disabled:opacity-50"
+                >
+                  {backupBusy ? "..." : "Backup now"}
+                </button>
+                <button
+                  type="button"
+                  disabled={backupBusy}
+                  onClick={handleImportBackup}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 hover:bg-violet-600/30 transition-colors disabled:opacity-50"
+                >
+                  Import
+                </button>
+                {backupInfo.backup_count > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setBackupListOpen(!backupListOpen)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-600/20 text-zinc-300 hover:bg-zinc-600/30 transition-colors"
+                    >
+                      {backupListOpen ? "Hide list" : "Show list"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={backupBusy}
+                      onClick={handlePurgeBackups}
+                      className="ml-auto px-2.5 py-1 rounded-lg text-xs font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors disabled:opacity-50"
+                    >
+                      Purge all
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Backup list (collapsible) */}
+              {backupListOpen && backupInfo.backups && (
+                <div className="pt-2 border-t border-divider space-y-1 max-h-60 overflow-y-auto">
+                  {backupInfo.backups.map((b) => (
+                    <div key={b.name} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-elevated/50 group">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-heading font-mono truncate">
+                          {new Date(b.timestamp).toLocaleString()}
+                          {b.name.endsWith("_imported") && (
+                            <span className="ml-1.5 text-violet-400 font-sans">(imported)</span>
+                          )}
+                        </p>
+                        <p className="text-[10px] text-faint">
+                          {formatBytes(b.total_bytes)}
+                          {b.has_db && " · DB"}
+                          {b.has_registry && " · Registry"}
+                          {b.progress_count > 0 && ` · ${b.progress_count} progress`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <a
+                          href={downloadBackupUrl(b.name)}
+                          title="Download"
+                          className="w-6 h-6 flex items-center justify-center rounded hover:bg-input"
+                        >
+                          <svg className="w-3.5 h-3.5 text-label" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreBackup(b.name)}
+                          title="Restore"
+                          className="w-6 h-6 flex items-center justify-center rounded hover:bg-input"
+                        >
+                          <svg className="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBackup(b.name)}
+                          title="Delete"
+                          className="w-6 h-6 flex items-center justify-center rounded hover:bg-input"
+                        >
+                          <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </section>

@@ -280,7 +280,17 @@ export const restartServer = () => request("/api/system/restart", { method: "POS
 export const scanOrphans = () => request("/api/system/orphans/scan");
 export const cleanOrphans = () => request("/api/system/orphans/clean", { method: "POST" });
 export const fetchBackupStatus = () => request("/api/system/backup");
+export const triggerBackup = () => request("/api/system/backup", { method: "POST" });
 export const purgeBackups = () => request("/api/system/backup", { method: "DELETE" });
+export const deleteSingleBackup = (name) => request(`/api/system/backup/${name}`, { method: "DELETE" });
+export const restoreBackup = (name) => request(`/api/system/backup/${name}/restore`, { method: "POST" });
+export const updateBackupConfig = (data) =>
+  request("/api/system/backup/config", { method: "PUT", body: JSON.stringify(data) });
+export const importBackup = (file) => {
+  const fd = new FormData(); fd.append("file", file);
+  return formDataRequest("/api/system/backup/import", fd, "Import backup");
+};
+export const downloadBackupUrl = (name) => `/api/system/backup/${name}/download`;
 export const fetchProcesses = () => request("/api/processes");
 
 // --- Notification Settings ---
