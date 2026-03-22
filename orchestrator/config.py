@@ -61,8 +61,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Backup
 BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1").strip().lower() in ("1", "true", "yes")
-BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "1"))
-MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "48"))
+BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
+MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "30"))
 
 # Auth
 AUTH_TIMEOUT_MINUTES = int(os.getenv("AUTH_TIMEOUT_MINUTES", "30"))
