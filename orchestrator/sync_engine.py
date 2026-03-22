@@ -506,33 +506,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 agent.last_message_at = _utcnow()
                 db.commit()
                 ad._emit(emit_new_message(agent.id, "sync", ctx.agent_name, ctx.agent_project))
-                # Notify for unanswered interactive items in updated turn
-                if _last_meta and isinstance(_last_meta, dict):
-                    _unanswered = [
-                        i for i in _last_meta.get("interactive", [])
-                        if i.get("answer") is None
-                    ]
-                    if _unanswered and not ad._is_agent_in_use(
-                        agent.id, agent.tmux_pane
-                    ):
-                        from notify import notify as _notify
-                        _itype = _unanswered[0].get("type", "")
-                        if _itype == "exit_plan_mode":
-                            _notify(
-                                "message", agent.id,
-                                agent.name or f"Agent {agent.id[:8]}",
-                                "Plan approval needed",
-                                f"/agents/{agent.id}",
-                                muted=agent.muted, in_use=False,
-                            )
-                        elif _itype == "ask_user_question":
-                            _notify(
-                                "message", agent.id,
-                                agent.name or f"Agent {agent.id[:8]}",
-                                "Question — waiting for your answer",
-                                f"/agents/{agent.id}",
-                                muted=agent.muted, in_use=False,
-                            )
+                # Interactive card notifications are handled by PreToolUse hook
                 ctx.last_tail_hash = tail_hash
                 ctx.last_offset = _current_offset
                 logger.info(
@@ -888,19 +862,3 @@ async def trigger_sync(ad, agent_id: str):
     ad.wake_sync(agent_id)
 
 
-# ---------------------------------------------------------------------------
-# 6. _handle_stop — post-stop logic
-# ---------------------------------------------------------------------------
-
-async def _handle_stop(ad, ctx: SyncContext):
-    """Handle post-stop logic: unread count, notifications."""
-    # Increment unread_count if agent not in use
-    db = SessionLocal()
-    try:
-        agent = db.get(Agent, ctx.agent_id)
-        if agent and not ad._is_agent_in_use(agent.id, agent.tmux_pane):
-            agent.unread_count += 1
-            ad._maybe_notify_message(agent)
-            db.commit()
-    finally:
-        db.close()

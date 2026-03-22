@@ -4339,8 +4339,7 @@ async def hook_agent_stop(request: Request):
             else:
                 # Schedule a delayed wake so the sync loop picks up new
                 # JSONL content for full turn import (dedup, interactive
-                # items, metadata).  _handle_stop's unread logic is now
-                # handled above, so we skip it.
+                # items, metadata).  Unread logic is handled inline above.
                 async def _post_stop_sync(_aid):
                     from config import JSONL_FLUSH_DELAY
                     await asyncio.sleep(JSONL_FLUSH_DELAY)
@@ -4534,8 +4533,22 @@ async def hook_agent_tool_activity(request: Request):
                         delivered_at=_utcnow(),
                     )
                     _db.add(_msg)
+                    if _ag and not ad._is_agent_in_use(_ag.id, _ag.tmux_pane):
+                        _ag.unread_count = (_ag.unread_count or 0) + 1
                     _db.commit()
                     ad._emit(_enm(agent_id, _msg.id, _ag_name, _ag_proj))
+                    # Notify for unanswered interactive items
+                    if _ag and not ad._is_agent_in_use(_ag.id, _ag.tmux_pane):
+                        from notify import notify as _notify_ic
+                        _ntype = "ask_user_question" if tool_name == "AskUserQuestion" else "exit_plan_mode"
+                        _ntitle = "Question — waiting for your answer" if tool_name == "AskUserQuestion" else "Plan approval needed"
+                        _notify_ic(
+                            "message", agent_id,
+                            _ag_name or f"Agent {agent_id[:8]}",
+                            _ntitle,
+                            f"/agents/{agent_id}",
+                            muted=_ag.muted, in_use=False,
+                        )
                 finally:
                     _db.close()
             except Exception:
