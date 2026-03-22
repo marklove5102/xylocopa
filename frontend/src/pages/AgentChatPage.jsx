@@ -1551,7 +1551,7 @@ import SendLaterPicker from "../components/SendLaterPicker";
 
 // --- Chat Input ---
 
-function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode, onEscape, escapeUrgent, escapeAvailable = true, escapeDisabled = false, voiceTarget, kbTop = null }) {
+function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode, onEscape, escapeUrgent, escapeAvailable = true, escapeDisabled = false, voiceTarget, kbOpen = false }) {
   const [text, setText] = useDraft(agentId ? `chat:${agentId}` : null, "");
   const [showPicker, setShowPicker] = useState(false);
   const [escCooldown, setEscCooldown] = useState(false);
@@ -1817,8 +1817,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
 
   return (
     <div
-      className={`left-0 right-0 flex justify-center px-4 z-20 pointer-events-none ${kbTop != null ? "fixed" : "absolute bottom-0 pb-2 safe-area-pb-tight"}`}
-      style={kbTop != null ? { top: `${kbTop}px`, transform: "translateY(-100%)" } : undefined}
+      className={`absolute bottom-0 left-0 right-0 flex justify-center px-4 z-20 pointer-events-none ${kbOpen ? "" : "pb-2 safe-area-pb-tight"}`}
     >
       <div
         className="glass-bar-nav rounded-[22px] px-3 pt-2 pb-2.5 flex flex-col gap-2 w-full relative pointer-events-auto"
@@ -2489,8 +2488,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (stopTimer) clearTimeout(stopTimer);
     };
   }, []);
-  // Approximate kbOffset for messages area padding (doesn't need to be pixel-perfect)
-  const kbOffset = kbTop != null ? Math.max(0, Math.round(window.innerHeight - kbTop)) : 0;
 
   // Auto-scroll to bottom on new messages or streaming content
   const scrollContainerRef = useRef(null);
@@ -2589,13 +2586,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [loading, messages.length, scrollCountKey]);
 
-  // Auto-scroll when keyboard opens/grows so latest messages stay visible
-  useEffect(() => {
-    if (kbOffset > 0 && !userScrolledUp.current) {
+  // When keyboard opens/resizes, scroll to bottom so latest messages stay visible.
+  // useLayoutEffect runs synchronously before paint — no visual flicker.
+  useLayoutEffect(() => {
+    if (kbTop != null && !userScrolledUp.current) {
       const el = scrollContainerRef.current;
-      if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+      if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [kbOffset]);
+  }, [kbTop]);
 
   // WebSocket: re-fetch on new_message events, handle streaming
   const { sendWsMessage } = useWebSocket();
@@ -3013,7 +3011,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div className={`flex flex-col relative ${kbTop != null ? "" : "h-full"}`} style={kbTop != null ? { height: `${kbTop}px` } : undefined}>
 
       {/* Header */}
       <div className={`shrink-0 bg-surface border-b border-divider px-4 ${compactHeader ? "py-1.5" : "py-2"} safe-area-pt relative z-10`}>
@@ -3319,8 +3317,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 ${kbOffset > 0 ? "" : "pb-36"} ${embedded ? "" : "max-w-2xl"} mx-auto w-full flex flex-col`}
-        style={kbOffset > 0 ? { paddingBottom: `${kbOffset + 144}px` } : undefined}
+        className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 pb-36 ${embedded ? "" : "max-w-2xl"} mx-auto w-full flex flex-col`}
+        style={{ overflowAnchor: "auto" }}
       >
         <div className="mt-auto" />
         {messages.length === 0 && agent.status === "STARTING" ? (
@@ -3452,7 +3450,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         escapeDisabled={isStopped || isError}
         escapeUrgent={isExecuting || hasPendingInteractive}
         escapeAvailable={hasTmuxPane}
-        kbTop={kbTop}
+        kbOpen={kbTop != null}
       />
 
       {/* Stop confirmation modal */}
