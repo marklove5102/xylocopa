@@ -8,6 +8,7 @@ import ProjectSelector from "../components/ProjectSelector";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
 import { useToast } from "../contexts/ToastContext";
+import useDraft from "../hooks/useDraft";
 
 export default function TaskDetailPage({ theme, onToggleTheme }) {
   const { id } = useParams();
@@ -17,10 +18,15 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editProject, setEditProject] = useState("");
-  const [editNotifyAt, setEditNotifyAt] = useState("");
+  const [editTitle, setEditTitle, clearTitleDraft] = useDraft(`task-edit:${id}:title`);
+  const [editDesc, setEditDesc, clearDescDraft] = useDraft(`task-edit:${id}:desc`);
+  const [editProject, setEditProject, clearProjectDraft] = useDraft(`task-edit:${id}:project`);
+  const [editNotifyAt, setEditNotifyAt, clearNotifyDraft] = useDraft(`task-edit:${id}:notifyAt`);
+
+  const clearAllDrafts = () => {
+    clearTitleDraft(); clearDescDraft(); clearProjectDraft(); clearNotifyDraft();
+  };
+
   const pollRef = useRef(null);
   const visible = usePageVisible();
   const { sendWsMessage } = useWebSocket();
@@ -98,8 +104,22 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     if (Object.keys(updates).length > 0) {
       await doAction(updateTaskV2, id, updates);
     }
+    clearAllDrafts();
     setEditMode(false);
   };
+
+  // Auto-enter edit mode if drafts exist (crash recovery)
+  const draftCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!task || draftCheckedRef.current) return;
+    draftCheckedRef.current = true;
+    const canEditTask = task.status === "INBOX" || task.status === "PLANNING";
+    if (canEditTask) {
+      const hasDraft = localStorage.getItem(`draft:task-edit:${id}:title`) !== null
+        || localStorage.getItem(`draft:task-edit:${id}:desc`) !== null;
+      if (hasDraft) setEditMode(true);
+    }
+  }, [task, id]);
 
   const startEdit = () => {
     setEditTitle(task.title);
@@ -262,7 +282,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditMode(false)}
+                  onClick={() => { clearAllDrafts(); setEditMode(false); }}
                   className="px-4 py-2 rounded-lg bg-elevated text-label text-sm hover:text-heading transition-colors"
                 >
                   Cancel
