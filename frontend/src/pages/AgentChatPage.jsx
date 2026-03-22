@@ -2459,34 +2459,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     let baseHeight = vv.height;
     let pollId = null;
     let isOpen = false;
-    // Dismiss: 'none' | 'spring' (animating)
-    let dismissPhase = 'none';
-    let springRafId = null;
-    let dismissEndH = 0;
-    let dismissScrollAnchor = null; // Infinity = near bottom, number = distFromBottom
-
-    const SPRING_DURATION = 350;
-    const spring = (tSec) => Math.max(0, Math.min(1, 1 - 1.012450 * Math.exp(-12.148 * tSec)));
-
-    const pinScroll = () => {
-      const sc = scrollContainerRef.current;
-      if (!sc || dismissScrollAnchor === null) return;
-      sc.scrollTop = dismissScrollAnchor === Infinity
-        ? sc.scrollHeight - sc.clientHeight
-        : sc.scrollHeight - sc.clientHeight - dismissScrollAnchor;
-    };
+    let dismissing = false;
 
     const finalizeClose = () => {
       const el = kbContainerRef.current;
       if (el) {
         el.style.height = '';
-        el.style.willChange = '';
         el.classList.add('h-full');
       }
       isOpen = false;
-      dismissPhase = 'none';
-      dismissScrollAnchor = null;
-      if (springRafId) { cancelAnimationFrame(springRafId); springRafId = null; }
+      dismissing = false;
       setKbOpen(false);
     };
 
@@ -2499,8 +2481,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const el = kbContainerRef.current;
       if (!el) return;
 
-      // ── DISMISS: spring animation handles it, ignore resize events ──
-      if (dismissPhase === 'spring') return;
+      if (dismissing) return;
 
       // ── KEYBOARD OPENING / OPEN: direct DOM ──
       if (open) {
@@ -2527,13 +2508,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     };
 
     const startPoll = () => {
-      // Cancel dismiss if re-focusing
-      if (dismissPhase !== 'none') {
-        const el = kbContainerRef.current;
-        if (el) el.style.willChange = '';
-        dismissPhase = 'none';
-        if (springRafId) { cancelAnimationFrame(springRafId); springRafId = null; }
-        }
+      dismissing = false;
       if (!pollId) pollId = setInterval(update, 100);
       update();
     };
@@ -2544,42 +2519,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const el = kbContainerRef.current;
       if (!el?.style.height || !isOpen) return;
 
-      // Capture dismiss targets
-      dismissEndH = el.parentElement?.clientHeight || window.innerHeight;
-
-      // Capture scroll anchor
+      // Snap — web can't sync with native keyboard animation, so just be fast.
+      dismissing = true;
       const sc = scrollContainerRef.current;
-      if (sc) {
-        const d = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
-        dismissScrollAnchor = d < 100 ? Infinity : d;
-      } else {
-        dismissScrollAnchor = Infinity;
+      if (sc && !userScrolledUp.current) {
+        sc.scrollTop = sc.scrollHeight - sc.clientHeight;
       }
-
-      // Spring animate from current height to full height.
-      // iOS resize events jump too fast during dismiss — spring gives smooth deceleration.
-      const startH = parseFloat(el.style.height) || 0;
-      if (Math.abs(startH - dismissEndH) < 5) { finalizeClose(); return; }
-
-      dismissPhase = 'spring';
-      const delta = dismissEndH - startH;
-      const t0 = performance.now();
-      el.style.transition = 'none';
-      el.style.willChange = 'height';
-
-      const tick = (now) => {
-        if (dismissPhase !== 'spring') return;
-        const elapsed = (now - t0) / 1000;
-        const progress = elapsed * 1000 >= SPRING_DURATION ? 1 : spring(elapsed);
-        el.style.height = `${Math.min(Math.round(startH + delta * progress), dismissEndH)}px`;
-        pinScroll();
-        if (progress < 1) {
-          springRafId = requestAnimationFrame(tick);
-        } else {
-          finalizeClose();
-        }
-      };
-      springRafId = requestAnimationFrame(tick);
+      finalizeClose();
     };
 
     vv.addEventListener("resize", update);
@@ -2593,7 +2539,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       document.removeEventListener("focusin", startPoll);
       document.removeEventListener("focusout", stopPoll);
       if (pollId) clearInterval(pollId);
-      if (springRafId) cancelAnimationFrame(springRafId);
     };
   }, []);
 
