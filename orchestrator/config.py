@@ -60,7 +60,7 @@ PROJECTS_DIR = os.getenv("PROJECTS_DIR", os.getenv("HOST_PROJECTS_DIR", ""))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Backup
-BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "0").strip().lower() in ("1", "true", "yes")
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "30"))
 
