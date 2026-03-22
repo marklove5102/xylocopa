@@ -2531,7 +2531,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           const progress = elapsed * 1000 >= DURATION ? 1 : spring(elapsed);
 
           // Set height and pin scroll in same frame — no desync
-          el.style.height = `${startH + delta * progress}px`;
+          // Clamp: never exceed endH (prevents any overshoot on rounding)
+          el.style.height = `${Math.min(Math.round(startH + delta * progress), endH)}px`;
           if (sc) {
             if (wasNearBottom) {
               sc.scrollTop = sc.scrollHeight - sc.clientHeight;
@@ -2543,8 +2544,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           if (progress < 1) {
             scrollRafId = requestAnimationFrame(tick);
           } else {
-            // Animation complete — hand back to React
+            // Animation complete — clamp at endH, then hand to React.
+            // Set h-full class BEFORE clearing inline height so there's
+            // never a frame without a height source. React will reconcile
+            // on re-render and keep h-full since vvHeight will be 0.
+            el.style.height = `${endH}px`;
             el.style.willChange = '';
+            el.classList.add('h-full');
+            el.style.height = '';
             closing = false;
             setKbHeight(0);
             setVvHeight(0);
