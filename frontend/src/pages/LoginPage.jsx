@@ -120,9 +120,23 @@ export default function LoginPage() {
 
         {/* Glass form card */}
         <div className="rounded-2xl bg-surface/60 backdrop-blur-md border border-divider/50 p-5 shadow-lg">
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} autoComplete="on" className="space-y-3">
+            {/* Hidden username for iOS autofill credential matching */}
+            <input
+              type="text"
+              name="username"
+              autoComplete="username"
+              value="user"
+              readOnly
+              aria-hidden="true"
+              tabIndex={-1}
+              style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 }}
+            />
             <input
               type="password"
+              name="password"
+              id="password"
+              autoComplete={needsSetup ? "new-password" : "current-password"}
               value={password}
               onChange={(e) => { setPassword(e.target.value); setError(""); }}
               placeholder={needsSetup ? "New password" : "Password"}
@@ -133,6 +147,9 @@ export default function LoginPage() {
             {needsSetup && (
               <input
                 type="password"
+                name="confirm-password"
+                id="confirm-password"
+                autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => { setConfirmPassword(e.target.value); setError(""); }}
                 placeholder="Confirm password"
