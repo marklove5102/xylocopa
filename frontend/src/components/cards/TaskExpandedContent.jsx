@@ -4,6 +4,7 @@ import { updateTaskV2, dispatchTask, cancelTask } from "../../lib/api";
 import { relativeTime, renderMarkdown } from "../../lib/formatters";
 import ProjectSelector from "../ProjectSelector";
 import { useToast } from "../../contexts/ToastContext";
+import useDraft from "../../hooks/useDraft";
 
 export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
   const navigate = useNavigate();
@@ -12,13 +13,18 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
 
   const canEdit = task.status === "INBOX" || task.status === "PLANNING";
 
-  // Editable fields — initialized from task, always shown for INBOX/PLANNING
-  const [editTitle, setEditTitle] = useState(task.title);
-  const [editDesc, setEditDesc] = useState(task.description || "");
-  const [editProject, setEditProject] = useState(task.project_name || "");
-  const [editNotifyAt, setEditNotifyAt] = useState(
+  // Editable fields — persisted to localStorage via useDraft for crash recovery
+  const [editTitle, setEditTitle, clearTitleDraft] = useDraft(`task-edit:${task.id}:title`, task.title);
+  const [editDesc, setEditDesc, clearDescDraft] = useDraft(`task-edit:${task.id}:desc`, task.description || "");
+  const [editProject, setEditProject, clearProjectDraft] = useDraft(`task-edit:${task.id}:project`, task.project_name || "");
+  const [editNotifyAt, setEditNotifyAt, clearNotifyDraft] = useDraft(
+    `task-edit:${task.id}:notifyAt`,
     task.notify_at ? new Date(task.notify_at).toISOString().slice(0, 16) : ""
   );
+
+  const clearAllDrafts = () => {
+    clearTitleDraft(); clearDescDraft(); clearProjectDraft(); clearNotifyDraft();
+  };
 
   const doAction = async (fn, ...args) => {
     setActionLoading(true);
@@ -37,6 +43,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
     setActionLoading(true);
     try {
       await cancelTask(task.id);
+      clearAllDrafts();
       onRefresh?.();
       onCollapse?.();
     } catch (err) {
@@ -61,6 +68,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
       }
       // Run the follow-up action if provided
       if (actionFn) await actionFn(...actionArgs);
+      clearAllDrafts();
       onRefresh?.();
     } catch (err) {
       toast.error(err.message);

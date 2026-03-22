@@ -12,6 +12,17 @@
 - Lesson: (what future agents should know)
 -->
 
+### 2026-03-22 | Task: Fix keyboard input bar gap on iOS Safari PWA | Status: success
+- What: Input bar floated above keyboard with a gap; only manual scrolling put it in the right position
+- Attempts: 13+ previous commits tried CSS variable offsets, transform:translateY, position:fixed, container resize with vvHeight — all failed to address the root cause
+- Resolution: When iOS opens the keyboard, it scrolls the body to keep the focused input visible. This body scroll offset causes the container (sized to vvHeight) to shift up, creating a gap. Fix: `window.scrollTo(0, 0)` in both the poll update function and a `useLayoutEffect` after React re-render
+- Lesson: On iOS Safari PWA, `body::after { height: 1px }` (needed for keyboard-dismiss fix) makes the body scrollable. iOS exploits this to scroll when keyboard opens. The key is to undo this scroll after container resize — no previous attempt addressed `window.scrollY` / `vv.offsetTop` during keyboard open
+
+### 2026-03-22 | Task: Agent shows syncing after compact while still executing | Status: success
+- What: Agent `1d81e4db` showed "syncing" on Agents list despite actively working (reading files, responding). Caused by `hook_agent_post_compact` calling `_stop_generating()`.
+- Resolution: Removed `_stop_generating()` from PostCompact. After compact, Claude continues processing the same turn — generating state should persist until the Stop hook fires.
+- Lesson: PostCompact is NOT an end-of-turn signal. Compact is a mid-turn operation. Only Stop hook should clear generating state. The 3.5-minute gap between compact and next tool_activity (during extended thinking) made the bug very visible.
+
 ### 2026-03-22 | Task: Fix collapsed inbox card missing description | Status: success
 - What: Collapsed inbox cards hid the description when `parsed.text === task.title`, falling back to project name (redundant with badge row)
 - Resolution: Removed the `!== task.title` guard in `InboxCard.jsx:227` so `preview` always shows `parsed.text` when available
@@ -96,9 +107,9 @@
 
 
 ### 2026-03-22 | Task: Fix keyboard layout bug — input bar flush with keyboard | Status: success
-- What: Input bar had a visible gap above the keyboard on iOS. Root cause: `kbOffset = window.innerHeight - vv.height` is unreliable because `window.innerHeight` can differ from CSS `100vh` on iOS Safari (safe area, viewport-fit:cover). Also removed `interactive-widget=resizes-content` meta tag which caused inconsistent behavior across browsers.
-- Resolution: (1) Removed `interactive-widget=resizes-content` from meta viewport. (2) Track `kbTop = vv.offsetTop + vv.height` (exact keyboard top in layout viewport coords) — no dependency on `window.innerHeight`. (3) When keyboard is open, input bar uses `position: fixed; top: kbTop; transform: translateY(-100%)` to place its bottom edge exactly at keyboard top. When closed, uses `position: absolute; bottom: 0` normally. (4) Messages area padding dynamic (`kbOffset + 144px`). (5) Polling with delayed stop (400ms) for keyboard layout switches.
-- Lesson: Never use `window.innerHeight` subtraction for keyboard positioning on iOS. Instead, read `visualViewport.offsetTop + visualViewport.height` directly — this gives the exact pixel position of the keyboard top without any viewport size discrepancy. Using `position: fixed; top: X; transform: translateY(-100%)` is the most reliable way to keep an element flush with the keyboard.
+- What: Input bar had a ~34px gap above the keyboard on iOS. Multiple approaches tried: (1) `paddingBottom: kbOffset` — gap from background strip, (2) `bottom: kbOffset` — gap from `window.innerHeight` vs `100vh` discrepancy, (3) `position: fixed; top: kbTop; transform: translateY(-100%)` — still gap from safe-area-inset-bottom persisting (WebKit bug #217754).
+- Resolution: Container resize approach (proven by Element/Hydrogen, ios-chat PWA): when keyboard is open, shrink the chat container to `kbTop = vv.offsetTop + vv.height` pixels. Flex layout reflows naturally — messages area shrinks, input bar at `absolute bottom-0` sits flush with keyboard. No position:fixed, no transform, no window.innerHeight dependency. Remove safe-area-pb-tight when keyboard is open. useLayoutEffect for flicker-free scroll-to-bottom. overflow-anchor for scroll stability.
+- Lesson: (1) `env(safe-area-inset-bottom)` stays ~34px even when keyboard covers the home indicator (WebKit bug #217754) — must remove safe-area padding when keyboard is open. (2) `position: fixed + transform` can behave unreliably on iOS Safari during keyboard transitions. (3) Container resize is the most reliable approach because the flex layout naturally positions everything — no coordinate math needed. The previous revert of this approach was due to scroll jumps, fixed by useLayoutEffect + overflow-anchor.
 
 ## 2026-03-21 — 709ed0f80ee2
 1. `claude -p` subprocess run inside an agent's tmux session inherits `AHIVE_AGENT_ID`, causing SessionStart hook to fire with that agent's ID — the sync loop then falsely adopts the one-shot session as a "session rotation," replacing the agent's real conversation with the subprocess output.
@@ -131,3 +142,9 @@
 
 ## 2026-03-22 — Fix start button triggering calendar on mobile
 1. InboxCard's hidden `<input type="datetime-local">` had `absolute inset-0 opacity-0 w-0 h-0` inside a `relative` container adjacent to the dispatch button. On mobile (iOS Safari), datetime inputs maintain a native touch target larger than their CSS size — `inset-0` let this invisible target bleed rightward into the dispatch button's tap area. Fix: removed `inset-0`, added `pointer-events-none` and `overflow-hidden` on parent. The input is triggered programmatically via `showPicker()` so it never needs direct touch interaction.
+
+## 2026-03-22 — Fix iOS autofill not working on login page
+1. Login form password input was missing `autocomplete`, `name`, and `id` attributes. iOS requires `autocomplete="current-password"` and a companion username field to match saved credentials for autofill. Without these, iOS either can't identify the field, fills it incorrectly, or repeatedly prompts without setting React state. Fix: added `autocomplete="current-password"` (login mode) / `"new-password"` (setup mode), `name`/`id` attrs, and a hidden username input for credential anchoring. Straightforward — no issues.
+
+## 2026-03-22 — Task edit draft persistence (crash recovery)
+1. Three task editing components (TaskExpandedContent, TaskDetailPage, FloatingTaskCard) used plain `useState` for edit fields — all content lost on crash/navigation. Fix: swapped to existing `useDraft` hook (localStorage-backed) with task-id-scoped keys (`draft:task-edit:{id}:title`, etc.). Drafts auto-save on every keystroke, cleared on successful save/dispatch/delete/cancel. TaskDetailPage auto-enters edit mode on mount if drafts exist (crash recovery). Straightforward — the `useDraft` hook was already proven stable in NewTaskPage and AgentChatPage.

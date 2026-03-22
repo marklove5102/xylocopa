@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { fetchTaskV2, updateTaskV2 } from "../lib/api";
+import useDraft from "../hooks/useDraft";
 
 const STATUS_COLORS = {
   inbox: "bg-slate-500",
@@ -16,15 +17,20 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
   const [loading, setLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [descDraft, setDescDraft] = useState("");
+  const [titleDraft, setTitleDraft, clearTitleDraft] = useDraft(taskId ? `task-edit:${taskId}:title` : null);
+  const [descDraft, setDescDraft, clearDescDraft] = useDraft(taskId ? `task-edit:${taskId}:desc` : null);
   const cardRef = useRef(null);
 
   useEffect(() => {
     if (!taskId) return;
     setLoading(true);
     fetchTaskV2(taskId)
-      .then((t) => { setTask(t); setTitleDraft(t.title || ""); setDescDraft(t.description || ""); })
+      .then((t) => {
+        setTask(t);
+        // Only initialize from server if no draft exists (preserve crash recovery drafts)
+        if (localStorage.getItem(`draft:task-edit:${taskId}:title`) === null) setTitleDraft(t.title || "");
+        if (localStorage.getItem(`draft:task-edit:${taskId}:desc`) === null) setDescDraft(t.description || "");
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [taskId]);
@@ -43,6 +49,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
     try {
       const updated = await updateTaskV2(task.id, { title: titleDraft.trim() });
       setTask(updated);
+      clearTitleDraft();
     } catch {}
     setEditingTitle(false);
   };
@@ -52,6 +59,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
     try {
       const updated = await updateTaskV2(task.id, { description: descDraft.trim() });
       setTask(updated);
+      clearDescDraft();
     } catch {}
     setEditingDesc(false);
   };
