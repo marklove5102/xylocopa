@@ -2489,15 +2489,27 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (stopTimer) clearTimeout(stopTimer);
       closing = true;
       if (pollId) { clearInterval(pollId); pollId = null; }
-      // Animate container from vvHeight → full height (iOS spring curve)
+      // Animate container from vvHeight → full height
+      // Use CSS ease (0.25, 0.1, 0.25, 1.0) at 250ms — matches real iOS
+      // keyboard duration. The heavily-overdamped iOS spring (ζ=4.56)
+      // does NOT overshoot; CSS ease approximates this well.
       const el = kbContainerRef.current;
       const wasOpen = el?.style.height;
       if (wasOpen) {
         const fullH = el.parentElement?.clientHeight || window.innerHeight;
-        el.style.transition = 'height 0.3s cubic-bezier(0.38, 0.70, 0.125, 1.0)';
+        // Pin scroll distance from bottom so messages don't jump
+        const sc = scrollContainerRef.current;
+        const distFromBottom = sc ? sc.scrollHeight - sc.scrollTop - sc.clientHeight : 0;
+        el.style.transition = 'height 0.25s cubic-bezier(0.25, 0.1, 0.25, 1.0)';
         requestAnimationFrame(() => {
           if (!closing) return;
           el.style.height = `${fullH}px`;
+          // Restore scroll anchor after height change
+          if (sc && distFromBottom < 100) {
+            sc.scrollTop = sc.scrollHeight - sc.clientHeight;
+          } else if (sc) {
+            sc.scrollTop = sc.scrollHeight - sc.clientHeight - distFromBottom;
+          }
         });
       }
       stopTimer = setTimeout(() => {
@@ -2505,7 +2517,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         if (el) { el.style.transition = ''; el.style.height = ''; }
         setKbHeight(0);
         setVvHeight(0);
-      }, wasOpen ? 350 : 400);
+        // Final scroll anchor after React re-render removes inline style
+        const sc = scrollContainerRef.current;
+        if (sc) {
+          const d = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
+          if (d < 100) sc.scrollTop = sc.scrollHeight - sc.clientHeight;
+        }
+      }, wasOpen ? 300 : 400);
     };
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
@@ -2619,21 +2637,26 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [loading, messages.length, scrollCountKey]);
 
-  // When keyboard opens/resizes, scroll to bottom so latest messages stay visible.
-  // useLayoutEffect runs synchronously before paint — no visual flicker.
+  // When keyboard opens/closes, keep messages scroll stable.
+  // useLayoutEffect runs synchronously after DOM update, before paint.
+  const prevVvHeight = useRef(0);
   useLayoutEffect(() => {
-    if (kbHeight > 0 && !userScrolledUp.current) {
-      const el = scrollContainerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-  }, [kbHeight]);
-
-  // After React renders the resized container, undo any iOS body scroll.
-  // This fires after DOM update but before paint — no flicker.
-  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
     if (vvHeight > 0) {
+      // Keyboard opened or resized — undo iOS body scroll
       window.scrollTo(0, 0);
+      // Keep messages at bottom if user wasn't scrolled up
+      if (!userScrolledUp.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    } else if (prevVvHeight.current > 0) {
+      // Keyboard just closed (React state cleared) — anchor scroll
+      if (!userScrolledUp.current) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
+    prevVvHeight.current = vvHeight;
   }, [vvHeight]);
 
   // WebSocket: re-fetch on new_message events, handle streaming
