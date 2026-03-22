@@ -1,7 +1,7 @@
 import { memo, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { modelDisplayName, MODEL_OPTIONS } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
-import { updateTaskV2, uploadFile, cancelTask, dispatchTask } from "../../lib/api";
+import { updateTaskV2, uploadFile, cancelTask, dispatchTask, regenerateTaskSummary } from "../../lib/api";
 import useVoiceRecorder from "../../hooks/useVoiceRecorder";
 import useProjects from "../../hooks/useProjects";
 import CardShell, { cardPadding } from "./CardShell";
@@ -364,7 +364,13 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                       Previous agent summary
                     </p>
                     {task.agent_summary === ":::generating:::" ? (
-                      <p className="text-xs text-dim/50 italic">Generating summary...</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-dim/50 italic">Generating summary...</p>
+                        <button
+                          className="text-[10px] text-accent px-1.5 py-0.5 rounded border border-accent/30 hover:bg-accent/10 active:bg-accent/20"
+                          onClick={(e) => { e.stopPropagation(); regenerateTaskSummary(task.id); }}
+                        >Retry</button>
+                      </div>
                     ) : (
                       <p className="text-xs text-dim/80 whitespace-pre-wrap">{task.agent_summary}</p>
                     )}

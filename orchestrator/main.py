@@ -2908,6 +2908,18 @@ def _generate_retry_summary_background(agent_id: str, task_id: str,
                                        incomplete_reason: str | None):
     """Generate a concise retry summary via claude -p: what the agent tried,
     user feedback, and why the task failed."""
+    try:
+        _generate_retry_summary_impl(agent_id, task_id, task_title,
+                                     project_name, project_path, incomplete_reason)
+    except Exception:
+        logger.exception("Unhandled error in retry summary thread for task %s", task_id)
+        _fallback_retry_summary(task_id, agent_id)
+
+
+def _generate_retry_summary_impl(agent_id: str, task_id: str,
+                                 task_title: str, project_name: str,
+                                 project_path: str,
+                                 incomplete_reason: str | None):
     from config import CLAUDE_BIN
     from session_cache import session_source_dir as _ssd
     from agent_dispatcher import _write_session_owner
@@ -3025,9 +3037,13 @@ def _fallback_retry_summary(task_id: str, agent_id: str):
         task = own_db.get(Task, task_id)
         agent = own_db.get(Agent, agent_id)
         if task and task.agent_summary == ":::generating:::":
-            task.agent_summary = (agent.last_message_preview if agent else None) or None
+            fallback = (agent.last_message_preview if agent else None) or None
+            task.agent_summary = fallback
             own_db.commit()
+            logger.info("Fallback retry summary for task %s: %s", task_id,
+                        (fallback[:80] + "...") if fallback and len(fallback) > 80 else fallback)
     except Exception:
+        logger.exception("Fallback retry summary failed for task %s", task_id)
         own_db.rollback()
     finally:
         own_db.close()
@@ -3906,6 +3922,52 @@ async def complete_task_v2(task_id: str, request: Request, db: Session = Depends
         task.id, task.status.value, task.project_name or "",
         title=task.title,
     ))
+    return TaskOut.model_validate(task)
+
+
+@app.post("/api/v2/tasks/{task_id}/regenerate-summary", response_model=TaskOut)
+async def regenerate_task_summary(task_id: str, db: Session = Depends(get_db)):
+    """Manually re-trigger retry summary generation for a task."""
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.attempt_number < 2:
+        raise HTTPException(409, "No previous attempt to summarize")
+
+    # Find the most recent stopped agent for this task
+    prev_agent = (
+        db.query(Agent)
+        .filter(Agent.task_id == task_id, Agent.status.in_([AgentStatus.STOPPED, AgentStatus.COMPLETE, AgentStatus.ERROR]))
+        .order_by(Agent.created_at.desc())
+        .first()
+    )
+    if not prev_agent:
+        raise HTTPException(404, "No previous agent found for this task")
+
+    project_path = _resolve_project_path(task.project_name, db) if task.project_name else None
+    if not project_path:
+        raise HTTPException(404, "Project path not found")
+
+    # Reset marker
+    task.agent_summary = ":::generating:::"
+    db.commit()
+    db.refresh(task)
+
+    asyncio.ensure_future(emit_task_update(
+        task.id, task.status.value, task.project_name or "", title=task.title,
+    ))
+
+    # Spawn background thread
+    thread = threading.Thread(
+        target=_generate_retry_summary_background,
+        args=(prev_agent.id, task.id, task.title or "Unknown task",
+              task.project_name or "", project_path,
+              task.retry_context),
+        daemon=True,
+    )
+    thread.start()
+    logger.info("Manual retry summary spawned for task %s (agent %s)", task_id, prev_agent.id)
+
     return TaskOut.model_validate(task)
 
 
