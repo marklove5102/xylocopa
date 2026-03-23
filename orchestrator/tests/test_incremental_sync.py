@@ -225,6 +225,32 @@ class TestReadNewLines:
         lines, offset2 = _read_new_lines(str(jsonl), offset)
         assert len(lines) == 3
 
+    def test_multibyte_utf8_offset(self, tmp_path):
+        """Multi-byte UTF-8 characters must not cause offset drift.
+        Uses ensure_ascii=False so Chinese chars are written as raw UTF-8."""
+        jsonl = tmp_path / "session.jsonl"
+        # Write with raw UTF-8 (not escaped) to test multi-byte handling
+        with open(str(jsonl), "w", encoding="utf-8") as f:
+            f.write(json.dumps(_user_entry("你好世界", "u1"), ensure_ascii=False) + "\n")
+
+        lines1, offset1 = _read_new_lines(str(jsonl), 0)
+        assert len(lines1) == 1
+        assert "你好世界" in lines1[0]
+
+        with open(str(jsonl), "a", encoding="utf-8") as f:
+            f.write(json.dumps(_assistant_entry("回复消息", "a1"), ensure_ascii=False) + "\n")
+
+        lines2, offset2 = _read_new_lines(str(jsonl), offset1)
+        assert len(lines2) == 1
+        assert "回复消息" in lines2[0]
+        # No overlap — offset1 pointed exactly past the first line
+        assert offset2 > offset1
+
+        # Third read should find nothing new
+        lines3, offset3 = _read_new_lines(str(jsonl), offset2)
+        assert lines3 == []
+        assert offset3 == offset2
+
 
 # ===========================================================================
 # 3. sync_parse_incremental — full incremental pipeline

@@ -75,40 +75,36 @@ def _read_new_lines(path: str, offset: int) -> tuple[list[str], int]:
     just after the last complete line.  Incomplete trailing lines (mid-write
     by Claude Code) are excluded — the offset stays before them so they're
     re-read on the next wake.
+
+    Uses binary mode for exact byte-offset tracking (text mode + manual
+    byte counting drifts when errors="replace" substitutes characters).
     """
     try:
-        with open(path, "r", errors="replace") as f:
+        with open(path, "rb") as f:
             f.seek(offset)
-            data = f.read()
+            raw_bytes = f.read()
     except OSError as e:
         logger.warning("_read_new_lines: failed to read %s at offset %d: %s", path, offset, e)
         return [], offset
 
-    if not data:
+    if not raw_bytes:
         return [], offset
 
-    # Split into lines, keeping the delimiter to detect completeness
-    raw_lines = data.split("\n")
+    # Find the last complete newline — everything after it is a partial
+    # line that we'll re-read next time.
+    last_nl = raw_bytes.rfind(b"\n")
+    if last_nl == -1:
+        # No complete line yet — don't advance offset
+        return [], offset
 
-    # The last element after split is always "" if data ended with "\n",
-    # or a partial line if data didn't end with "\n".
-    complete_lines: list[str] = []
-    consumed = 0
-    for i, raw in enumerate(raw_lines):
-        if i == len(raw_lines) - 1:
-            # Last element — include only if it was terminated by "\n"
-            # (i.e. it's the empty string from the trailing split)
-            if raw == "":
-                break  # data ended cleanly on a newline
-            else:
-                break  # partial line — don't consume it
-        line = raw.strip()
-        # +1 for the "\n" delimiter
-        consumed += len(raw.encode("utf-8", errors="replace")) + 1
-        if line:
-            complete_lines.append(line)
+    complete_bytes = raw_bytes[:last_nl + 1]
+    new_offset = offset + len(complete_bytes)
 
-    return complete_lines, offset + consumed
+    # Decode and split into lines
+    text = complete_bytes.decode("utf-8", errors="replace")
+    complete_lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    return complete_lines, new_offset
 
 
 def _find_stable_boundary(lines: list[str]) -> tuple[int, int]:
