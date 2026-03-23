@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/git", tags=["git"])
 
 
 @router.get("/{project}/log")
-async def git_log(project: str, limit: int = 30, request: Request = None, db: Session = Depends(get_db)):
+async def git_log(project: str, request: Request, limit: int = 30, db: Session = Depends(get_db)):
     """Get recent git commits for a project."""
     proj = db.get(Project, project)
     if not proj:

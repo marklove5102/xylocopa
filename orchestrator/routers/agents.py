@@ -1377,12 +1377,6 @@ async def adopt_unlinked_session(
     return AgentOut.model_validate(agent)
 
 
-def _enrich_agent_briefs(rows, request) -> list[AgentBrief]:
-    """Convert Agent ORM rows to AgentBrief — is_generating is derived
-    from generating_msg_id via property, no runtime enrichment needed."""
-    return [AgentBrief.model_validate(row) for row in rows]
-
-
 @router.get("/api/agents", response_model=list[AgentBrief])
 async def list_agents(
     request: Request,

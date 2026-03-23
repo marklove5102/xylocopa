@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import case, func, update, text
 from sqlalchemy.orm import Session
 
-from config import CC_MODEL, CLAUDE_HOME, OPENAI_API_KEY, PROJECT_CONFIGS_PATH, VALID_MODELS
+from config import CC_MODEL, CLAUDE_HOME, PROJECT_CONFIGS_PATH, VALID_MODELS
 from database import SessionLocal, get_db
 from models import (
     Agent, AgentInsightSuggestion, AgentStatus, Message, MessageRole,
