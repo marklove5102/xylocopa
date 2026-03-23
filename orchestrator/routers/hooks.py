@@ -255,7 +255,7 @@ async def hook_agent_stop(request: Request):
     else:
         logger.warning("hook_agent_stop: no agent_dispatcher on app.state")
 
-    logger.info("hook_agent_stop: agent=%s summary_len=%d", agent_id[:8], len(summary))
+    logger.info("hook_agent_stop: agent=%s done", agent_id[:8])
 
     return {}
 

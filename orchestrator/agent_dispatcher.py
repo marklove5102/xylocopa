@@ -2559,7 +2559,7 @@ class AgentDispatcher:
             return
 
         import threading
-        from main import _progress_job_get, _progress_job_set
+        from routers.projects import _progress_job_get, _progress_job_set
 
         for proj in projects:
             try:
@@ -2592,7 +2592,7 @@ class AgentDispatcher:
         """Generate a daily summary section and append it to PROGRESS.md."""
         import subprocess
         from config import CLAUDE_BIN
-        from main import _progress_job_set, _progress_job_clear
+        from routers.projects import _progress_job_set, _progress_job_clear
 
         # Use the date that was actually summarized (default: yesterday UTC)
         summary_date = (target_date or (datetime.now(timezone.utc) - timedelta(days=1)).date()).isoformat()

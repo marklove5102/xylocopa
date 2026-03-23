@@ -30,8 +30,6 @@ def _resolve_project_file(project: str, path: str, db) -> str:
 
     Raises HTTPException(404) if the file cannot be found.
     """
-    import re as _re
-
     proj = db.get(Project, project)
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
@@ -41,7 +39,7 @@ def _resolve_project_file(project: str, path: str, db) -> str:
 
     # Normalise the requested path
     clean = path
-    _dbl = _re.match(r"api/files/[^/]+/(.+)", clean)
+    _dbl = re.match(r"api/files/[^/]+/(.+)", clean)
     if _dbl:
         clean = _dbl.group(1)
     if clean.startswith(base_dir + "/"):

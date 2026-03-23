@@ -11,16 +11,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from config import BACKUP_DIR, CLAUDE_HOME, DB_PATH, LOG_DIR, OPENAI_API_KEY, UPLOADS_DIR
+from config import BACKUP_DIR, CLAUDE_HOME, DB_PATH, LOG_DIR, UPLOADS_DIR
 from database import SessionLocal, get_db
 from models import Agent, AgentStatus, Message, Project, SystemConfig, Task, TaskStatus
 from schemas import HealthResponse
+from route_helpers import IMPORT_CHECK_TIMEOUT as _IMPORT_CHECK_TIMEOUT, API_REQUEST_TIMEOUT as _API_REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
-
-_IMPORT_CHECK_TIMEOUT = 15
-
-_API_REQUEST_TIMEOUT = 10
 
 router = APIRouter(tags=["system"])
 
