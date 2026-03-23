@@ -68,3 +68,8 @@
 - Lesson 2: Separate ordering from delivery tracking — session_seq (monotonic JSONL turn index) is deterministic; delivered_at serves double duty and gets corrupted by reconciliation.
 - Lesson 3: Audit vs repair must be separate code paths. Silent repair (content-sig matching, stale metadata sweep) hides bugs and adds complexity. Explicit drift records make problems visible.
 - Lesson 4: sync_reconcile_initial was the biggest complexity source — 280 lines of interleaved check+fix. Replacing it with import+audit cut complexity dramatically.
+
+### 2026-03-23 | Task: Voice LLM post-processing (口误修正) | Status: success
+- What: Added GPT-4o-mini post-processing to refine voice transcription — corrects speech errors, grammar, and punctuation before text is injected into input field. Inspired by Type4Me's approach.
+- Attempts: Straightforward — no issues. Integrated refinement inside useVoiceRecorder hook so all 7+ call sites get it automatically without individual changes.
+- Lesson: Hook-level integration > call-site-level for cross-cutting concerns — adding the refine step inside the hook avoided touching every caller.
