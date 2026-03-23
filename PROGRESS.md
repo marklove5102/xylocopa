@@ -20,3 +20,9 @@
 - Gotcha 1: `_read_new_lines` must use binary mode (`rb`) for byte-offset tracking. Text mode + manual byte counting drifts with multi-byte UTF-8 chars.
 - Gotcha 2: The boundary scanner must match the parser's turn-boundary semantics EXACTLY. tool_result user entries (list content) are NOT turn boundaries — the parser skips them. If the scanner treats them as boundaries, it splits assistant turns → compact purge deletes the finer-grained messages → bubbles "disappear."
 - Gotcha 3: Don't preset `stable_turn_count` at init while `stable_boundary` is 0 — the splice duplicates all turns.
+
+### 2026-03-22 | Task: Modularize main.py into APIRouter modules | Status: success
+- What: Split the 8197-line monolithic main.py into 11 router modules under orchestrator/routers/, plus route_helpers.py for shared code. main.py → 374 lines (app setup, middleware, lifespan, router includes).
+- Attempts: Spawned 5 parallel agents for large routers (system, projects, tasks, hooks, agents), wrote 6 small routers directly. Needed post-fix pass for cross-router imports.
+- Resolution: All 116 API routes preserved. Verified via import checks, route enumeration, and server smoke test.
+- Lesson: When agents create router modules, they tend to import from the original `main` module for cross-cutting helpers — must fix these to proper cross-router imports (deferred) before the final main.py rewrite. Duplicate helper functions across routers are inevitable; move them to a shared helpers module (route_helpers.py) and alias them in each router to preserve original call-site names.
