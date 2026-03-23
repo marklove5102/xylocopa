@@ -236,6 +236,16 @@ def sync_reset_incremental(ctx: SyncContext):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _extract_tool_use_id(meta: dict | None) -> str | None:
+    """Extract primary tool_use_id from parsed interactive metadata."""
+    if not meta or not isinstance(meta, dict):
+        return None
+    items = meta.get("interactive", [])
+    if items and isinstance(items, list):
+        return items[0].get("tool_use_id")
+    return None
+
+
 def _content_hash(content: str) -> str:
     """Fast hash of content for change detection."""
     import hashlib
@@ -404,8 +414,8 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
             db_sig_msgs.setdefault(sig, []).append(m)
 
         # Walk through JSONL turns and collect missing ones
-        missing: list[tuple[str, str, dict | None, str | None]] = []
-        for r, c, mt, uuid in conv_turns:
+        missing: list[tuple[int, str, str, dict | None, str | None]] = []
+        for turn_idx, (r, c, mt, uuid) in enumerate(conv_turns):
             # Primary: UUID-based dedup
             if uuid and uuid in db_uuids:
                 continue
@@ -434,7 +444,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
             if db_sig_msgs.get(alt):
                 db_sig_msgs[alt].pop(0)
                 continue
-            missing.append((r, c, mt, uuid))
+            missing.append((turn_idx, r, c, mt, uuid))
 
         if missing and agent:
             _existing_agent_msgs = [
@@ -445,7 +455,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                 m for m in all_db
                 if m.role == MessageRole.USER
             ]
-            for role, content, meta, uuid in missing:
+            for turn_idx, role, content, meta, uuid in missing:
                 meta_json = json.dumps(meta) if meta else None
                 if role == "user":
                     is_wrapped_dup = False
@@ -478,6 +488,8 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                                 jsonl_uuid=uuid,
                                 completed_at=_now,
                                 delivered_at=_now,
+                                tool_use_id=_extract_tool_use_id(meta),
+                                session_seq=turn_idx,
                             ))
                             db.flush()
                     except IntegrityError:
@@ -533,6 +545,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                                             _hook.meta_json, meta,
                                         )
                                         _hook.completed_at = _utcnow()
+                                        _hook.session_seq = turn_idx
                                         updated = True
                                         break
                     if not updated:
@@ -549,6 +562,8 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
                                     jsonl_uuid=uuid,
                                     completed_at=_now2,
                                     delivered_at=_now2,
+                                    tool_use_id=_extract_tool_use_id(meta),
+                                    session_seq=turn_idx,
                                 ))
                                 db.flush()
                         except IntegrityError:
@@ -560,7 +575,7 @@ async def sync_reconcile_initial(ad, ctx: SyncContext):
             agent.last_message_preview = (conv_turns[-1][1] or "")[:200]
             agent.last_message_at = _utcnow()
             db.commit()
-            if any(r != "user" for r, _, *_ in missing):
+            if any(r != "user" for _, r, *_ in missing):
                 ad._emit(emit_new_message(
                     ctx.agent_id, "sync", ctx.agent_name, ctx.agent_project,
                 ))
@@ -694,6 +709,16 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         try:
             _purge_stale_messages_after_compact(db_purge, ctx.agent_id, new_uuids)
             _purge_stale_system_messages(db_purge, ctx.agent_id, turns)
+            # Reassign session_seq after compact — match surviving DB messages
+            # by uuid and assign new session_seq from the fresh turn order.
+            for _idx, (_r, _c, _m, _uuid) in enumerate(turns):
+                if _uuid:
+                    _msg = db_purge.query(Message).filter(
+                        Message.agent_id == ctx.agent_id,
+                        Message.jsonl_uuid == _uuid,
+                    ).first()
+                    if _msg:
+                        _msg.session_seq = _idx
             db_purge.commit()
         finally:
             db_purge.close()
@@ -767,6 +792,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 _last_meta = _last_rest[0] if _last_rest else None
                 last_msg.content = _last_content
                 last_msg.completed_at = _utcnow()
+                last_msg.session_seq = last_msg.session_seq or (len(turns) - 1)
                 if _last_meta is not None:
                     last_msg.meta_json = _merge_interactive_meta(
                         last_msg.meta_json, _last_meta,
@@ -806,6 +832,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         old_len = len(last_agent_msg.content)
                         last_agent_msg.content = prev_content
                         last_agent_msg.completed_at = _utcnow()
+                        last_agent_msg.session_seq = last_agent_msg.session_seq or (ctx.last_turn_count - 1)
                         if prev_uuid and not last_agent_msg.jsonl_uuid:
                             last_agent_msg.jsonl_uuid = prev_uuid
                         if prev_meta is not None:
@@ -819,7 +846,8 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         )
 
             # Import new turns
-            for role, content, *rest in new_turns:
+            for i, (role, content, *rest) in enumerate(new_turns):
+                seq = ctx.last_turn_count + i
                 meta = rest[0] if rest else None
                 jsonl_uuid = rest[1] if len(rest) > 1 else None
                 meta_json = json.dumps(meta) if meta else None
@@ -913,6 +941,8 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         jsonl_uuid=jsonl_uuid,
                         completed_at=_now,
                         delivered_at=_now,
+                        tool_use_id=_extract_tool_use_id(meta),
+                        session_seq=seq,
                     )
                 elif role == "assistant":
                     # UUID-based dedup for assistant turns (prevents
@@ -943,6 +973,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                                         _hook_msg.meta_json, meta,
                                     )
                                     _hook_msg.completed_at = _utcnow()
+                                    _hook_msg.session_seq = seq
                                     _hook_upgraded = True
                                     logger.info(
                                         "Upgraded hook message %s -> jsonl_uuid %s for agent %s",
@@ -962,6 +993,8 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         jsonl_uuid=jsonl_uuid,
                         completed_at=_now,
                         delivered_at=_now,
+                        tool_use_id=_extract_tool_use_id(meta),
+                        session_seq=seq,
                     )
                 elif role == "system":
                     _now = _utcnow()
@@ -974,6 +1007,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         jsonl_uuid=jsonl_uuid,
                         completed_at=_now,
                         delivered_at=_now,
+                        session_seq=seq,
                     )
                 else:
                     continue
@@ -1123,6 +1157,16 @@ async def sync_handle_compact(ad, ctx: SyncContext):
     try:
         _purge_stale_messages_after_compact(db_purge, ctx.agent_id, new_uuids)
         _purge_stale_system_messages(db_purge, ctx.agent_id, turns)
+        # Reassign session_seq after compact — match surviving DB messages
+        # by uuid and assign new session_seq from the fresh turn order.
+        for _idx, (_r, _c, _m, _uuid) in enumerate(turns):
+            if _uuid:
+                _msg = db_purge.query(Message).filter(
+                    Message.agent_id == ctx.agent_id,
+                    Message.jsonl_uuid == _uuid,
+                ).first()
+                if _msg:
+                    _msg.session_seq = _idx
         db_purge.commit()
     finally:
         db_purge.close()
