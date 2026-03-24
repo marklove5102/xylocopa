@@ -5053,10 +5053,12 @@ Here are the day's conversations (with timestamps):
         # Background loop — handles streaming preview, session rotation, tmux health
         _GETSIZE_ERROR_LIMIT = 5  # ~5min at 60s poll interval
         while True:
-            # Wait up to POLL_INTERVAL, but wake immediately if stop hook fires
+            # Wait up to POLL_INTERVAL, but wake immediately if hook fires
+            hook_wake = False
             try:
                 await asyncio.wait_for(wake_event.wait(), timeout=POLL_INTERVAL)
                 wake_event.clear()
+                hook_wake = True
             except asyncio.TimeoutError:
                 pass
 
@@ -5209,14 +5211,24 @@ Here are the day's conversations (with timestamps):
 
                 continue
 
-            # File grew — do incremental sync
             ctx.idle_polls = 0
+            if not hook_wake:
+                # Poll-triggered: audit only — log discrepancy, don't write
+                _poll_turns = len(_parse_session_turns(ctx.jsonl_path))
+                if _poll_turns != ctx.last_turn_count:
+                    logger.warning(
+                        "Poll audit for agent %s: JSONL has %d turns, "
+                        "pointer at %d — will sync on next hook wake",
+                        agent_id, _poll_turns, ctx.last_turn_count,
+                    )
+                continue
+
+            # Hook-triggered — do incremental sync (sole write path)
             async with sync_lock:
                 result = await sync_import_new_turns(self, ctx)
             if result == "exit":
                 break
             if result == "compact":
-                # sync_import_new_turns detected turn count decrease
                 async with sync_lock:
                     await sync_full_scan(self, ctx, reason="compact")
                 continue
