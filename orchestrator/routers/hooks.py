@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import Agent, AgentMode, AgentStatus, Message, MessageRole, MessageStatus, Project, Task, TaskStatus, ToolActivity
+from models import Agent, AgentMode, AgentStatus, Message, MessageRole, MessageStatus, Project, Task, TaskStatus
 from utils import utcnow as _utcnow
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ async def hook_agent_session_end(request: Request):
     if not agent_id:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
             body = {}
         agent_id = _resolve_agent_id_from_body(body)
         if not agent_id:
@@ -105,7 +105,7 @@ async def hook_agent_user_prompt(request: Request):
         # Adopted sessions don't have AHIVE_AGENT_ID — resolve from body
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
             body = {}
         agent_id = _resolve_agent_id_from_body(body)
         if not agent_id:
@@ -133,6 +133,11 @@ async def hook_agent_user_prompt(request: Request):
             now = _utcnow()
             msg.delivered_at = now
             db.commit()
+
+            # Update display file entry with delivery status
+            from display_writer import update_last
+            update_last(agent_id, msg.id)
+
             asyncio.ensure_future(emit_message_delivered(
                 agent_id, msg.id, now.isoformat(),
             ))
@@ -187,7 +192,7 @@ async def hook_agent_stop(request: Request):
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         body = {}
     if not agent_id:
         agent_id = _resolve_agent_id_from_body(body)
@@ -213,8 +218,6 @@ async def hook_agent_stop(request: Request):
                 _stop_db.commit()
                 if not _is_sub:
                     ad._maybe_notify_message(_agent)
-        except Exception:
-            logger.exception("hook_agent_stop: failed to update unread for %s", agent_id[:8])
         finally:
             _stop_db.close()
 
@@ -265,7 +268,7 @@ async def hook_agent_post_compact(request: Request):
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         body = {}
     if not agent_id:
         agent_id = _resolve_agent_id_from_body(body)
@@ -278,10 +281,9 @@ async def hook_agent_post_compact(request: Request):
         logger.warning("hook_agent_post_compact: no agent_dispatcher")
         return {}
 
-    # 1. Clear compact pause flag only — do NOT clear generating state.
-    #    After compact, Claude continues processing the same turn.
-    #    The Stop hook will clear generating state when Claude finishes.
-    logger.info("hook_agent_post_compact: compact done for %s (generating state preserved)", agent_id[:8])
+    # 1. Clear compact pause flag and generating state.
+    #    After /compact, Claude returns to the prompt — it's no longer executing.
+    logger.info("hook_agent_post_compact: compact done for %s", agent_id[:8])
 
     ctx = ad._sync_contexts.get(agent_id)
     if ctx:
@@ -308,6 +310,10 @@ async def hook_agent_post_compact(request: Request):
             compact_msg.status = MessageStatus.COMPLETED
             if not compact_msg.delivered_at:
                 compact_msg.delivered_at = compact_msg.completed_at
+            # Mark non-promotable: /compact never appears in post-compact
+            # JSONL, so it must not consume a real user turn's UUID
+            if not compact_msg.jsonl_uuid:
+                compact_msg.jsonl_uuid = f"slash-{compact_msg.id[:8]}"
 
         # 3. End the compact tool activity in DB.
         from sync_engine import _end_compact_activity
@@ -315,17 +321,62 @@ async def hook_agent_post_compact(request: Request):
             _end_compact_activity(db, agent_id, ctx.session_id)
         db.commit()
 
-        # 4. Emit completed_at update so frontend shows double tick.
+        # Update display file with delivery/completion status
+        if compact_msg:
+            from display_writer import update_last
+            update_last(agent_id, compact_msg.id)
+
+        # 4. Write "Conversation compacted" system bubble to display file.
+        #    Don't wait for the sync loop — write it now so it appears immediately.
+        #    _create_system_msg in sync_engine will content-dedup if sync re-imports.
+        #    Use /compact message's completed_at as the anchor — this is the moment
+        #    compact finished, guaranteed before the new session's JSONL timestamps.
+        _compact_ts = compact_msg.completed_at if compact_msg else _utcnow()
+        compact_sys = Message(
+            agent_id=agent_id,
+            role=MessageRole.SYSTEM,
+            content="Conversation compacted",
+            status=MessageStatus.COMPLETED,
+            source="hook",
+            created_at=_compact_ts,
+            completed_at=_compact_ts,
+            delivered_at=_compact_ts,
+            jsonl_uuid=f"compact-sys-{agent_id[:8]}",
+        )
+        db.add(compact_sys)
+
+        # 5. Transition agent from EXECUTING → SYNCING.
+        #    After /compact, Claude returns to the prompt — no longer executing.
+        agent = db.get(Agent, agent_id)
+        if agent and agent.status == AgentStatus.EXECUTING:
+            agent.status = AgentStatus.SYNCING
+            agent.generating_msg_id = None
+
+        db.commit()
+
+        # Flush compact system message to display file
+        from display_writer import flush_agent
+        flush_agent(agent_id)
+
+        # 6. Emit completed_at update so frontend shows double tick.
         if compact_msg:
             from websocket import emit_message_update
             asyncio.ensure_future(emit_message_update(
                 agent_id, compact_msg.id, "COMPLETED",
                 completed_at=compact_msg.completed_at.isoformat(),
             ))
+
+        # 7. Emit agent status update to frontend.
+        if agent and agent.status == AgentStatus.SYNCING:
+            from websocket import ws_manager
+            asyncio.ensure_future(ws_manager.broadcast("agent_update", {
+                "agent_id": agent_id,
+                "status": "SYNCING",
+            }))
     finally:
         db.close()
 
-    # 5. Defer JSONL read + purge to sync loop — PostCompact is blocking,
+    # 8. Defer JSONL read + purge to sync loop — PostCompact is blocking,
     #    so the rewritten JSONL may not be flushed yet.  The sync loop's
     #    compact_turn_decrease path handles purge + reconcile.
     if ctx:
@@ -336,10 +387,7 @@ async def hook_agent_post_compact(request: Request):
             ad.wake_sync(_aid)
         asyncio.ensure_future(_post_compact_sync(agent_id))
 
-    # 6. Emit "Compact end" tool activity to frontend.
-    #    System messages ("Conversation compacted", "This session is being
-    #    continued...") come from Claude Code's JSONL — the sync loop
-    #    imports them, so we don't add our own.
+    # 9. Emit "Compact end" tool activity to frontend (WS acceleration).
     from websocket import emit_tool_activity
     await emit_tool_activity(agent_id, "Compact", "end",
                              tool_output="context compacted")
@@ -359,7 +407,7 @@ async def hook_agent_tool_activity(request: Request):
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         body = {}
     if not agent_id:
         agent_id = _resolve_agent_id_from_body(body)
@@ -426,6 +474,7 @@ async def hook_agent_tool_activity(request: Request):
                         try:
                             _meta = json.loads(_msg.meta_json)
                         except (json.JSONDecodeError, TypeError):
+                            logger.debug("Malformed meta_json for message %s", _msg.id)
                             continue
                         _msg_changed = False
                         for _item in _meta.get("interactive", []):
@@ -449,6 +498,7 @@ async def hook_agent_tool_activity(request: Request):
                             try:
                                 _meta = json.loads(_msg.meta_json)
                             except (json.JSONDecodeError, TypeError):
+                                logger.debug("Malformed meta_json for message %s", _msg.id)
                                 continue
                             for _item in _meta.get("interactive", []):
                                 if _item.get("tool_use_id") == tool_use_id and _item.get("answer") == _answer_text:
@@ -474,47 +524,41 @@ async def hook_agent_tool_activity(request: Request):
         elif not ad:
             logger.warning("SubagentStart hook: no agent_dispatcher for parent %s", agent_id[:8])
         if ad and sub_agent_id:
+            from database import SessionLocal as _SL
+            from models import Agent as _Agent, AgentMode as _AM, AgentStatus as _AS
+            from websocket import emit_agent_update as _eau
+            _db = _SL()
             try:
-                from database import SessionLocal as _SL
-                from models import Agent as _Agent, AgentMode as _AM, AgentStatus as _AS
-                from websocket import emit_agent_update as _eau
-                _db = _SL()
-                try:
-                    # Look up parent to get project name
-                    _parent = _db.get(Agent, agent_id)
-                    _project_name = _parent.project if _parent else ""
-                    _name = desc[:60] or f"subagent-{sub_agent_id[:8]}"
-                    _sub = _Agent(
-                        project=_project_name,
-                        name=_name,
-                        mode=_AM.AUTO,
-                        status=_AS.SYNCING,
-                        cli_sync=True,
-                        parent_id=agent_id,
-                        is_subagent=True,
-                        claude_agent_id=sub_agent_id,
-                    )
-                    _db.add(_sub)
-                    _db.commit()
-                    # Register in known_subagents
-                    known = ad._known_subagents.setdefault(agent_id, {})
-                    known[sub_agent_id] = {
-                        "agent_id": _sub.id,
-                        "last_size": 0,
-                        "idle_polls": 0,
-                    }
-                    ad._emit(_eau(_sub.id, "SYNCING", _project_name))
-                    logger.info(
-                        "SubagentStart hook: created subagent %s (%s) for parent %s",
-                        _sub.id, _name, agent_id[:8],
-                    )
-                finally:
-                    _db.close()
-            except Exception:
-                logger.warning(
-                    "SubagentStart hook: failed to create subagent for parent %s",
-                    agent_id[:8], exc_info=True,
+                # Look up parent to get project name
+                _parent = _db.get(Agent, agent_id)
+                _project_name = _parent.project if _parent else ""
+                _name = desc[:60] or f"subagent-{sub_agent_id[:8]}"
+                _sub = _Agent(
+                    project=_project_name,
+                    name=_name,
+                    mode=_AM.AUTO,
+                    status=_AS.SYNCING,
+                    cli_sync=True,
+                    parent_id=agent_id,
+                    is_subagent=True,
+                    claude_agent_id=sub_agent_id,
                 )
+                _db.add(_sub)
+                _db.commit()
+                # Register in known_subagents
+                known = ad._known_subagents.setdefault(agent_id, {})
+                known[sub_agent_id] = {
+                    "agent_id": _sub.id,
+                    "last_size": 0,
+                    "idle_polls": 0,
+                }
+                ad._emit(_eau(_sub.id, "SYNCING", _project_name))
+                logger.info(
+                    "SubagentStart hook: created subagent %s (%s) for parent %s",
+                    _sub.id, _name, agent_id[:8],
+                )
+            finally:
+                _db.close()
     elif hook_event == "SubagentStop":
         agent_type = body.get("agent_type", "subagent")
         tool_name = f"Agent:{agent_type}"
@@ -531,56 +575,50 @@ async def hook_agent_tool_activity(request: Request):
         elif not ad:
             logger.warning("SubagentStop hook: no agent_dispatcher for parent %s", agent_id[:8])
         if ad and sub_agent_id:
-            try:
-                from database import SessionLocal as _SL
-                from agent_dispatcher import _parse_session_turns
-                from websocket import emit_agent_update as _eau, emit_new_message as _enm
-                known = ad._known_subagents.get(agent_id, {})
-                info = known.get(sub_agent_id)
-                if not info:
-                    logger.warning(
-                        "SubagentStop hook: unknown subagent %s for parent %s (known: %s)",
-                        sub_agent_id[:12], agent_id[:8], list(known.keys()),
-                    )
-                if info:
-                    sub_db_id = info["agent_id"]
-                    _db = _SL()
-                    try:
-                        # Final parse of subagent JSONL if transcript path available
-                        if transcript_path and os.path.isfile(transcript_path):
-                            turns = _parse_session_turns(transcript_path)
-                            existing_count = _db.query(Message).filter(
-                                Message.agent_id == sub_db_id,
-                            ).count()
-                            if len(turns) > existing_count:
-                                ad._import_turns_as_messages_deduped(
-                                    _db, sub_db_id, turns[existing_count:],
-                                )
-                        sub_ag = _db.get(Agent, sub_db_id)
-                        if sub_ag and sub_ag.status == AgentStatus.SYNCING:
-                            if last_msg:
-                                _preview = str(last_msg)[:200] if isinstance(last_msg, str) else str(last_msg.get("content", ""))[:200]
-                                sub_ag.last_message_preview = _preview
-                            ad.stop_agent_cleanup(
-                                _db, sub_ag, "",
-                                kill_tmux=False, add_message=False,
-                                cancel_tasks=False,
-                            )
-                            _db.commit()
-                            _project_name = sub_ag.project or ""
-                            ad._emit(_eau(sub_db_id, "STOPPED", _project_name))
-                            ad._emit(_enm(sub_db_id, "sync", sub_ag.name, _project_name))
-                            logger.info(
-                                "SubagentStop hook: marked subagent %s STOPPED",
-                                sub_db_id,
-                            )
-                    finally:
-                        _db.close()
-            except Exception:
+            from database import SessionLocal as _SL
+            from agent_dispatcher import _parse_session_turns
+            from websocket import emit_agent_update as _eau, emit_new_message as _enm
+            known = ad._known_subagents.get(agent_id, {})
+            info = known.get(sub_agent_id)
+            if not info:
                 logger.warning(
-                    "SubagentStop hook: failed to finalize subagent for parent %s",
-                    agent_id[:8], exc_info=True,
+                    "SubagentStop hook: unknown subagent %s for parent %s (known: %s)",
+                    sub_agent_id[:12], agent_id[:8], list(known.keys()),
                 )
+            if info:
+                sub_db_id = info["agent_id"]
+                _db = _SL()
+                try:
+                    # Final parse of subagent JSONL if transcript path available
+                    if transcript_path and os.path.isfile(transcript_path):
+                        turns = _parse_session_turns(transcript_path)
+                        existing_count = _db.query(Message).filter(
+                            Message.agent_id == sub_db_id,
+                        ).count()
+                        if len(turns) > existing_count:
+                            ad._import_turns_as_messages_deduped(
+                                _db, sub_db_id, turns[existing_count:],
+                            )
+                    sub_ag = _db.get(Agent, sub_db_id)
+                    if sub_ag and sub_ag.status == AgentStatus.SYNCING:
+                        if last_msg:
+                            _preview = str(last_msg)[:200] if isinstance(last_msg, str) else str(last_msg.get("content", ""))[:200]
+                            sub_ag.last_message_preview = _preview
+                        ad.stop_agent_cleanup(
+                            _db, sub_ag, "",
+                            kill_tmux=False, add_message=False,
+                            cancel_tasks=False,
+                        )
+                        _db.commit()
+                        _project_name = sub_ag.project or ""
+                        ad._emit(_eau(sub_db_id, "STOPPED", _project_name))
+                        ad._emit(_enm(sub_db_id, "sync", sub_ag.name, _project_name))
+                        logger.info(
+                            "SubagentStop hook: marked subagent %s STOPPED",
+                            sub_db_id,
+                        )
+                finally:
+                    _db.close()
     # --- Permission prompt ---
     elif hook_event == "Notification":
         ntype = body.get("notification_type", "")
@@ -621,80 +659,90 @@ async def hook_agent_tool_activity(request: Request):
     else:
         return {}
 
-    # --- Persist tool activity to DB ---
-    if tool_name and phase:
+    # --- Persist tool activity as Message → display file pipeline ---
+    # Skip subagent bubbles during compact — they're internal implementation
+    # detail of the compaction process, not user-visible tool activity.
+    _in_compact = False
+    if ad:
+        _ctx = ad._sync_contexts.get(agent_id)
+        if _ctx and _ctx.compact_notified:
+            _in_compact = True
+    if tool_name and phase and not (kind == "subagent" and _in_compact):
+        from database import SessionLocal as _SL2
+        from uuid import uuid4
+        _db2 = _SL2()
         try:
-            from database import SessionLocal as _SL2
-            from models import ToolActivity as _TA
-            _db2 = _SL2()
-            try:
-                # Get agent's current session_id for scoping
-                _ag2 = _db2.get(Agent, agent_id)
-                _sid = _ag2.session_id if _ag2 else agent_id
+            _tool_use_id = body.get("tool_use_id", "") or ""
+            _tool_uuid = f"tool-{_tool_use_id}" if _tool_use_id else f"tool-{uuid4().hex[:12]}"
 
-                if phase in ("start", "permission"):
-                    _ta = _TA(
-                        agent_id=agent_id,
-                        session_id=_sid,
-                        tool_name=tool_name,
-                        kind=kind,
-                        summary=summary or "",
-                        tool_use_id=body.get("tool_use_id", "") or None,
-                        started_at=_utcnow(),
+            if phase in ("start", "permission"):
+                _tool_msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.SYSTEM,
+                    kind="tool_activity",
+                    content=summary or "",
+                    source="hook",
+                    status=MessageStatus.EXECUTING,
+                    meta_json=json.dumps({
+                        "tool_name": tool_name,
+                        "tool_kind": kind,
+                        "tool_use_id": _tool_use_id,
+                        "phase": "start",
+                    }),
+                    jsonl_uuid=_tool_uuid,
+                )
+                _db2.add(_tool_msg)
+                _db2.commit()
+                # Don't flush here — WS events handle real-time display.
+                # flush_agent runs on PostToolUse or next sync cycle.
+            elif phase == "end":
+                # Find the start message by tool UUID
+                _existing = (
+                    _db2.query(Message)
+                    .filter(
+                        Message.agent_id == agent_id,
+                        Message.jsonl_uuid == _tool_uuid,
                     )
-                    _db2.add(_ta)
+                    .first()
+                )
+                if _existing:
+                    _meta = json.loads(_existing.meta_json or "{}")
+                    _meta["phase"] = "end"
+                    _meta["output_summary"] = output_summary or ""
+                    _meta["is_error"] = is_error
+                    _existing.meta_json = json.dumps(_meta)
+                    _existing.completed_at = _utcnow()
+                    _existing.status = MessageStatus.COMPLETED
                     _db2.commit()
-                elif phase == "end":
-                    # Update the most recent unfinished entry for this tool
-                    _tool_use_id = body.get("tool_use_id", "")
-                    if _tool_use_id:
-                        _existing = (
-                            _db2.query(_TA)
-                            .filter(
-                                _TA.agent_id == agent_id,
-                                _TA.session_id == _sid,
-                                _TA.tool_use_id == _tool_use_id,
-                                _TA.ended_at.is_(None),
-                            )
-                            .first()
-                        )
-                    else:
-                        _existing = (
-                            _db2.query(_TA)
-                            .filter(
-                                _TA.agent_id == agent_id,
-                                _TA.session_id == _sid,
-                                _TA.tool_name == tool_name,
-                                _TA.ended_at.is_(None),
-                            )
-                            .order_by(_TA.started_at.desc())
-                            .first()
-                        )
-                    if _existing:
-                        _existing.ended_at = _utcnow()
-                        _existing.output_summary = output_summary or None
-                        _existing.is_error = is_error
-                        _db2.commit()
-                    else:
-                        # No matching start — insert a completed record
-                        _ta = _TA(
-                            agent_id=agent_id,
-                            session_id=_sid,
-                            tool_name=tool_name,
-                            kind=kind,
-                            summary=summary or "",
-                            output_summary=output_summary or None,
-                            is_error=is_error,
-                            tool_use_id=body.get("tool_use_id", "") or None,
-                            started_at=_utcnow(),
-                            ended_at=_utcnow(),
-                        )
-                        _db2.add(_ta)
-                        _db2.commit()
-            finally:
-                _db2.close()
-        except Exception:
-            logger.warning("Failed to persist tool activity for %s", agent_id[:8], exc_info=True)
+                    from display_writer import flush_agent, update_last
+                    flush_agent(agent_id)
+                    update_last(agent_id, _existing.id)
+                else:
+                    # No matching start — insert a completed record
+                    _tool_msg = Message(
+                        agent_id=agent_id,
+                        role=MessageRole.SYSTEM,
+                        kind="tool_activity",
+                        content=summary or "",
+                        source="hook",
+                        status=MessageStatus.COMPLETED,
+                        completed_at=_utcnow(),
+                        meta_json=json.dumps({
+                            "tool_name": tool_name,
+                            "tool_kind": kind,
+                            "tool_use_id": _tool_use_id,
+                            "phase": "end",
+                            "output_summary": output_summary or "",
+                            "is_error": is_error,
+                        }),
+                        jsonl_uuid=_tool_uuid,
+                    )
+                    _db2.add(_tool_msg)
+                    _db2.commit()
+                    from display_writer import flush_agent
+                    flush_agent(agent_id)
+        finally:
+            _db2.close()
 
     # Wake the JSONL sync loop so new message content is picked up
     # immediately instead of waiting for the next poll cycle.
@@ -715,7 +763,7 @@ async def hook_agent_permission(request: Request):
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         body = {}
     if not agent_id:
         agent_id = _resolve_agent_id_from_body(body)
@@ -874,7 +922,7 @@ async def hook_agent_session_start(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         logger.debug("SessionStart hook: failed to parse body (agent_id=%s)", agent_id[:8] if agent_id else "(none)")
         return {}
 
@@ -954,6 +1002,12 @@ async def hook_agent_session_start(request: Request):
         logger.debug("SessionStart hook: unmanaged session %s has no CWD header", session_id[:12])
         return {}
 
+    # Only offer tmux-based sessions for adoption — bare CLI sessions
+    # (no tmux pane) are not managed by the orchestrator.
+    if not tmux_pane:
+        logger.debug("SessionStart hook: unmanaged session %s has no tmux pane, skipping", session_id[:12])
+        return {}
+
     # If this tmux pane is already owned by an active agent, treat this as
     # a session rotation (e.g. /clear) — write a signal file instead of
     # creating a new unlinked entry.  This is critical for detected agents
@@ -1029,8 +1083,8 @@ async def hook_agent_session_start(request: Request):
                 ["tmux", "display-message", "-t", tmux_pane, "-p", "#{session_name}"],
                 timeout=2, text=True,
             ).strip() or None
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            pass
+        except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+            logger.debug("Failed to resolve tmux session for pane %s: %s", tmux_pane, e)
 
     from agent_dispatcher import _write_unlinked_entry
     _write_unlinked_entry(
