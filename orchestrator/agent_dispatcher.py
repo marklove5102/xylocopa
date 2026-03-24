@@ -753,10 +753,6 @@ def store_insights(db, project: str, date_str: str, section_text: str,
             stored += 1
         own_db.commit()
         return stored
-    except Exception:
-        logger.warning("store_insights failed for %s/%s — rolling back", project, date_str, exc_info=True)
-        own_db.rollback()
-        return 0
     finally:
         own_db.close()
 
@@ -846,30 +842,26 @@ def _grep_dedup_insights(new_section: str, existing_progress: str,
         "Output \"ALL\" to keep everything, \"NONE\" to discard everything."
     )
 
-    try:
-        result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
-            input=dedup_prompt,
-            capture_output=True, text=True, timeout=120,
-            cwd=project_path,
-        )
-        if result.returncode != 0:
-            logger.warning("Dedup LLM call failed (rc=%d), keeping all insights", result.returncode)
-            return new_section
-
-        answer = result.stdout.strip().upper()
-        if "ALL" in answer:
-            return new_section
-        if "NONE" in answer:
-            return f"{heading}\n1. No new insights."
-
-        # Parse the kept indices from LLM response
-        keep_from_llm = set()
-        for tok in re.findall(r'\d+', answer):
-            keep_from_llm.add(int(tok) - 1)  # 1-indexed -> 0-indexed
-    except Exception as e:
-        logger.warning("Dedup LLM error: %s, keeping all insights", e)
+    result = subprocess.run(
+        [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+        input=dedup_prompt,
+        capture_output=True, text=True, timeout=120,
+        cwd=project_path,
+    )
+    if result.returncode != 0:
+        logger.warning("Dedup LLM call failed (rc=%d), keeping all insights", result.returncode)
         return new_section
+
+    answer = result.stdout.strip().upper()
+    if "ALL" in answer:
+        return new_section
+    if "NONE" in answer:
+        return f"{heading}\n1. No new insights."
+
+    # Parse the kept indices from LLM response
+    keep_from_llm = set()
+    for tok in re.findall(r'\d+', answer):
+        keep_from_llm.add(int(tok) - 1)  # 1-indexed -> 0-indexed
 
     # Keep: insights with no overlap (weren't checked) + LLM-approved ones
     no_overlap = set(range(len(insights))) - set(overlap_map.keys())
@@ -900,27 +892,24 @@ def _translate_to_english(text_input: str) -> str:
     cache_key = text_input[:200]
     if cache_key in _translate_cache:
         return _translate_cache[cache_key]
-    try:
-        import openai
-        client = openai.OpenAI(timeout=5)
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": f"Translate the following to English technical keywords (no explanation, just the keywords separated by spaces):\n{text_input[:300]}",
-            }],
-            max_tokens=100,
-            temperature=0,
-        )
-        translated = resp.choices[0].message.content.strip()
-        if translated:
-            if len(_translate_cache) >= _TRANSLATE_CACHE_MAX:
-                # Evict oldest entry
-                _translate_cache.pop(next(iter(_translate_cache)))
-            _translate_cache[cache_key] = translated
-            return translated
-    except Exception:
-        logger.debug("_translate_to_english: OpenAI call failed", exc_info=True)
+    import openai
+    client = openai.OpenAI(timeout=5)
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": f"Translate the following to English technical keywords (no explanation, just the keywords separated by spaces):\n{text_input[:300]}",
+        }],
+        max_tokens=100,
+        temperature=0,
+    )
+    translated = resp.choices[0].message.content.strip()
+    if translated:
+        if len(_translate_cache) >= _TRANSLATE_CACHE_MAX:
+            # Evict oldest entry
+            _translate_cache.pop(next(iter(_translate_cache)))
+        _translate_cache[cache_key] = translated
+        return translated
     return text_input
 
 
@@ -1023,26 +1012,22 @@ def query_insights_ai(db, project: str, user_message: str, limit: int = 50) -> l
         f"Past insights:\n{numbered}"
     )
 
-    try:
-        import openai
-        client = openai.OpenAI(timeout=5)
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0,
-        )
-        raw = resp.choices[0].message.content.strip()
-        indices = json.loads(raw)
-        if not isinstance(indices, list):
-            raise ValueError(f"Expected list, got {type(indices)}")
-        # Bounds-check + dedup, preserve order
-        valid = [i for i in indices if isinstance(i, int) and 1 <= i <= len(candidates)]
-        selected = [candidates[i - 1] for i in dict.fromkeys(valid)]
-        return selected[:10]
-    except Exception:
-        logger.warning("query_insights_ai 4o-mini call failed — falling back to FTS5", exc_info=True)
-        return query_insights(db, project, user_message, limit=10)
+    import openai
+    client = openai.OpenAI(timeout=5)
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=100,
+        temperature=0,
+    )
+    raw = resp.choices[0].message.content.strip()
+    indices = json.loads(raw)
+    if not isinstance(indices, list):
+        raise ValueError(f"Expected list, got {type(indices)}")
+    # Bounds-check + dedup, preserve order
+    valid = [i for i in indices if isinstance(i, int) and 1 <= i <= len(candidates)]
+    selected = [candidates[i - 1] for i in dict.fromkeys(valid)]
+    return selected[:10]
 
 
 _DAILY_SUMMARY_MAX_CONTEXT = 500_000  # chars — stay well within Claude context window
@@ -1308,7 +1293,10 @@ def _parse_session_turns_from_lines(
         flush_text()
         if pending_interactive:
             meta = {"interactive": list(pending_interactive)}
-            turns.append(("assistant", "", meta, None, None))
+            # Deterministic UUID from first tool_use_id for dedup on restart
+            _first_tid = pending_interactive[0].get("tool_use_id", "")
+            _interactive_uuid = f"interactive-{_first_tid}" if _first_tid else None
+            turns.append(("assistant", "", meta, _interactive_uuid, None))
             pending_interactive.clear()
 
     for line in lines:
@@ -1465,6 +1453,8 @@ def _parse_session_turns_from_lines(
             deduped.append(turn)
         turns = deduped
 
+    logger.debug("Parsed %d turns from %d lines: %s", len(turns), len(lines),
+                 [(t[0], t[4] if len(t) > 4 else None, t[3][:20] if len(t) > 3 and t[3] else 'none') for t in turns[:10]])
     return turns
 
 
@@ -2409,29 +2399,26 @@ class AgentDispatcher:
         from routers.projects import _progress_job_get, _progress_job_set
 
         for proj in projects:
-            try:
-                # Skip if already running or completed today
-                existing = _progress_job_get(proj.name)
-                if existing:
-                    logger.info("Auto-summary skipped for %s: job already %s", proj.name, existing.get("status", "cached"))
-                    continue
+            # Skip if already running or completed today
+            existing = _progress_job_get(proj.name)
+            if existing:
+                logger.info("Auto-summary skipped for %s: job already %s", proj.name, existing.get("status", "cached"))
+                continue
 
-                session_context = _gather_daily_session_context(db, proj.name, target_date=target_date)
-                if not session_context:
-                    logger.info("Auto-summary skipped for %s: no agent sessions on %s", proj.name, target_date or "today")
-                    continue
+            session_context = _gather_daily_session_context(db, proj.name, target_date=target_date)
+            if not session_context:
+                logger.info("Auto-summary skipped for %s: no agent sessions on %s", proj.name, target_date or "today")
+                continue
 
-                # Auto-apply: run summary and append result (no review step)
-                _progress_job_set(proj.name, status="running")
-                thread = threading.Thread(
-                    target=self._auto_apply_progress_summary,
-                    args=(proj.name, proj.path, session_context, target_date),
-                    daemon=True,
-                )
-                thread.start()
-                logger.info("Auto-triggered daily PROGRESS.md summary for project %s", proj.name)
-            except Exception:
-                logger.warning("Auto-summary failed for %s, continuing to next project", proj.name, exc_info=True)
+            # Auto-apply: run summary and append result (no review step)
+            _progress_job_set(proj.name, status="running")
+            thread = threading.Thread(
+                target=self._auto_apply_progress_summary,
+                args=(proj.name, proj.path, session_context, target_date),
+                daemon=True,
+            )
+            thread.start()
+            logger.info("Auto-triggered daily PROGRESS.md summary for project %s", proj.name)
 
     @staticmethod
     def _auto_apply_progress_summary(project_name: str, project_path: str,
@@ -2492,36 +2479,31 @@ Here are the day's conversations (with timestamps):
         except OSError:
             pass
 
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            input=prompt,
+            capture_output=True, text=True, timeout=600,
+            cwd=project_path,
+        )
+
+        # Mark any new sessions created by this subprocess as "system"
+        # so they won't be adopted by successor detection.
         try:
-            result = subprocess.run(
-                [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
-                input=prompt,
-                capture_output=True, text=True, timeout=600,
-                cwd=project_path,
-            )
+            for f in os.listdir(_session_dir):
+                if not f.endswith(".jsonl"):
+                    continue
+                sid = f.replace(".jsonl", "")
+                if sid not in _pre_sessions:
+                    _write_session_owner(_session_dir, sid, "system")
+                    logger.info("Marked progress-summary session %s as system-owned", sid[:12])
+        except OSError:
+            pass
 
-            # Mark any new sessions created by this subprocess as "system"
-            # so they won't be adopted by successor detection.
-            try:
-                for f in os.listdir(_session_dir):
-                    if not f.endswith(".jsonl"):
-                        continue
-                    sid = f.replace(".jsonl", "")
-                    if sid not in _pre_sessions:
-                        _write_session_owner(_session_dir, sid, "system")
-                        logger.info("Marked progress-summary session %s as system-owned", sid[:12])
-            except OSError:
-                pass
-
-            if result.returncode != 0:
-                logger.warning("Auto progress summary failed for %s: %s", project_name, result.stderr[:500])
-                _progress_job_set(project_name, status="error", error="Auto-summary failed")
-                return
-            new_section = result.stdout.strip()
-        except Exception as e:
-            logger.warning("Auto progress summary error for %s: %s", project_name, e)
-            _progress_job_set(project_name, status="error", error=str(e))
+        if result.returncode != 0:
+            logger.warning("Auto progress summary failed for %s: %s", project_name, result.stderr[:500])
+            _progress_job_set(project_name, status="error", error="Auto-summary failed")
             return
+        new_section = result.stdout.strip()
 
         if not new_section:
             _progress_job_clear(project_name)
@@ -2598,18 +2580,15 @@ Here are the day's conversations (with timestamps):
                 logger.info("Auto-appended daily PROGRESS.md summary for %s", project_name)
 
                 # Commit immediately so git reset --hard from agents can't destroy it
-                try:
-                    subprocess.run(
-                        ["git", "add", "PROGRESS.md"],
-                        cwd=project_path, capture_output=True, timeout=10,
-                    )
-                    subprocess.run(
-                        ["git", "commit", "-m", f"[auto-summary] {summary_date} daily insights"],
-                        cwd=project_path, capture_output=True, timeout=10,
-                    )
-                    logger.info("Auto-committed PROGRESS.md for %s", project_name)
-                except Exception as e:
-                    logger.warning("Failed to git commit PROGRESS.md for %s: %s", project_name, e)
+                subprocess.run(
+                    ["git", "add", "PROGRESS.md"],
+                    cwd=project_path, capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", f"[auto-summary] {summary_date} daily insights"],
+                    cwd=project_path, capture_output=True, timeout=10,
+                )
+                logger.info("Auto-committed PROGRESS.md for %s", project_name)
         except OSError as e:
             logger.warning("Failed to write PROGRESS.md for %s: %s", project_name, e)
 
@@ -2621,16 +2600,13 @@ Here are the day's conversations (with timestamps):
         _progress_job_clear(project_name)
 
     def _emit(self, coro_or_dict):
-        try:
-            if isinstance(coro_or_dict, dict):
-                from websocket import ws_manager
-                asyncio.ensure_future(
-                    ws_manager.broadcast(coro_or_dict.pop("type", "debug"), coro_or_dict)
-                )
-            else:
-                asyncio.ensure_future(coro_or_dict)
-        except Exception:
-            logger.warning("Failed to schedule WebSocket emit", exc_info=True)
+        if isinstance(coro_or_dict, dict):
+            from websocket import ws_manager
+            asyncio.ensure_future(
+                ws_manager.broadcast(coro_or_dict.pop("type", "debug"), coro_or_dict)
+            )
+        else:
+            asyncio.ensure_future(coro_or_dict)
 
     def _fail_message(self, msg: Message, reason: str, *, emit: bool = True):
         """Mark a message as FAILED with a reason and optional WebSocket emit."""
@@ -2688,8 +2664,11 @@ Here are the day's conversations (with timestamps):
                     Message.jsonl_uuid == jsonl_uuid,
                 ).first()
                 if existing:
+                    logger.debug("Agent %s: import_dedup skip uuid=%s", agent_id[:8], jsonl_uuid)
                     continue
 
+            logger.debug("Agent %s: import_dedup creating role=%s kind=%s uuid=%s",
+                         agent_id[:8], role, kind, jsonl_uuid)
             now = _utcnow()
             if role == "user":
                 msg = Message(
@@ -2840,6 +2819,10 @@ Here are the day's conversations (with timestamps):
                     cancel_tasks=True, cascade_subagents=False,
                 )
 
+        # Remove display file for stopped agent
+        from display_writer import delete_agent as _delete_display
+        _delete_display(agent.id)
+
         if not skip_task_transition:
             self._transition_linked_task(db, agent)
 
@@ -2905,6 +2888,10 @@ Here are the day's conversations (with timestamps):
         if emit:
             from websocket import emit_agent_update
             self._emit(emit_agent_update(agent.id, "ERROR", agent.project))
+
+        # Remove display file for errored agent
+        from display_writer import delete_agent as _delete_display
+        _delete_display(agent.id)
 
         self._transition_linked_task(db, agent, TaskStatus.FAILED)
 
@@ -3057,34 +3044,30 @@ Here are the day's conversations (with timestamps):
             if active >= proj.max_concurrent:
                 continue
 
-            try:
-                agent_id = self._create_task_agent(db, task, proj)
-                if agent_id:
-                    # Atomic CAS: only update if task is still PENDING
-                    rows = (
-                        db.query(Task)
-                        .filter(Task.id == task.id, Task.status == TaskStatus.PENDING)
-                        .update({
-                            "status": TaskStatus.EXECUTING,
-                            "agent_id": agent_id,
-                            "started_at": _utcnow(),
-                        }, synchronize_session="fetch")
-                    )
-                    if rows == 0:
-                        db.rollback()
-                        logger.warning("Task %s: status changed concurrently, skipping", task.id)
-                        continue
-                    db.commit()
-                    from websocket import emit_task_update, emit_agent_update
-                    self._emit(emit_task_update(
-                        task.id, task.status.value, task.project_name or "",
-                        title=task.title, agent_id=agent_id,
-                    ))
-                    self._emit(emit_agent_update(agent_id, AgentStatus.IDLE.value, proj.name))
-                    logger.info("Task %s dispatched to agent %s", task.id, agent_id)
-            except Exception:
-                db.rollback()
-                logger.exception("Failed to dispatch task %s", task.id)
+            agent_id = self._create_task_agent(db, task, proj)
+            if agent_id:
+                # Atomic CAS: only update if task is still PENDING
+                rows = (
+                    db.query(Task)
+                    .filter(Task.id == task.id, Task.status == TaskStatus.PENDING)
+                    .update({
+                        "status": TaskStatus.EXECUTING,
+                        "agent_id": agent_id,
+                        "started_at": _utcnow(),
+                    }, synchronize_session="fetch")
+                )
+                if rows == 0:
+                    db.rollback()
+                    logger.warning("Task %s: status changed concurrently, skipping", task.id)
+                    continue
+                db.commit()
+                from websocket import emit_task_update, emit_agent_update
+                self._emit(emit_task_update(
+                    task.id, task.status.value, task.project_name or "",
+                    title=task.title, agent_id=agent_id,
+                ))
+                self._emit(emit_agent_update(agent_id, AgentStatus.IDLE.value, proj.name))
+                logger.info("Task %s dispatched to agent %s", task.id, agent_id)
 
     def _create_task_agent(self, db: Session, task: Task, proj: Project) -> str | None:
         """Create an agent for a v2 task. Reuses the standard IDLE→dispatch flow.
@@ -3494,6 +3477,9 @@ Here are the day's conversations (with timestamps):
                 # a single blob, so the frontend can render them individually.
                 _fg_seq = 0
                 _fg_msgs: list[Message] = []
+                # Use triggering message ID in harvest UUID to avoid collision
+                # across multiple prompts to the same agent.
+                _fg_origin = info["message_id"]
                 for _fg_kind, _fg_content in harvest_parts:
                     _fg_seq += 1
                     _fg_content = _fg_content.strip()
@@ -3506,17 +3492,21 @@ Here are the day's conversations (with timestamps):
                         if not _fg_content:
                             continue
                     _fg_now = _utcnow()
+                    _fg_uuid = f"harvest-{_fg_origin}-{_fg_seq}"
+                    _fg_actual_kind = "text" if _fg_kind == "text" else "tool_use"
+                    logger.debug("Agent %s: harvest creating msg kind=%s uuid=%s seq=%d content_len=%d",
+                                 agent.id[:8], _fg_actual_kind, _fg_uuid, _fg_seq, len(_fg_content))
                     _fg_msg = Message(
                         agent_id=agent.id,
                         role=MessageRole.AGENT,
                         content=_fg_content,
                         status=MessageStatus.COMPLETED,
                         source=None,
-                        jsonl_uuid=f"harvest-{agent.id}-{_fg_seq}",
+                        jsonl_uuid=_fg_uuid,
                         completed_at=_fg_now,
                         delivered_at=_fg_now,
                         session_seq=_fg_seq,
-                        kind="text" if _fg_kind == "text" else "tool_use",
+                        kind=_fg_actual_kind,
                     )
                     db.add(_fg_msg)
                     _fg_msgs.append(_fg_msg)
@@ -3532,6 +3522,7 @@ Here are the day's conversations (with timestamps):
                 else:
                     # Empty response — fall back to single message with
                     # _extract_result output (preserves existing behaviour).
+                    logger.debug("Agent %s: harvest fallback to single message", agent.id[:8])
                     resp = Message(
                         agent_id=agent.id,
                         role=MessageRole.AGENT,
@@ -3833,22 +3824,14 @@ Here are the day's conversations (with timestamps):
                        in_use=self._is_agent_in_use(agent.id, agent.tmux_pane))
                 continue
 
-            try:
-                project_path = self.worker_mgr.ensure_project_ready(project)
-                agent.status = AgentStatus.IDLE
+            project_path = self.worker_mgr.ensure_project_ready(project)
+            agent.status = AgentStatus.IDLE
 
-                sys_msg = self._add_system_message(db, agent.id, "Agent started")
+            sys_msg = self._add_system_message(db, agent.id, "Agent started")
 
-                logger.info("Agent %s started (project: %s)", agent.id, project.name)
-                from websocket import emit_agent_update
-                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
-            except Exception:
-                logger.exception("Failed to start agent %s", agent.id)
-                reason = "Failed to start — project directory not found"
-                self.error_agent_cleanup(db, agent, reason)
-                from notify import notify
-                notify("message", agent.id, f"\u274c {agent.name}", reason, f"/agents/{agent.id}",
-                       in_use=self._is_agent_in_use(agent.id, agent.tmux_pane))
+            logger.info("Agent %s started (project: %s)", agent.id, project.name)
+            from websocket import emit_agent_update
+            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
 
     # ---- Step 4: Dispatch pending messages ----
 
@@ -3962,24 +3945,8 @@ Here are the day's conversations (with timestamps):
                 continue
 
             # Ensure project directory exists
-            try:
-                project_path = self.worker_mgr.ensure_project_ready(project)
-                self._project_ready_failures.pop(project.name, None)
-            except Exception:
-                count = self._project_ready_failures.get(project.name, 0) + 1
-                self._project_ready_failures[project.name] = count
-                logger.exception(
-                    "Project dir not ready for %s (attempt %d/%d)",
-                    project.name, count, self._max_project_ready_failures,
-                )
-                if count >= self._max_project_ready_failures:
-                    reason = f"Project directory not ready after {count} attempts"
-                    self._fail_message(pending_msg, reason)
-                    self.error_agent_cleanup(
-                        db, agent,
-                        f"Project directory for '{project.name}' is not accessible — agent stopped",
-                    )
-                continue
+            project_path = self.worker_mgr.ensure_project_ready(project)
+            self._project_ready_failures.pop(project.name, None)
 
             # Use --resume with session_id if available.
             # Pre-check: if the session file is missing, restore from cache
@@ -4028,65 +3995,59 @@ Here are the day's conversations (with timestamps):
                 wrap_prompt=True,
             )
 
-            try:
-                pid_str, output_file = self.worker_mgr.exec_claude_in_agent(
-                    project_path, prompt, project, agent,
-                    resume_session_id=resume_session_id,
-                    message_id=pending_msg.id,
-                )
-                self._active_execs[agent.id] = {
-                    "pid_str": pid_str,
-                    "output_file": output_file,
-                    "message_id": pending_msg.id,
-                    "started_at": _utcnow(),
-                    "last_activity": _utcnow(),
-                    "tmux_pane": agent.tmux_pane,
-                }
-                # Cancel sync task before changing status — the sync loop
-                # would exit on its own when it sees non-SYNCING, but
-                # explicit cancel is cleaner and avoids a race window.
-                if agent.cli_sync:
-                    self._cancel_sync_task(agent.id)
-                agent.status = AgentStatus.EXECUTING
-                agent.generating_msg_id = pending_msg.id
-                if agent.worktree:
-                    agent.branch = f"worktree-{agent.worktree}"
-                pending_msg.status = MessageStatus.EXECUTING
-                pending_msg.dispatch_seq = self.next_dispatch_seq(db, agent.id)
-                _just_delivered = False
-                if not pending_msg.delivered_at:
-                    pending_msg.delivered_at = _utcnow()
-                    _just_delivered = True
-                executing_count += 1
+            pid_str, output_file = self.worker_mgr.exec_claude_in_agent(
+                project_path, prompt, project, agent,
+                resume_session_id=resume_session_id,
+                message_id=pending_msg.id,
+            )
+            self._active_execs[agent.id] = {
+                "pid_str": pid_str,
+                "output_file": output_file,
+                "message_id": pending_msg.id,
+                "started_at": _utcnow(),
+                "last_activity": _utcnow(),
+                "tmux_pane": agent.tmux_pane,
+            }
+            # Cancel sync task before changing status — the sync loop
+            # would exit on its own when it sees non-SYNCING, but
+            # explicit cancel is cleaner and avoids a race window.
+            if agent.cli_sync:
+                self._cancel_sync_task(agent.id)
+            agent.status = AgentStatus.EXECUTING
+            agent.generating_msg_id = pending_msg.id
+            if agent.worktree:
+                agent.branch = f"worktree-{agent.worktree}"
+            pending_msg.status = MessageStatus.EXECUTING
+            pending_msg.dispatch_seq = self.next_dispatch_seq(db, agent.id)
+            _just_delivered = False
+            if not pending_msg.delivered_at:
+                pending_msg.delivered_at = _utcnow()
+                _just_delivered = True
+            executing_count += 1
 
-                # Start streaming output to frontend
-                self._start_stream_task(agent.id, output_file)
+            # Start streaming output to frontend
+            self._start_stream_task(agent.id, output_file)
 
-                logger.info(
-                    "Dispatched message %s to agent %s (resume=%s)",
-                    pending_msg.id, agent.id, bool(resume_session_id),
-                )
-                from websocket import emit_agent_update, emit_message_update
-                self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
-                self._emit(emit_message_update(agent.id, pending_msg.id, "EXECUTING"))
-                if _just_delivered:
-                    from websocket import emit_message_delivered
-                    self._emit(emit_message_delivered(
-                        agent.id, pending_msg.id,
-                        pending_msg.delivered_at.isoformat(),
-                    ))
-                # Emit metadata_update so frontend gets InsightsBubble
-                if pending_msg.meta_json:
-                    from websocket import emit_metadata_update
-                    self._emit(emit_metadata_update(
-                        agent.id, pending_msg.id,
-                        json.loads(pending_msg.meta_json),
-                    ))
-            except Exception:
-                logger.exception(
-                    "Failed to exec claude for agent %s", agent.id
-                )
-                self._fail_message(pending_msg, "Failed to start claude process")
+            logger.info(
+                "Dispatched message %s to agent %s (resume=%s)",
+                pending_msg.id, agent.id, bool(resume_session_id),
+            )
+            from websocket import emit_agent_update, emit_message_update
+            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+            self._emit(emit_message_update(agent.id, pending_msg.id, "EXECUTING"))
+            if _just_delivered:
+                from websocket import emit_message_delivered
+                self._emit(emit_message_delivered(
+                    agent.id, pending_msg.id,
+                    pending_msg.delivered_at.isoformat(),
+                ))
+            # Emit metadata_update so frontend gets InsightsBubble
+            if pending_msg.meta_json:
+                from websocket import emit_metadata_update
+                self._emit(emit_metadata_update(
+                    agent.id, pending_msg.id,
+                    json.loads(pending_msg.meta_json),
+                ))
 
     def _dispatch_tmux_pending(self, db: Session):
         """Send pending messages to SYNCING/STARTING agents via tmux.
@@ -4435,8 +4396,10 @@ Here are the day's conversations (with timestamps):
                 try:
                     with open(signal_path, "r") as f:
                         agent_sid = f.read().strip()
-                except (FileNotFoundError, OSError):
-                    pass
+                except FileNotFoundError:
+                    pass  # Signal file not yet created — expected
+                except OSError as e:
+                    logger.debug("Failed to read session signal file: %s", e)
 
             if not agent_sid:
                 continue
@@ -4703,11 +4666,6 @@ Here are the day's conversations (with timestamps):
                     self._emit(emit_agent_stream(agent_id, content, generation_id=gid))
         except asyncio.CancelledError:
             pass
-        except Exception:
-            logger.exception(
-                "Stream output loop crashed for agent %s (file: %s)",
-                agent_id, output_file,
-            )
         finally:
             self._stop_generating(agent_id)
 
@@ -4771,6 +4729,20 @@ Here are the day's conversations (with timestamps):
 
     def start_session_sync(self, agent_id: str, session_id: str, project_path: str):
         """Start a background task to live-sync a CLI session JSONL."""
+        # Only sync agents with a tmux pane — non-tmux CLI sessions can't
+        # receive web messages, so syncing them is pointless.
+        db = SessionLocal()
+        try:
+            _agent = db.get(Agent, agent_id)
+            if _agent and not _agent.tmux_pane:
+                logger.info(
+                    "Skipping sync for agent %s: no tmux pane (non-tmux CLI session)",
+                    agent_id,
+                )
+                return
+        finally:
+            db.close()
+
         # Write ownership sidecar so _detect_successor_session can
         # determine which agent owns this session without parsing content.
         _write_session_owner(
@@ -4914,7 +4886,7 @@ Here are the day's conversations (with timestamps):
             agent.last_message_at = _utcnow()
             try:
                 db.commit()
-            except Exception:
+            except IntegrityError:
                 # UNIQUE constraint on session_id — another agent already
                 # owns this session.  Roll back and abort the rotation.
                 db.rollback()
@@ -4931,6 +4903,10 @@ Here are the day's conversations (with timestamps):
             )
         finally:
             db.close()
+
+        # Rebuild display file for the rotated session
+        from display_writer import rebuild_agent as _rebuild_display
+        _rebuild_display(agent_id)
 
         # Cancel old sync task and start a fresh one.  The new sync
         # loop does initial reconciliation which deduplicates turns
@@ -4969,8 +4945,6 @@ Here are the day's conversations (with timestamps):
                     logger.warning(
                         "Agent %s moved to ERROR after sync loop crash", agent_id
                     )
-            except Exception:
-                logger.exception("Failed to mark agent %s as ERROR after sync crash", agent_id)
             finally:
                 db.close()
         finally:
@@ -4996,24 +4970,14 @@ Here are the day's conversations (with timestamps):
                 db_sub = SessionLocal()
                 try:
                     for cid, info in known_subs.items():
-                        try:
-                            sub_ag = db_sub.get(Agent, info["agent_id"])
-                            if sub_ag and sub_ag.status == AgentStatus.SYNCING:
-                                self.stop_agent_cleanup(
-                                    db_sub, sub_ag, "",
-                                    kill_tmux=False, emit=True,
-                                    add_message=False, cancel_tasks=False,
-                                )
-                        except Exception:
-                            logger.warning(
-                                "Failed to clean up subagent %s for agent %s",
-                                info.get("agent_id", "?"), agent_id, exc_info=True,
+                        sub_ag = db_sub.get(Agent, info["agent_id"])
+                        if sub_ag and sub_ag.status == AgentStatus.SYNCING:
+                            self.stop_agent_cleanup(
+                                db_sub, sub_ag, "",
+                                kill_tmux=False, emit=True,
+                                add_message=False, cancel_tasks=False,
                             )
-                    try:
-                        db_sub.commit()
-                    except Exception:
-                        db_sub.rollback()
-                        logger.warning("Failed to commit subagent cleanup for agent %s", agent_id, exc_info=True)
+                    db_sub.commit()
                 finally:
                     db_sub.close()
 
