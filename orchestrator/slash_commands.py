@@ -253,6 +253,9 @@ def mark_delivered(agent_id: str, content: str) -> str | None:
         msg.delivered_at = now
         db.commit()
 
+        from display_writer import update_last
+        update_last(agent_id, msg.id)
+
         from websocket import emit_message_delivered
         asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
         logger.info("slash_commands: %s delivered for %s (msg=%s)", cmd, agent_id[:8], msg.id)
@@ -305,6 +308,9 @@ def mark_completed(agent_id: str) -> str | None:
         if not msg.delivered_at:
             msg.delivered_at = now
         db.commit()
+
+        from display_writer import update_last
+        update_last(agent_id, msg.id)
 
         from websocket import emit_message_update
         asyncio.ensure_future(emit_message_update(
@@ -359,7 +365,15 @@ def mark_delivered_and_completed(agent_id: str, content: str) -> str | None:
         msg.delivered_at = now
         msg.status = MessageStatus.COMPLETED
         msg.completed_at = now
+        # Session-changing slash commands never appear in post-change JSONL.
+        # Set synthetic jsonl_uuid so promotion queries skip them.
+        cmd_cfg = COMMANDS.get(cmd)
+        if cmd_cfg and cmd_cfg.changes_session and not msg.jsonl_uuid:
+            msg.jsonl_uuid = f"slash-{msg.id[:8]}"
         db.commit()
+
+        from display_writer import update_last
+        update_last(agent_id, msg.id)
 
         from websocket import emit_message_delivered, emit_message_update
         asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
@@ -409,6 +423,9 @@ def mark_loop_completed(agent_id: str) -> str | None:
         if not msg.delivered_at:
             msg.delivered_at = now
         db.commit()
+
+        from display_writer import update_last
+        update_last(agent_id, msg.id)
 
         from websocket import emit_message_update
         asyncio.ensure_future(emit_message_update(
