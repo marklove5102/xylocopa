@@ -370,9 +370,59 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                                 _web_msg.delivered_at = _utcnow()
                         continue
 
-                # 3. No queued message found — create from JSONL
-                logger.debug("Agent %s: creating message role=%s kind=%s uuid=%s seq=%d",
-                             ctx.agent_id[:8], "user", kind, jsonl_uuid, seq)
+                # 3. Content match failed — but is there a recent unlinked
+                #    web message we missed?  FIFO-promote it rather than
+                #    creating a CLI duplicate.  This closes the second-writer
+                #    gap: only true CLI-typed messages (zero queued web msgs)
+                #    get a new row.
+                _fifo_msg = db.query(Message).filter(
+                    *_link_base,  # same agent, USER, web/task, jsonl_uuid IS NULL
+                ).order_by(Message.created_at.asc()).first()
+
+                if _fifo_msg:
+                    try:
+                        with db.begin_nested():
+                            if jsonl_uuid:
+                                _fifo_msg.jsonl_uuid = jsonl_uuid
+                            _fifo_msg.session_seq = seq
+                            if not _fifo_msg.delivered_at:
+                                _fifo_msg.delivered_at = _utcnow()
+                            db.flush()
+                        logger.info(
+                            "Agent %s: FIFO-promoted web msg %s → uuid=%s "
+                            "(content mismatch fallback, web=%s jsonl=%s)",
+                            ctx.agent_id[:8], _fifo_msg.id, jsonl_uuid,
+                            (_fifo_msg.content or "")[:40],
+                            (content or "")[:40],
+                        )
+                        if _fifo_msg.delivered_at:
+                            from websocket import emit_message_delivered
+                            asyncio.ensure_future(emit_message_delivered(
+                                ctx.agent_id, _fifo_msg.id,
+                                _fifo_msg.delivered_at.isoformat(),
+                            ))
+                        continue
+                    except IntegrityError:
+                        _dup = db.query(Message).filter(
+                            Message.agent_id == ctx.agent_id,
+                            Message.jsonl_uuid == jsonl_uuid,
+                            Message.source == "cli",
+                        ).first()
+                        if _dup:
+                            logger.warning(
+                                "Agent %s: removing CLI duplicate %s for FIFO fallback",
+                                ctx.agent_id[:8], _dup.id,
+                            )
+                            db.delete(_dup)
+                            _fifo_msg.jsonl_uuid = jsonl_uuid
+                            _fifo_msg.session_seq = seq
+                            if not _fifo_msg.delivered_at:
+                                _fifo_msg.delivered_at = _utcnow()
+                        continue
+
+                # 4. Zero queued web messages — genuine CLI-typed input
+                logger.debug("Agent %s: creating CLI message kind=%s uuid=%s seq=%d",
+                             ctx.agent_id[:8], kind, jsonl_uuid, seq)
                 _now = _utcnow()
                 msg = Message(
                     agent_id=ctx.agent_id,
