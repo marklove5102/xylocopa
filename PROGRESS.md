@@ -83,3 +83,8 @@
 - What: User message wrapper had `flex items-center gap-2` causing attachments and insights to render horizontally beside the bubble. Changed to `flex flex-col items-end` with an inner `flex items-center gap-2` row for just the warning icon + bubble.
 - Resolution: Straightforward — two edits in ChatBubble's return JSX in AgentChatPage.jsx.
 - Lesson: When a flex container holds both primary content (bubble) and secondary content (attachments, insights), use flex-col for the outer wrapper and an inner flex-row only for elements that truly belong side-by-side.
+
+### 2026-03-24 | Task: Fix duplicate initial prompt bubble in task agents | Status: success
+- What: Task agents showed two user bubbles — the clean description (from `_create_task_agent`) and the full wrapped prompt (from JSONL sync). Root cause: `is_wrapped_prompt()` only detected `_build_agent_prompt` preamble (`"You are working in project:"`), but the JSONL parser already strips that. The remaining `_build_task_prompt` output (`# Task: ...`) was not recognized as wrapped, so `_promote_or_create_user_msg` fell to the raw-prompt path (exact content match, no FIFO fallback) and created a duplicate CLI message.
+- Resolution: Added `# Task:` prefix detection to `is_wrapped_prompt()`. This routes task prompts through the wrapped-prompt path with FIFO fallback, which promotes the existing task message instead of creating a duplicate. Cleaned up 4 existing duplicates and rebuilt display files.
+- Lesson: When content passes through multiple strip layers (parser strips `_build_agent_prompt`, then sync checks `is_wrapped_prompt`), the detection must recognize all intermediate states, not just the original full wrapping.
