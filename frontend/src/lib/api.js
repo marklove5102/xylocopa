@@ -210,6 +210,8 @@ export const fetchDisplay = (agentId, { offset = 0, tailBytes = 0 } = {}) => {
   if (tailBytes) params.set("tail_bytes", String(tailBytes));
   return request(`/api/agents/${agentId}/display?${params}`);
 };
+export const wakeSync = (agentId) =>
+  request(`/api/agents/${agentId}/wake-sync`, { method: "POST" });
 export const sendMessage = (agentId, content, { queue = false, scheduled_at = null } = {}) =>
   request(`/api/agents/${agentId}/messages`, {
     method: "POST",
