@@ -126,8 +126,14 @@ def flush_agent(agent_id: str):
             Undelivered user messages sort last (queued at bottom).
             """
             if msg.role == MessageRole.USER:
-                return msg.delivered_at or _MAX_TS
-            return msg.created_at or _MAX_TS
+                ts = msg.delivered_at or _MAX_TS
+            else:
+                ts = msg.created_at or _MAX_TS
+            # Ensure tz-aware for consistent comparison (some DB rows
+            # may have naive timestamps from older code paths).
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts
 
         undisplayed.sort(key=_sort_key)
         if not undisplayed:
@@ -182,21 +188,24 @@ def update_last(agent_id: str, message_id: str):
     - Streaming content updates (agent response growing)
     - Delivery status updates (delivered_at set after promotion)
 
-    Only writes if the message already has display_seq (already in file).
-    Appends with _replace=True so frontend overwrites the stale entry.
+    If the message already has display_seq, appends with _replace=True so
+    the frontend overwrites the stale entry.  If display_seq is None (message
+    not yet in the display file), falls through to flush_agent which assigns
+    a seq and writes the message for the first time.
     """
+    _needs_flush = False
     db = SessionLocal()
     try:
         msg = db.get(Message, message_id)
         if not msg or msg.agent_id != agent_id:
             return
         if msg.display_seq is None:
-            return  # not yet in display file
-
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        path = _display_path(agent_id)
-        line = _serialize_message(msg, msg.display_seq, replace=True)
-        _write_locked(path, [line])
+            _needs_flush = True
+        else:
+            os.makedirs(DISPLAY_DIR, exist_ok=True)
+            path = _display_path(agent_id)
+            line = _serialize_message(msg, msg.display_seq, replace=True)
+            _write_locked(path, [line])
     except Exception:
         logger.exception(
             "Failed to update display file for agent %s msg %s",
@@ -204,6 +213,9 @@ def update_last(agent_id: str, message_id: str):
         )
     finally:
         db.close()
+
+    if _needs_flush:
+        flush_agent(agent_id)
 
 
 def rebuild_agent(agent_id: str):

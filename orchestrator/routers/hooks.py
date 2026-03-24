@@ -693,8 +693,11 @@ async def hook_agent_tool_activity(request: Request):
                 )
                 _db2.add(_tool_msg)
                 _db2.commit()
-                # Don't flush here — WS events handle real-time display.
-                # flush_agent runs on PostToolUse or next sync cycle.
+                # Flush immediately so tool_activity persists in the
+                # display file.  WS events provide real-time feedback,
+                # but the display file is the durable source of truth.
+                from display_writer import flush_agent as _flush_ta
+                _flush_ta(agent_id)
             elif phase == "end":
                 # Find the start message by tool UUID
                 _existing = (
