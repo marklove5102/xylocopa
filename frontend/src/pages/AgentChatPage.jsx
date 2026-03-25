@@ -2454,13 +2454,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [id]);
 
 
-  // Track keyboard via visualViewport — direct DOM for smooth animation.
-  // React state (kbOpen) only toggles at open/close boundaries, never during
-  // the animation itself. Container height is set via el.style.height directly,
-  // bypassing React re-render lag (~16-33ms per frame).
-  //
-  // OPEN:  follow visualViewport.resize events → direct DOM height update
-  // CLOSE: follow resize events (native-matched), spring fallback if needed
+  // Track keyboard via visualViewport.
+  // ADAPTIVE during open/close transition (~500ms), then PINNED to avoid
+  // jitter from micro-fluctuations while typing.  Large changes (>40px)
+  // break through the pin (suggestion bar toggle, orientation change).
   const [kbOpen, setKbOpen] = useState(false);
   const kbContainerRef = useRef(null);
   useEffect(() => {
@@ -2470,6 +2467,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     let isOpen = false;
     let dismissing = false;
     let lastH = 0;
+    let settled = false;   // true once transition finishes → pin height
+    let settleTimer = null;
 
     const finalizeClose = () => {
       const el = kbContainerRef.current;
@@ -2479,11 +2478,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       }
       isOpen = false;
       dismissing = false;
+      settled = false;
       lastH = 0;
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
       setKbOpen(false);
     };
 
-    // Height tracking — only fires on actual viewport size change
     const onResize = () => {
       if (vv.height > baseHeight) baseHeight = vv.height;
       const kbH = Math.round(baseHeight - vv.height);
@@ -2491,60 +2491,50 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const open = kbH > 100;
 
       const el = kbContainerRef.current;
-      if (!el) return;
-
-      if (dismissing) return;
+      if (!el || dismissing) return;
 
       if (open) {
-        if (h !== lastH) {
+        const delta = Math.abs(h - lastH);
+
+        // Update height if: not yet settled, OR large change breaks the pin
+        if (!settled || delta > 40) {
           el.style.height = `${h}px`;
+          el.classList.remove('h-full');
           lastH = h;
+
+          // Reset settle timer — pin after 500ms of no significant change
+          if (settleTimer) clearTimeout(settleTimer);
+          settled = false;
+          settleTimer = setTimeout(() => { settled = true; }, 500);
         }
-        el.classList.remove('h-full');
 
         if (!isOpen) {
           isOpen = true;
           setKbOpen(true);
-          const sc = scrollContainerRef.current;
-          if (sc && !userScrolledUp.current) {
-            sc.scrollTop = sc.scrollHeight - sc.clientHeight;
-          }
+        }
+
+        // Reset iOS body scroll during transition
+        if (!settled && (window.scrollY > 0 || vv.offsetTop > 0)) {
+          window.scrollTo(0, 0);
         }
       } else if (isOpen) {
-        // Keyboard closed without focusout (e.g. hardware kb, app switch)
         finalizeClose();
       }
     };
 
-    // iOS body-scroll guard — iOS auto-scrolls the page to show the
-    // focused input; reset it so the container stays at viewport top.
-    // Only touches window.scrollTo, never container height → no jitter.
-    const onVvScroll = () => {
-      if (isOpen && (window.scrollY > 0 || vv.offsetTop > 0)) {
-        window.scrollTo(0, 0);
-      }
-    };
-
     const onFocusOut = () => {
-      const el = kbContainerRef.current;
-      if (!el?.style.height || !isOpen) return;
-
+      if (!isOpen) return;
       dismissing = true;
-      const sc = scrollContainerRef.current;
-      if (sc && !userScrolledUp.current) {
-        sc.scrollTop = sc.scrollHeight - sc.clientHeight;
-      }
       finalizeClose();
     };
 
     vv.addEventListener("resize", onResize);
-    vv.addEventListener("scroll", onVvScroll);
     document.addEventListener("focusout", onFocusOut);
-    onResize(); // initial read
+    onResize();
     return () => {
       vv.removeEventListener("resize", onResize);
-      vv.removeEventListener("scroll", onVvScroll);
       document.removeEventListener("focusout", onFocusOut);
+      if (settleTimer) clearTimeout(settleTimer);
     };
   }, []);
 
