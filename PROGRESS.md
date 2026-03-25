@@ -118,6 +118,8 @@
 - Lesson: The batch `POST /api/voice` endpoint and `transcribeVoice()` API call already existed (legacy code) — the migration was mostly a frontend hook rewrite. MediaRecorder is dramatically simpler than AudioWorklet + WebSocket + bidirectional proxy.
 
 ### 2026-03-24 | Task: Fix input bar jitter while typing with keyboard open | Status: success
-- What: Added 8px dead zone threshold to visualViewport keyboard tracking, so 1-2px height fluctuations during typing don't trigger container height updates.
-- Resolution: In the `update()` function, compare new height against current `el.style.height` and skip DOM updates when the difference is < 8px. Also gated scroll-to-bottom behind the same check to avoid layout thrashing every 100ms.
-- Lesson: Straightforward — no issues. The root cause was `visualViewport.height` fluctuating by tiny amounts during typing (autocomplete bar, prediction changes) while the code was unconditionally setting `el.style.height` on every tick.
+- What: Eliminated body scroll fight that caused visible input bar shake during typing.
+- Attempts: (1) 8px dead zone on container height updates — reduced height-change jitter but didn't fix body scroll oscillation. (2) Researched modern best practices for mobile keyboard handling.
+- Resolution: Four changes — (a) `interactive-widget=resizes-content` in viewport meta (Android gets native keyboard resize), (b) lock `body.style.overflow=hidden` while keyboard is open so the `body::after { height:1px }` hack can't cause scroll fights, (c) move `scrollTo(0,0)` from every-tick to once-on-open, (d) remove `window.resize → microScroll` in App.jsx (only need focusout + visibilitychange).
+- Lesson: The jitter was NOT from container height changes — it was a scroll-fight feedback loop. The `body::after { height:1px }` CSS hack (for iOS Safari dismiss desync) makes the body scrollable. Browsers micro-scroll the body during typing, the 100ms poll fights it back with `scrollTo(0,0)`, and App.jsx's `microScroll` on `window.resize` adds more oscillation. Fix: lock body scroll while keyboard is open, unlock on close so the dismiss hack still works.
+- Gotcha: The `body::after` hack is still needed for keyboard dismiss (iOS Safari viewport desync), so you can't just remove it. Instead, temporarily lock `overflow:hidden` during the open phase.
