@@ -116,3 +116,8 @@
 - What: Replaced OpenAI Realtime API streaming transcription with simpler batch approach: record fully via MediaRecorder → upload to Whisper API → optional LLM refine. Inspired by Stet's architecture.
 - Resolution: Rewrote useVoiceRecorder.js (MediaRecorder instead of AudioWorklet + WebSocket), deleted voice_stream.py (Realtime API proxy) and pcm-processor.js (AudioWorklet), removed /ws/transcribe route, replaced streamingText displays with refining indicator across 7 files.
 - Lesson: The batch `POST /api/voice` endpoint and `transcribeVoice()` API call already existed (legacy code) — the migration was mostly a frontend hook rewrite. MediaRecorder is dramatically simpler than AudioWorklet + WebSocket + bidirectional proxy.
+
+### 2026-03-24 | Task: Fix input bar jitter while typing with keyboard open | Status: success
+- What: Added 8px dead zone threshold to visualViewport keyboard tracking, so 1-2px height fluctuations during typing don't trigger container height updates.
+- Resolution: In the `update()` function, compare new height against current `el.style.height` and skip DOM updates when the difference is < 8px. Also gated scroll-to-bottom behind the same check to avoid layout thrashing every 100ms.
+- Lesson: Straightforward — no issues. The root cause was `visualViewport.height` fluctuating by tiny amounts during typing (autocomplete bar, prediction changes) while the code was unconditionally setting `el.style.height` on every tick.
