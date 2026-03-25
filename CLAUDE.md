@@ -50,4 +50,4 @@ See README.md for detailed project documentation.
 - CWD matching: use `startswith(proj + "/")` not `==` (worktree subdirs)
 - SQLAlchemy: `metadata` is reserved — use alt attr name with explicit column
 - When fixing a helper, grep ALL call sites — don't assume you found them all
-- JSONL has dual entries (queue-operation + user) — parse ONE, skip the other
+- Queued messages use stop-hook dispatch: PENDING in DB → stop hook fires → send via tmux → UserPromptSubmit confirms delivery
