@@ -225,39 +225,17 @@ Here is recent agent activity in this project (last 50 messages):
 {build_section}"""
 
     from config import CLAUDE_BIN
-    from session_cache import session_source_dir as _ssd
-    from agent_dispatcher import _write_session_owner
-
-    _session_dir = _ssd(project_path)
-    _pre_sessions: set[str] = set()
-    try:
-        _pre_sessions = {
-            f.replace(".jsonl", "")
-            for f in os.listdir(_session_dir)
-            if f.endswith(".jsonl")
-        }
-    except OSError:
-        pass
 
     try:
+        # Run from /tmp to avoid loading project hooks (PreToolUse permission
+        # hook returns {} for non-agent subprocesses, causing empty output).
         result = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
+            [CLAUDE_BIN, "-p", prompt, "--output-format", "text",
+             "--no-session-persistence"],
             capture_output=True, text=True, timeout=600,
-            cwd=project_path,
+            cwd="/tmp",
             env=subprocess_clean_env(),
         )
-
-        # Mark any new sessions as system-owned
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-                    logger.info("Marked claudemd-refresh session %s as system-owned", sid[:12])
-        except OSError:
-            pass
 
         if result.returncode != 0:
             logger.warning("claude -p failed for %s: %s", project_name, result.stderr[:500])
@@ -384,42 +362,18 @@ Here are today's conversations (with timestamps):
 {session_context}"""
 
     from config import CLAUDE_BIN
-    from session_cache import session_source_dir as _ssd
-    from agent_dispatcher import _write_session_owner
-
-    # Snapshot existing session files so we can mark new ones as "system"
-    _session_dir = _ssd(project_path)
-    _pre_sessions: set[str] = set()
-    try:
-        _pre_sessions = {
-            f.replace(".jsonl", "")
-            for f in os.listdir(_session_dir)
-            if f.endswith(".jsonl")
-        }
-    except OSError:
-        pass
 
     try:
+        # Run from /tmp to avoid loading project hooks (PreToolUse permission
+        # hook returns {} for non-agent subprocesses, causing empty output).
         result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+             "--no-session-persistence"],
             input=prompt,
             capture_output=True, text=True, timeout=600,
-            cwd=project_path,
+            cwd="/tmp",
             env=subprocess_clean_env(),
         )
-
-        # Mark any new sessions created by this subprocess as "system"
-        # so they won't be adopted by successor detection.
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-                    logger.info("Marked progress-summary session %s as system-owned", sid[:12])
-        except OSError:
-            pass
 
         if result.returncode != 0:
             logger.warning("progress summary failed for %s: %s", project_name, result.stderr[:500])
@@ -459,16 +413,6 @@ Here are today's conversations (with timestamps):
         except OSError:
             pass
         new_section = _grep_dedup_insights(new_section, existing_progress, project_path)
-        # Mark sessions from dedup call
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-        except OSError:
-            pass
 
     # For manual flow: show proposed section for user review before appending
     data = {"proposed": new_section, "is_append": True}
@@ -513,8 +457,6 @@ def _run_agent_summary_background(agent_id: str, agent_name: str,
                                   project_path: str):
     """Run claude -p in a background thread to extract insights from an agent conversation."""
     from config import CLAUDE_BIN
-    from session_cache import session_source_dir as _ssd
-    from agent_dispatcher import _write_session_owner
 
     own_db = SessionLocal()
     try:
@@ -539,41 +481,21 @@ Agent: {agent_name} | Task: {task_title}
 
 {context}"""
 
-    # Snapshot existing session files so we can mark new ones as "system"
-    _session_dir = _ssd(project_path)
-    _pre_sessions: set[str] = set()
     try:
-        _pre_sessions = {
-            f.replace(".jsonl", "")
-            for f in os.listdir(_session_dir)
-            if f.endswith(".jsonl")
-        }
-    except OSError:
-        pass
-
-    try:
+        # Run from /tmp to avoid loading project hooks (PreToolUse permission
+        # hook returns {} for non-agent subprocesses, causing empty output).
         result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+             "--no-session-persistence"],
             input=prompt,
             capture_output=True, text=True, timeout=300,
-            cwd=project_path,
+            cwd="/tmp",
             env=subprocess_clean_env(),
         )
 
-        # Mark any new sessions created by this subprocess as "system"
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-                    logger.info("Marked agent-summary session %s as system-owned", sid[:12])
-        except OSError:
-            pass
-
         if result.returncode != 0:
-            logger.warning("Agent summary failed for %s: %s", agent_id, result.stderr[:500])
+            logger.warning("Agent summary failed for %s (rc=%d): %s",
+                           agent_id, result.returncode, result.stderr[:500])
             return
 
         raw_output = result.stdout.strip()
@@ -654,8 +576,6 @@ def _generate_retry_summary_impl(agent_id: str, task_id: str,
                                  project_path: str,
                                  incomplete_reason: str | None):
     from config import CLAUDE_BIN
-    from session_cache import session_source_dir as _ssd
-    from agent_dispatcher import _write_session_owner
 
     own_db = SessionLocal()
     try:
@@ -684,41 +604,21 @@ Task: {task_title}{reason_line}
 
 {context}"""
 
-    # Snapshot existing sessions so we can mark new ones as "system"
-    _session_dir = _ssd(project_path)
-    _pre_sessions: set[str] = set()
     try:
-        _pre_sessions = {
-            f.replace(".jsonl", "")
-            for f in os.listdir(_session_dir)
-            if f.endswith(".jsonl")
-        }
-    except OSError:
-        pass
-
-    try:
+        # Run from /tmp to avoid loading project hooks (PreToolUse permission
+        # hook returns {} for non-agent subprocesses, causing empty output).
         result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+             "--no-session-persistence"],
             input=prompt,
             capture_output=True, text=True, timeout=120,
-            cwd=project_path,
+            cwd="/tmp",
             env=subprocess_clean_env(),
         )
 
-        # Mark any new sessions created by this subprocess as "system"
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-                    logger.info("Marked retry-summary session %s as system-owned", sid[:12])
-        except OSError:
-            pass
-
         if result.returncode != 0:
-            logger.warning("Retry summary failed for task %s: %s", task_id, result.stderr[:300])
+            logger.warning("Retry summary failed for task %s (rc=%d): %s",
+                           task_id, result.returncode, result.stderr[:300])
             _clear_generating_marker(task_id)
             return
         summary = result.stdout.strip()[:2000]
@@ -728,6 +628,7 @@ Task: {task_title}{reason_line}
         return
 
     if not summary:
+        logger.warning("Retry summary returned empty output for task %s", task_id)
         _clear_generating_marker(task_id)
         return
 

@@ -570,11 +570,14 @@ def _grep_dedup_insights(new_section: str, existing_progress: str,
         "Output \"ALL\" to keep everything, \"NONE\" to discard everything."
     )
 
+    # Run from /tmp to avoid loading project hooks (PreToolUse permission
+    # hook returns {} for non-agent subprocesses, causing empty output).
     result = subprocess.run(
-        [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+        [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+         "--no-session-persistence"],
         input=dedup_prompt,
         capture_output=True, text=True, timeout=120,
-        cwd=project_path,
+        cwd="/tmp",
     )
     if result.returncode != 0:
         logger.warning("Dedup LLM call failed (rc=%d), keeping all insights", result.returncode)
@@ -1966,40 +1969,15 @@ Here are the day's conversations (with timestamps):
 
 {session_context}"""
 
-        # Snapshot existing session files so we can identify new ones after
-        # the subprocess completes and mark them with a "system" owner to
-        # prevent successor detection from stealing them.
-        from session_cache import session_source_dir as _ssd
-        _session_dir = _ssd(project_path)
-        _pre_sessions: set[str] = set()
-        try:
-            _pre_sessions = {
-                f.replace(".jsonl", "")
-                for f in os.listdir(_session_dir)
-                if f.endswith(".jsonl")
-            }
-        except OSError:
-            pass
-
+        # Run from /tmp to avoid loading project hooks (PreToolUse permission
+        # hook returns {} for non-agent subprocesses, causing empty output).
         result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text"],
+            [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+             "--no-session-persistence"],
             input=prompt,
             capture_output=True, text=True, timeout=600,
-            cwd=project_path,
+            cwd="/tmp",
         )
-
-        # Mark any new sessions created by this subprocess as "system"
-        # so they won't be adopted by successor detection.
-        try:
-            for f in os.listdir(_session_dir):
-                if not f.endswith(".jsonl"):
-                    continue
-                sid = f.replace(".jsonl", "")
-                if sid not in _pre_sessions:
-                    _write_session_owner(_session_dir, sid, "system")
-                    logger.info("Marked progress-summary session %s as system-owned", sid[:12])
-        except OSError:
-            pass
 
         if result.returncode != 0:
             logger.warning("Auto progress summary failed for %s: %s", project_name, result.stderr[:500])
@@ -2050,17 +2028,6 @@ Here are the day's conversations (with timestamps):
             except OSError:
                 pass
             new_section = _grep_dedup_insights(new_section, existing_progress, project_path)
-            # Mark sessions created by the dedup LLM call
-            try:
-                for f in os.listdir(_session_dir):
-                    if not f.endswith(".jsonl"):
-                        continue
-                    sid = f.replace(".jsonl", "")
-                    if sid not in _pre_sessions:
-                        _write_session_owner(_session_dir, sid, "system")
-                        logger.info("Marked dedup session %s as system-owned", sid[:12])
-            except OSError:
-                pass
             logger.info("Grep-dedup completed for %s", project_name)
 
         # Append to PROGRESS.md (never overwrite)
