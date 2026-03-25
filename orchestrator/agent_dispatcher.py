@@ -2449,12 +2449,36 @@ Here are the day's conversations (with timestamps):
 
     def wake_sync(self, agent_id: str) -> bool:
         """Wake the sync loop for an agent immediately (skip sleep).
-        Returns True if a wake event was found and set."""
+
+        If no sync task is running (e.g. cancelled after session end),
+        transparently restarts it so hooks don't silently fail.
+        Returns True if the sync loop was woken or restarted.
+        """
         ev = self._sync_wake.get(agent_id)
         if ev:
             ev.set()
             return True
-        return False
+        # No wake event → sync loop is dead.  Restart if possible.
+        return self._ensure_sync_running(agent_id)
+
+    def _ensure_sync_running(self, agent_id: str) -> bool:
+        """Restart the sync loop for an agent if it's not running."""
+        task = self._sync_tasks.get(agent_id)
+        if task and not task.done():
+            return False  # already running
+        db = SessionLocal()
+        try:
+            agent = db.get(Agent, agent_id)
+            if not agent or not agent.session_id or not agent.cli_sync:
+                return False
+            project = db.get(Project, agent.project) if agent.project else None
+            if not project:
+                return False
+            self.start_session_sync(agent_id, agent.session_id, project.path)
+            logger.info("_ensure_sync_running: restarted sync for agent %s", agent_id[:8])
+            return True
+        finally:
+            db.close()
 
     def _stop_generating(self, agent_id: str):
         """Mark agent as no longer generating and emit stream_end."""
@@ -4268,19 +4292,6 @@ Here are the day's conversations (with timestamps):
 
     def start_session_sync(self, agent_id: str, session_id: str, project_path: str):
         """Start a background task to live-sync a CLI session JSONL."""
-        # Only sync agents with a tmux pane — non-tmux CLI sessions can't
-        # receive web messages, so syncing them is pointless.
-        db = SessionLocal()
-        try:
-            _agent = db.get(Agent, agent_id)
-            if _agent and not _agent.tmux_pane:
-                logger.info(
-                    "Skipping sync for agent %s: no tmux pane (non-tmux CLI session)",
-                    agent_id,
-                )
-                return
-        finally:
-            db.close()
 
         # Write ownership sidecar so _detect_successor_session can
         # determine which agent owns this session without parsing content.
