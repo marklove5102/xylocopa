@@ -178,13 +178,6 @@ async def lifespan(app: FastAPI):
     if _project_paths:
         logger.info("Refreshed hook configs for %d projects", len(_project_paths))
 
-    # Process sessions that accumulated while orchestrator was offline
-    from routers.agents import _ingest_pending_sessions
-    _ingest_pending_sessions()
-
-    # Clean stale unlinked session entries from previous runs
-    from routers.agents import _clean_stale_unlinked
-    _clean_stale_unlinked()
 
     # Recover tasks stuck in EXECUTING whose agent already stopped/errored
     from task_state import TaskStateMachine as _TSM

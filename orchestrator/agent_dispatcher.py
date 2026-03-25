@@ -130,44 +130,6 @@ def _read_session_owner(session_dir: str, sid: str) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
 
-def _write_unlinked_entry(
-    session_id: str,
-    cwd: str,
-    transcript_path: str = "",
-    model: str | None = None,
-    tmux_pane: str | None = None,
-    pane_pid: int | None = None,
-    project_name: str | None = None,
-    tmux_session: str | None = None,
-):
-    """Write an unlinked session entry for user confirmation in the UI.
-
-    Creates a JSON file in the unlinked-sessions directory (under BACKUP_DIR)
-    so that the frontend can display it and the user can confirm (adopt) it.
-    Keyed by session_id — idempotent (won't overwrite existing entry).
-    """
-    from config import BACKUP_DIR
-    udir = os.path.join(BACKUP_DIR, "unlinked-sessions")
-    os.makedirs(udir, exist_ok=True)
-    entry_path = os.path.join(udir, f"{session_id}.json")
-    if os.path.isfile(entry_path):
-        return  # Already registered — don't overwrite
-    try:
-        with open(entry_path, "w") as f:
-            json.dump({
-                "session_id": session_id,
-                "cwd": cwd,
-                "transcript_path": transcript_path,
-                "model": model,
-                "tmux_pane": tmux_pane,
-                "tmux_session": tmux_session,
-                "pane_pid": pane_pid,
-                "project_name": project_name,
-                "timestamp": _time.time(),
-            }, f)
-    except OSError as e:
-        logger.warning("_write_unlinked_entry: failed to write %s: %s", entry_path, e)
-
 
 # Image metadata injected by Claude Code's Read tool — internal only, hide from UI
 
@@ -1600,10 +1562,6 @@ class AgentDispatcher:
         # CLI session sync tasks: agent_id -> asyncio.Task
         self._sync_tasks: dict[str, asyncio.Task] = {}
 
-        # Exec sync tasks for non-tmux agents: agent_id -> asyncio.Task
-        # Separate from _sync_tasks to avoid interfering with tmux sync.
-        self._exec_sync_tasks: dict[str, asyncio.Task] = {}
-
         # Generation tracking: monotonic ID per agent + set of currently generating agents
         self._generation_ids: dict[str, int] = {}
         self._generating_agents: set[str] = set()
@@ -2560,97 +2518,6 @@ Here are the day's conversations (with timestamps):
                 self._emit(emit_agent_update(agent_id, AgentStatus.STARTING.value, proj.name))
                 logger.info("Task %s dispatched to tmux agent %s", task.id, agent_id)
 
-    def _create_task_agent(self, db: Session, task: Task, proj: Project) -> str | None:
-        """Create an agent for a v2 task. Reuses the standard IDLE→dispatch flow.
-
-        Creates Agent(IDLE) + Message(PENDING), then the existing
-        _dispatch_pending_messages loop picks it up on the next tick
-        and runs it through worker_mgr.exec_claude_in_agent().
-        """
-        import secrets
-
-        # Generate unique agent ID
-        for _ in range(20):
-            agent_hex = secrets.token_hex(6)
-            if db.get(Agent, agent_hex) is None:
-                break
-        else:
-            return None
-
-        # Worktree name from task title (only if use_worktree is enabled)
-        wt_name = None
-        branch = None
-        if getattr(task, 'use_worktree', True):
-            wt_name = task.worktree_name or f"task-{task.id}"
-            task.worktree_name = wt_name
-            branch = f"worktree-{wt_name}"
-            task.branch_name = branch
-
-        model = task.model or proj.default_model or CC_MODEL
-
-        # Build clean display content (what the user sees in chat)
-        display_parts = []
-        title = (task.title or "").strip()
-        desc = (task.description or "").strip()
-        if title and desc:
-            # Title auto-generated from description? Show only the longer one.
-            title_core = title.rstrip(".").strip()
-            if desc == title or desc.startswith(title_core):
-                display_parts.append(desc)
-            else:
-                display_parts.append(title)
-                display_parts.append(desc)
-        elif desc:
-            display_parts.append(desc)
-        elif title:
-            display_parts.append(title)
-        if task.attempt_number > 1:
-            if task.retry_context:
-                display_parts.append(f"Retry attempt #{task.attempt_number}")
-                display_parts.append(task.retry_context)
-        display_content = "\n\n".join(display_parts)
-
-        # Query insights for meta_json (frontend InsightsBubble)
-        insights_list: list[str] = []
-        if db and task.project_name:
-            query_text = f"{task.title} {task.description or ''}"
-            insights_list = query_insights(db, task.project_name, query_text, limit=15, pad_recent=True)
-
-        # Create agent record — IDLE so _dispatch_pending_messages picks it up
-        agent = Agent(
-            id=agent_hex,
-            project=proj.name,
-            name=f"Task: {task.title[:80]}",
-            mode=AgentMode.AUTO,
-            status=AgentStatus.IDLE,
-            model=model,
-            effort=task.effort or "high",
-            worktree=wt_name if wt_name else None,
-            skip_permissions=getattr(task, 'skip_permissions', True),
-            task_id=task.id,
-            muted=False,
-            last_message_preview=f"Task: {task.title[:80]}",
-            last_message_at=_utcnow(),
-        )
-        db.add(agent)
-        db.flush()
-
-        # Save initial message as PENDING — dispatch loop will execute it
-        # Content = clean display text; full prompt assembled at dispatch time
-        meta = {"insights": insights_list} if insights_list else None
-        msg = Message(
-            agent_id=agent.id,
-            role=MessageRole.USER,
-            content=display_content,
-            status=MessageStatus.PENDING,
-            source="task",
-            meta_json=json.dumps(meta) if meta else None,
-        )
-        db.add(msg)
-        db.flush()  # Don't commit — caller does atomic CAS + commit
-
-        return agent.id
-
     def _build_task_prompt(
         self, task: Task, db: Session | None = None,
         insights_list: list[str] | None = None,
@@ -2924,7 +2791,7 @@ Here are the day's conversations (with timestamps):
                         self._emit(emit_message_update(agent_id, message.id, "PENDING"))
                     # cli_sync agents should return to SYNCING (not IDLE)
                     # so the sync loop can resume watching the session.
-                    agent.status = AgentStatus.SYNCING if agent.cli_sync else AgentStatus.IDLE
+                    agent.status = AgentStatus.SYNCING
                     done_agents.append(agent_id)
                     continue
 
@@ -2944,7 +2811,7 @@ Here are the day's conversations (with timestamps):
 
             # cli_sync agents return to SYNCING so the sync loop can
             # resume watching the session JSONL; others go to IDLE.
-            post_exec_status = AgentStatus.SYNCING if agent.cli_sync else AgentStatus.IDLE
+            post_exec_status = AgentStatus.SYNCING
 
             _now = _utcnow()
             _hook_resp = None  # set below if hook message is adopted
@@ -3207,8 +3074,6 @@ Here are the day's conversations (with timestamps):
             info = self._active_execs.pop(agent_id, None)
             self._recently_harvested.add(agent_id)
             self._cancel_stream_task(agent_id)
-            # Cancel exec sync for non-tmux agents (sync only lives during exec)
-            self._cancel_exec_sync_task(agent_id)
             # Clean up output file to prevent /tmp accumulation
             if info:
                 output_file = info.get("output_file", "")
@@ -3307,7 +3172,7 @@ Here are the day's conversations (with timestamps):
                 # Guard: check agent wasn't stopped by API during timeout handling
                 db.refresh(agent)
                 if agent.status != AgentStatus.STOPPED:
-                    agent.status = AgentStatus.SYNCING if agent.cli_sync else AgentStatus.IDLE
+                    agent.status = AgentStatus.SYNCING
                 agent.last_message_preview = timeout_note
                 agent.last_message_at = now
                 is_viewed = self._is_agent_in_use(agent.id, agent.tmux_pane)
@@ -3348,34 +3213,10 @@ Here are the day's conversations (with timestamps):
     # ---- Step 4: Start new agents ----
 
     def _start_new_agents(self, db: Session):
-        """Validate project dirs for STARTING agents and set them to IDLE.
-
-        Skips cli_sync agents — they follow a different lifecycle
-        (STARTING → SYNCING via the background launch task).
-        """
-        starting = db.query(Agent).filter(
-            Agent.status == AgentStatus.STARTING,
-            Agent.cli_sync == False,
-        ).all()
-
-        for agent in starting:
-            project = db.get(Project, agent.project)
-            if not project:
-                reason = f"Project '{agent.project}' not found"
-                self.error_agent_cleanup(db, agent, reason)
-                from notify import notify
-                notify("message", agent.id, f"\u274c {agent.name}", reason, f"/agents/{agent.id}",
-                       in_use=self._is_agent_in_use(agent.id, agent.tmux_pane))
-                continue
-
-            project_path = self.worker_mgr.ensure_project_ready(project)
-            agent.status = AgentStatus.IDLE
-
-            sys_msg = self._add_system_message(db, agent.id, "Agent started")
-
-            logger.info("Agent %s started (project: %s)", agent.id, project.name)
-            from websocket import emit_agent_update
-            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
+        """No-op — all agents are now tmux-managed (STARTING → SYNCING via
+        the background launch task). Previously transitioned non-cli_sync
+        STARTING agents to IDLE for subprocess dispatch."""
+        pass
 
     # ---- Step 4: Dispatch pending messages ----
 
@@ -3434,170 +3275,20 @@ Here are the day's conversations (with timestamps):
                 "Stopped dead SYNCING agent %s — tmux pane gone", agent.id,
             )
 
+        # All agents are now tmux-managed. IDLE agents are legacy — stop them.
         idle_agents = db.query(Agent).filter(
             Agent.status == AgentStatus.IDLE,
         ).all()
-
-        executing_count = db.query(Agent).filter(
-            Agent.status == AgentStatus.EXECUTING
-        ).count()
-
         for agent in idle_agents:
-            if agent.id in self._active_execs:
-                continue
-            if executing_count >= MAX_CONCURRENT_WORKERS:
-                break
-
-            # Check per-project concurrency
-            project = db.get(Project, agent.project)
-            if not project:
-                continue
-            proj_executing = db.query(Agent).filter(
-                Agent.project == agent.project,
-                Agent.status == AgentStatus.EXECUTING,
-            ).count()
-            if proj_executing >= project.max_concurrent:
-                continue
-
-            # Find the oldest pending user message (skip scheduled ones not yet due)
-            pending_msg = (
-                db.query(Message)
-                .filter(
-                    Message.agent_id == agent.id,
-                    Message.role == MessageRole.USER,
-                    Message.status == MessageStatus.PENDING,
-                    (Message.scheduled_at == None) | (Message.scheduled_at <= _utcnow()),
-                )
-                .order_by(Message.created_at.asc())
-                .first()
+            logger.warning(
+                "Stopping legacy IDLE agent %s — all agents must be tmux-managed",
+                agent.id,
             )
-            if not pending_msg:
-                continue
-
-            # Defense-in-depth: skip if this message is already being
-            # executed by another active exec (prevents double-dispatch
-            # if harvest re-queued a message in the same tick).
-            already_dispatched = any(
-                info["message_id"] == pending_msg.id
-                for info in self._active_execs.values()
+            self.stop_agent_cleanup(
+                db, agent, "Legacy non-tmux agent stopped",
+                kill_tmux=False, cancel_tasks=False,
             )
-            if already_dispatched:
-                logger.warning(
-                    "Skipping message %s — already in active_execs (double-dispatch guard)",
-                    pending_msg.id,
-                )
-                continue
-
-            # Ensure project directory exists
-            project_path = self.worker_mgr.ensure_project_ready(project)
-            self._project_ready_failures.pop(project.name, None)
-
-            # Use --resume with session_id if available.
-            # Pre-check: if the session file is missing, restore from cache
-            # now instead of waiting for Claude to error out (~5s wasted).
-            resume_session_id = agent.session_id or None
-            if resume_session_id:
-                jsonl_path = _resolve_session_jsonl(
-                    resume_session_id, project_path, agent.worktree,
-                )
-                if not os.path.exists(jsonl_path):
-                    restored = restore_session(resume_session_id, project_path)
-                    if restored:
-                        repair_session_jsonl(resume_session_id, project_path)
-                        logger.info(
-                            "Pre-restored session %s for agent %s",
-                            resume_session_id, agent.id,
-                        )
-                    else:
-                        logger.info(
-                            "Session %s missing, no cache — starting fresh for agent %s",
-                            resume_session_id, agent.id,
-                        )
-                        self._release_session(
-                            resume_session_id, agent.id,
-                            project_path, agent.worktree, db,
-                        )
-                        self._clear_agent_session(
-                            db, agent,
-                            reason="session missing, starting fresh",
-                            emit=False, add_message=False,
-                        )
-                        resume_session_id = None
-
-            # Refresh agent from DB to catch concurrent status changes
-            # (e.g. user stopped the agent via API while we were preparing)
-            db.refresh(agent)
-            if agent.status not in (AgentStatus.IDLE, AgentStatus.SYNCING):
-                continue
-            if agent.id in self._active_execs:
-                continue
-
-            # Unified preparation: RAG insights + prompt wrapping + agent preview
-            _, prompt, _ = self._prepare_dispatch(
-                db, agent, project, pending_msg.content,
-                existing_message=pending_msg,
-                wrap_prompt=True,
-            )
-
-            pid_str, output_file = self.worker_mgr.exec_claude_in_agent(
-                project_path, prompt, project, agent,
-                resume_session_id=resume_session_id,
-                message_id=pending_msg.id,
-            )
-            self._active_execs[agent.id] = {
-                "pid_str": pid_str,
-                "output_file": output_file,
-                "message_id": pending_msg.id,
-                "started_at": _utcnow(),
-                "last_activity": _utcnow(),
-                "tmux_pane": agent.tmux_pane,
-            }
-            # Cancel sync task before changing status — the sync loop
-            # would exit on its own when it sees non-SYNCING, but
-            # explicit cancel is cleaner and avoids a race window.
-            if agent.cli_sync:
-                self._cancel_sync_task(agent.id)
-            agent.status = AgentStatus.EXECUTING
-            agent.generating_msg_id = pending_msg.id
-            if agent.worktree:
-                agent.branch = f"worktree-{agent.worktree}"
-            pending_msg.status = MessageStatus.EXECUTING
-            pending_msg.dispatch_seq = self.next_dispatch_seq(db, agent.id)
-            _just_delivered = False
-            if not pending_msg.delivered_at:
-                pending_msg.delivered_at = _utcnow()
-                _just_delivered = True
-            executing_count += 1
-
-            # Start streaming output to frontend
-            self._start_stream_task(agent.id, output_file)
-
-            # Start JSONL sync for non-tmux agents (parallel to stream loop).
-            # For --resume we know session_id upfront; for first exec,
-            # SessionStart hook will start sync when session_id arrives.
-            if not agent.tmux_pane and resume_session_id:
-                self.start_exec_sync(agent.id, resume_session_id, project_path)
-
-            logger.info(
-                "Dispatched message %s to agent %s (resume=%s)",
-                pending_msg.id, agent.id, bool(resume_session_id),
-            )
-            from websocket import emit_agent_update, emit_message_update
-            self._emit(emit_agent_update(agent.id, agent.status.value, agent.project))
-            self._emit(emit_message_update(agent.id, pending_msg.id, "EXECUTING"))
-            if _just_delivered:
-                from websocket import emit_message_delivered
-                self._emit(emit_message_delivered(
-                    agent.id, pending_msg.id,
-                    pending_msg.delivered_at.isoformat(),
-                ))
-            # Emit metadata_update so frontend gets InsightsBubble
-            if pending_msg.meta_json:
-                from websocket import emit_metadata_update
-                self._emit(emit_metadata_update(
-                    agent.id, pending_msg.id,
-                    json.loads(pending_msg.meta_json),
-                ))
+            self._fail_pending_messages(db, agent.id, "Non-tmux agents are no longer supported")
 
     def _dispatch_tmux_scheduled(self, db: Session):
         """Send scheduled messages to SYNCING/STARTING agents via tmux.
@@ -3985,62 +3676,26 @@ Here are the day's conversations (with timestamps):
         pane_map = self._get_tmux_map()
 
         for agent in candidates:
-            # --- Orchestrator-spawned agents (cli_sync=False) ---
+            # All agents must be tmux-managed. Stop any legacy non-cli_sync agents.
             if not agent.cli_sync:
-                if agent.status == AgentStatus.EXECUTING:
-                    if agent.id in self._active_execs:
-                        continue
-                    if agent.id in self._recently_harvested:
-                        continue
-                    # Not tracked — subprocess vanished; mark STOPPED
-                    logger.info(
-                        "Orchestrator agent %s EXECUTING but not tracked — stopping",
-                        agent.id,
-                    )
-                    self.stop_agent_cleanup(
-                        db, agent, "",
-                        kill_tmux=False, add_message=False, cancel_tasks=False,
-                    )
-                # IDLE/ERROR/STARTING orchestrator agents are fine
+                logger.warning("Stopping legacy non-tmux agent %s", agent.id)
+                self.stop_agent_cleanup(
+                    db, agent, "Non-tmux agents are no longer supported",
+                    kill_tmux=False, add_message=False, cancel_tasks=False,
+                )
                 continue
 
-            # --- CLI-synced agents (cli_sync=True) ---
-
-            # IDLE and EXECUTING cli_sync agents that are being driven by
-            # the orchestrator (no tmux pane) should follow orchestrator
-            # rules: IDLE is fine (waiting for messages), EXECUTING checks
-            # _active_execs.  This prevents killing agents that were
-            # originally tmux-launched but are now operating via subprocess
-            # (e.g. after resume), where session file staleness is normal.
-            if not agent.tmux_pane and agent.status in (
-                AgentStatus.IDLE, AgentStatus.EXECUTING,
-            ):
-                if agent.status == AgentStatus.EXECUTING:
-                    if agent.id in self._active_execs:
-                        continue
-                    if agent.id in self._recently_harvested:
-                        continue
-                    logger.info(
-                        "CLI agent %s EXECUTING but not tracked — stopping",
+            # IDLE agents without tmux panes are orphaned — stop them.
+            if agent.status == AgentStatus.IDLE:
+                if agent.id not in self._sync_tasks and agent.id not in self._active_execs:
+                    logger.warning(
+                        "Agent %s is IDLE with no sync task — stopping",
                         agent.id,
                     )
                     self.stop_agent_cleanup(
-                        db, agent, "",
-                        kill_tmux=False, add_message=False, cancel_tasks=False,
+                        db, agent, "Sync lost — agent stopped (no active CLI session)",
+                        kill_tmux=False, cancel_tasks=False,
                     )
-                if agent.status == AgentStatus.IDLE:
-                    # cli_sync agents should not normally be IDLE (they
-                    # should be SYNCING or STOPPED).  If we see one here
-                    # with no sync task running, it's orphaned — stop it.
-                    if agent.id not in self._sync_tasks and agent.id not in self._active_execs:
-                        logger.warning(
-                            "CLI agent %s is IDLE with no sync task and no pane — stopping",
-                            agent.id,
-                        )
-                        self.stop_agent_cleanup(
-                            db, agent, "Sync lost — agent stopped (no active CLI session)",
-                            kill_tmux=False, cancel_tasks=False,
-                        )
                 continue
 
             # Determine if this agent's underlying process is alive.
@@ -4281,217 +3936,6 @@ Here are the day's conversations (with timestamps):
             task.cancel()
 
     # ---- Exec Sync (non-tmux agents) ----
-
-    def start_exec_sync(self, agent_id: str, session_id: str, project_path: str):
-        """Start a background sync task for a non-tmux agent during exec.
-
-        Similar to start_session_sync() but for subprocess agents:
-        - Runs only during execution (not long-lived)
-        - No tmux pane checks or session rotation
-        - Stopped at harvest
-        """
-        # Don't start if there's already an exec sync or tmux sync running
-        if agent_id in self._sync_contexts:
-            logger.debug(
-                "start_exec_sync: agent %s already has sync context, skipping",
-                agent_id,
-            )
-            return
-        self._cancel_exec_sync_task(agent_id)
-
-        db = SessionLocal()
-        try:
-            _ag = db.get(Agent, agent_id)
-            _worktree = _ag.worktree if _ag else None
-        finally:
-            db.close()
-
-        jsonl_path = _resolve_session_jsonl(session_id, project_path, _worktree)
-        _write_session_owner(
-            session_source_dir(project_path), session_id, agent_id,
-        )
-        task = asyncio.ensure_future(
-            self._exec_sync_loop(agent_id, session_id, project_path, jsonl_path)
-        )
-        self._exec_sync_tasks[agent_id] = task
-        logger.info(
-            "Started exec sync for non-tmux agent %s (session %s)",
-            agent_id, session_id[:12],
-        )
-
-    def _cancel_exec_sync_task(self, agent_id: str):
-        """Cancel and clean up an exec sync task."""
-        task = self._exec_sync_tasks.pop(agent_id, None)
-        if task and not task.done():
-            task.cancel()
-        # Clean up shared state (sync context / wake event) if owned by exec sync
-        # Only pop if there's no tmux sync task also using these
-        if agent_id not in self._sync_tasks:
-            self._sync_contexts.pop(agent_id, None)
-            self._sync_wake.pop(agent_id, None)
-            self._sync_locks.pop(agent_id, None)
-
-    async def _exec_sync_loop(
-        self, agent_id: str, session_id: str,
-        project_path: str, jsonl_path: str,
-    ):
-        """Sync loop for non-tmux agents — runs during exec only.
-
-        Stripped-down version of _sync_session_loop_inner():
-        - Reuses sync_import_new_turns / sync_full_scan from sync_engine
-        - No tmux pane detection, session rotation, or pane health checks
-        - Tolerates EXECUTING status (not just SYNCING)
-        - Exits when agent leaves EXECUTING
-        """
-        from sync_engine import (
-            SyncContext,
-            _content_hash,
-            sync_import_new_turns,
-            sync_full_scan,
-        )
-
-        POLL_INTERVAL = 60  # hooks are primary trigger; 60s safety net
-
-        # Register wake event (hooks use wake_sync which reads _sync_wake)
-        wake_event = asyncio.Event()
-        self._sync_wake[agent_id] = wake_event
-
-        # Register sync lock
-        sync_lock = asyncio.Lock()
-        self._sync_locks[agent_id] = sync_lock
-
-        # Cache agent metadata
-        _worktree = None
-        db = SessionLocal()
-        try:
-            _ag = db.get(Agent, agent_id)
-            _agent_name = _ag.name if _ag else ""
-            _agent_project = _ag.project if _ag else ""
-            if _ag:
-                _worktree = _ag.worktree
-        finally:
-            db.close()
-
-        # Create and register sync context
-        ctx = SyncContext(
-            agent_id=agent_id,
-            session_id=session_id,
-            project_path=project_path,
-            worktree=_worktree,
-            agent_name=_agent_name,
-            agent_project=_agent_project,
-            jsonl_path=jsonl_path,
-        )
-
-        # Initialize sync pointer from current JSONL state
-        try:
-            initial_turns = _parse_session_turns(jsonl_path)
-        except Exception:
-            initial_turns = []
-        ctx.last_turn_count = len(initial_turns)
-        try:
-            ctx.last_offset = os.path.getsize(jsonl_path)
-        except OSError:
-            ctx.last_offset = 0
-        ctx.last_content_hash = (
-            _content_hash(initial_turns[-1][1]) if initial_turns else ""
-        )
-
-        self._sync_contexts[agent_id] = ctx
-
-        # Initial full scan (reconcile DB with JSONL)
-        try:
-            await sync_full_scan(self, ctx, reason="exec_start")
-        except Exception:
-            logger.warning(
-                "Exec sync initial scan failed for agent %s",
-                agent_id, exc_info=True,
-            )
-
-        logger.info(
-            "Exec sync loop started for agent %s (session %s, turns=%d)",
-            agent_id, session_id[:12], ctx.last_turn_count,
-        )
-
-        try:
-            while True:
-                # Wait for hook wake or poll timeout
-                hook_wake = False
-                try:
-                    await asyncio.wait_for(
-                        wake_event.wait(), timeout=POLL_INTERVAL,
-                    )
-                    wake_event.clear()
-                    hook_wake = True
-                except asyncio.TimeoutError:
-                    pass
-
-                # Exit check: agent no longer executing
-                db = SessionLocal()
-                try:
-                    agent = db.get(Agent, agent_id)
-                    if not agent or agent.status not in (
-                        AgentStatus.EXECUTING, AgentStatus.SYNCING,
-                    ):
-                        logger.info(
-                            "Exec sync loop exiting for agent %s (status=%s)",
-                            agent_id,
-                            agent.status.value if agent else "deleted",
-                        )
-                        break
-                finally:
-                    db.close()
-
-                # File size check
-                try:
-                    current_size = os.path.getsize(ctx.jsonl_path)
-                    ctx.getsize_error_count = 0
-                except OSError:
-                    ctx.getsize_error_count += 1
-                    if ctx.getsize_error_count % 10 == 1:
-                        logger.debug(
-                            "Exec sync: JSONL not found for agent %s (%s)",
-                            agent_id, ctx.jsonl_path,
-                        )
-                    continue
-
-                # Compact detection — file shrink
-                if current_size < ctx.last_offset:
-                    async with sync_lock:
-                        await sync_full_scan(self, ctx, reason="compact")
-                    wake_event.set()
-                    continue
-
-                # No change
-                if current_size <= ctx.last_offset:
-                    continue
-
-                # Poll-only: no action (same discipline as tmux loop)
-                if not hook_wake:
-                    continue
-
-                # Hook-triggered: incremental sync
-                async with sync_lock:
-                    result = await sync_import_new_turns(self, ctx)
-                if result == "compact":
-                    async with sync_lock:
-                        await sync_full_scan(self, ctx, reason="compact")
-                    wake_event.set()
-
-        except asyncio.CancelledError:
-            logger.info("Exec sync loop cancelled for agent %s", agent_id)
-        except Exception:
-            logger.error(
-                "Exec sync loop error for agent %s",
-                agent_id, exc_info=True,
-            )
-        finally:
-            # Cleanup shared state
-            self._sync_contexts.pop(agent_id, None)
-            self._sync_wake.pop(agent_id, None)
-            self._sync_locks.pop(agent_id, None)
-            self._exec_sync_tasks.pop(agent_id, None)
-            logger.info("Exec sync loop ended for agent %s", agent_id)
 
     def track_launch_task(self, agent_id: str, task: asyncio.Task):
         """Track a tmux launch background task so it can be cancelled."""
@@ -5315,24 +4759,12 @@ Here are the day's conversations (with timestamps):
                     continue
 
                 if agent.status == AgentStatus.EXECUTING:
-                    # Repair session JSONL if agent was mid-execution
-                    if agent.session_id:
-                        project = db.get(Project, agent.project)
-                        if project:
-                            repaired = repair_session_jsonl(
-                                agent.session_id, project.path
-                            )
-                            if repaired:
-                                logger.info(
-                                    "Repaired session %s for agent %s",
-                                    agent.session_id, agent.id,
-                                )
-
-                    agent.status = AgentStatus.IDLE
-                    self._add_system_message(
-                        db, agent.id,
-                        "Agent recovered after restart — re-queuing pending messages",
+                    # Non-tmux EXECUTING agent — stop it (all agents must be tmux-managed)
+                    self.stop_agent_cleanup(
+                        db, agent, "Non-tmux agent stopped after restart",
+                        kill_tmux=False, emit=False, cancel_tasks=False,
                     )
+                    continue
 
                 # Re-queue EXECUTING messages so the original prompt is
                 # re-dispatched automatically instead of being lost.

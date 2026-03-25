@@ -25,21 +25,13 @@ router = APIRouter(tags=["hooks"])
 def _resolve_agent_id_from_body(body: dict) -> str:
     """Resolve agent_id from hook body when X-Agent-Id header is empty.
 
-    Adopted/unlinked sessions don't have AHIVE_AGENT_ID in their process
-    environment, so the header expands to empty.  Fall back to body's
-    session_id → Agent.session_id lookup.
+    All agents are now tmux-managed with AHIVE_AGENT_ID set in their
+    environment. Sessions without this header are from non-managed
+    ``claude -p`` processes and must be ignored.
     """
     sid = body.get("session_id", "").strip()
-    if not sid:
-        return ""
-    db = SessionLocal()
-    try:
-        agent = db.query(Agent).filter(Agent.session_id == sid).first()
-        if agent:
-            logger.info("_resolve_agent_id_from_body: resolved session %s → agent %s", sid[:12], agent.id[:8])
-            return agent.id
-    finally:
-        db.close()
+    if sid:
+        logger.debug("_resolve_agent_id_from_body: ignoring non-managed session %s (no AHIVE_AGENT_ID)", sid[:12])
     return ""
 
 
@@ -415,7 +407,6 @@ async def hook_agent_post_compact(request: Request):
         ctx.compact_end_emitted = True  # prevent duplicate from sync engine
 
     # 2. Mark /compact message completed (double tick).
-    _is_tmux = False
     db = SessionLocal()
     try:
         compact_msg = (
@@ -478,9 +469,8 @@ async def hook_agent_post_compact(request: Request):
         #    tmux agents → SYNCING (sync loop keeps tailing the new session)
         #    non-tmux agents → IDLE (exec sync restarts on next execution)
         agent = db.get(Agent, agent_id)
-        _is_tmux = bool(agent and agent.tmux_pane)
         if agent and agent.status == AgentStatus.EXECUTING:
-            agent.status = AgentStatus.SYNCING if _is_tmux else AgentStatus.IDLE
+            agent.status = AgentStatus.SYNCING
             agent.generating_msg_id = None
 
         db.commit()
@@ -519,11 +509,6 @@ async def hook_agent_post_compact(request: Request):
             await asyncio.sleep(JSONL_FLUSH_DELAY)
             ad.wake_sync(_aid)
         asyncio.ensure_future(_post_compact_sync(agent_id))
-
-    # Cancel exec sync for non-tmux agents (will restart on next execution
-    # or via SessionStart rotation with the new session_id).
-    if not _is_tmux:
-        ad._cancel_exec_sync_task(agent_id)
 
     # 10. Emit "Compact end" tool activity to frontend (WS acceleration).
     from websocket import emit_tool_activity
@@ -1119,19 +1104,17 @@ async def hook_agent_session_start(request: Request):
                 # Look up project_path + worktree for rotation
                 _proj_path = None
                 _worktree = None
-                _is_tmux_ss = False
                 _db_ss = SessionLocal()
                 try:
                     _ag_ss = _db_ss.get(Agent, agent_id)
                     if _ag_ss:
-                        _is_tmux_ss = bool(_ag_ss.tmux_pane)
                         _worktree = _ag_ss.worktree
                         _proj_ss = _db_ss.get(Project, _ag_ss.project) if _ag_ss.project else None
                         _proj_path = _proj_ss.path if _proj_ss else None
                 finally:
                     _db_ss.close()
 
-                if _proj_path and _is_tmux_ss:
+                if _proj_path:
                     # Tmux agent: rotate session in-place and start fresh
                     # sync loop with the new JSONL.
                     rotated = ad._rotate_agent_session(
@@ -1150,27 +1133,6 @@ async def hook_agent_session_start(request: Request):
                             "SessionStart hook: compact rotation failed for %s",
                             agent_id[:8],
                         )
-                elif _proj_path and not _is_tmux_ss:
-                    # Non-tmux agent: already IDLE (set by PostCompact).
-                    # Just update session_id and write continuation bubble.
-                    _db_nr = SessionLocal()
-                    try:
-                        _ag_nr = _db_nr.get(Agent, agent_id)
-                        if _ag_nr:
-                            _ag_nr.session_id = session_id
-                            ad._add_system_message(
-                                _db_nr, agent_id,
-                                "CLI session continued (new context)",
-                            )
-                            _db_nr.commit()
-                    finally:
-                        _db_nr.close()
-                    from display_writer import flush_agent as _flush_nr
-                    _flush_nr(agent_id)
-                    logger.info(
-                        "SessionStart hook: agent=%s compact non-tmux session updated to %s",
-                        agent_id[:8], session_id[:12],
-                    )
                 else:
                     # Fallback: write signal file for poll-based detection
                     signal_path = f"/tmp/ahive-{agent_id}.newsession"

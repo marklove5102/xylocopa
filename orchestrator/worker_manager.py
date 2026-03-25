@@ -165,68 +165,6 @@ class WorkerManager:
         )
         return pid_str
 
-    # =====================================================================
-    # Agent exec (persistent conversations)
-    # =====================================================================
-
-    def exec_claude_in_agent(
-        self,
-        project_path: str,
-        prompt: str,
-        project: Project,
-        agent: Agent,
-        resume_session_id: str | None = None,
-        message_id: str | None = None,
-    ) -> tuple[str, str]:
-        """Run claude as a subprocess for an agent message.
-        Returns (pid_str, output_file) for monitoring.
-        """
-        # Use message_id for predictable file name so partial output
-        # can be recovered after a crash.
-        file_tag = message_id or uuid.uuid4().hex[:8]
-        output_file = f"/tmp/claude-output-{file_tag}.log"
-
-        cmd = [CLAUDE_BIN, "-p", prompt,
-               "--output-format", "stream-json", "--verbose"]
-        if getattr(agent, "skip_permissions", True):
-            cmd.insert(3, "--dangerously-skip-permissions")
-
-        if agent.model:
-            cmd.extend(["--model", agent.model])
-        if agent.effort:
-            cmd.extend(["--effort", agent.effort])
-        if agent.worktree:
-            cmd.extend(["--worktree", agent.worktree])
-        if resume_session_id:
-            cmd.extend(["--resume", resume_session_id])
-
-        env = self._clean_env()
-        env["AHIVE_AGENT_ID"] = agent.id
-
-        with open(output_file, "w") as out_f:
-            process = subprocess.Popen(
-                cmd,
-                cwd=project_path,
-                stdout=out_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                env=env,
-            )
-
-        pid_str = str(process.pid)
-        self._processes[pid_str] = {
-            "process": process,
-            "output_file": output_file,
-            "project": project.name,
-            "type": "agent",
-        }
-
-        logger.info(
-            "Exec started for agent %s (pid=%s, resume=%s)",
-            agent.id, pid_str, bool(resume_session_id),
-        )
-        return pid_str, output_file
-
     def is_exec_running(self, pid_str: str) -> bool:
         """Check if a subprocess is still running."""
         info = self._processes.get(pid_str)
