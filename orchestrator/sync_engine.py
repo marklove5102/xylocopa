@@ -94,7 +94,11 @@ def _content_hash(content: str) -> str:
 
 
 def _end_compact_activity(db, agent_id: str, session_id: str):
-    """Mark the most recent unfinished Compact tool_activity Message as ended."""
+    """Mark the most recent unfinished Compact tool_activity Message as ended.
+
+    Returns the message id (str) if found, else None — caller should
+    update_last() after commit to push the status change to the display file.
+    """
     existing = (
         db.query(Message)
         .filter(
@@ -114,6 +118,8 @@ def _end_compact_activity(db, agent_id: str, session_id: str):
         _meta["phase"] = "end"
         _meta["output_summary"] = "context compacted"
         existing.meta_json = _json.dumps(_meta)
+        return existing.id
+    return None
 
 
 def _notify_interactive(ad, agent, new_turns):
