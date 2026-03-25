@@ -2501,34 +2501,30 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (!el) return;
 
       const containerH = el.clientHeight;
-      // kbHeight: actual keyboard height (stable, ignores iOS page scroll)
+      // kbHeight: actual keyboard height — stable, doesn't depend on scroll
       const kbHeight = Math.max(0, Math.round(containerH - vv.height));
-      // off: position offset for absolute-positioned input bar (accounts for
-      // iOS scrolling the page via vvOT — keeps input bar at visual viewport
-      // bottom regardless of scroll position)
-      const off = Math.max(0, Math.round(containerH - vv.height - vv.offsetTop));
 
-      kbLog(containerH, off, kbHeight > 100);
+      kbLog(containerH, kbHeight, kbHeight > 100);
 
-      // Detect keyboard open/close using kbHeight (not off) — off drops to
-      // ~62 when iOS scrolls the page, but kbHeight stays 400+ while keyboard
-      // is visible.
       const open = kbHeight > 100;
 
-      if (off !== prevOff) {
-        prevOff = off;
-        // Instant: CSS variable drives bottom positioning (layout-synced
-        // with iOS scroll — no desync unlike transform approach)
+      // Prevent iOS from scrolling the page when keyboard is open.
+      // This keeps vvOT ≈ 0 so we can use kbHeight directly for
+      // positioning — no scroll/layout desync, no drift.
+      if (open && vv.offsetTop > 2) {
+        window.scrollTo(0, 0);
+      }
+
+      if (kbHeight !== prevOff) {
+        prevOff = kbHeight;
         if (open) {
-          el.style.setProperty('--kb-h', `${off}px`);
+          el.style.setProperty('--kb-h', `${kbHeight}px`);
         } else {
           el.style.removeProperty('--kb-h');
         }
       }
 
-      // Scroll container padding: just enough to clear the input bar
-      // (~140px). Don't use kbHeight — iOS scrolls the page to handle
-      // the keyboard; we only need to keep messages above the input bar.
+      // Scroll container padding: input bar height + some breathing room
       if (open !== isOpen) {
         clearTimeout(padTimer);
         padTimer = setTimeout(() => {
