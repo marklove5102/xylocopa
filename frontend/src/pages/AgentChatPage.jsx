@@ -1206,24 +1206,26 @@ function ToolLogBubble({ entries }) {
   if (!entries?.length) return null;
 
   const LIMIT = 5;
-  const showAll = expanded || entries.length <= LIMIT;
-  const visible = showAll ? entries : entries.slice(-LIMIT);
-  const hiddenCount = entries.length - visible.length;
+  const shouldCollapse = entries.length > LIMIT;
 
   return (
     <div className="flex justify-start my-2">
       <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-surface shadow-card rounded-bl-md">
         <div className="space-y-0.5 text-xs font-mono">
-          {hiddenCount > 0 && (
-            <button type="button" onClick={() => setExpanded(true)} className="text-faint hover:text-dim text-[11px] mb-0.5">
-              + {hiddenCount} more...
+          {shouldCollapse && !expanded ? (
+            <button type="button" onClick={() => setExpanded(true)} className="flex items-center gap-1.5 text-dim hover:text-cyan-300">
+              <span className="shrink-0">▸</span>
+              <span>{entries.length} tool calls</span>
             </button>
-          )}
-          {visible.map((e, j) => <ToolLogEntry key={j} entry={e} />)}
-          {showAll && entries.length > LIMIT && (
-            <button type="button" onClick={() => setExpanded(false)} className="text-faint hover:text-dim text-[11px] mt-0.5">
-              collapse
-            </button>
+          ) : (
+            <>
+              {entries.map((e, j) => <ToolLogEntry key={j} entry={e} />)}
+              {shouldCollapse && (
+                <button type="button" onClick={() => setExpanded(false)} className="text-faint hover:text-dim text-[11px] mt-0.5">
+                  collapse
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -3506,34 +3508,49 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             {(() => {
               const visible = messages.filter((m) => !(m.role === "USER" && (m.status === "PENDING" || m.status === "QUEUED")));
               console.log('[messages] rendering', visible.length, 'messages after filter');
-              // Build tool groups: consecutive tool_use AGENT messages get merged
+              // Build tool groups: consecutive tool_use + tool_activity messages get merged
               const toolGroups = new Map(); // first msg id -> [entries]
               let groupStart = null;
               for (let i = 0; i < visible.length; i++) {
                 const m = visible[i];
-                if (m.role === "AGENT" && m.kind === "tool_use") {
+                const isToolUse = m.role === "AGENT" && m.kind === "tool_use";
+                const isToolActivity = m.kind === "tool_activity";
+                if (isToolUse || isToolActivity) {
                   if (!groupStart) groupStart = m.id;
-                  const match = (m.content || "").match(TOOL_SUMMARY_RE);
                   if (!toolGroups.has(groupStart)) toolGroups.set(groupStart, []);
-                  toolGroups.get(groupStart).push({
-                    name: match ? match[1] : "Tool",
-                    summary: match ? match[2] : m.content || "",
-                  });
+                  // Skip tool_activity start-phase entries (duplicates of end-phase)
+                  if (isToolActivity && (m.metadata?.phase) === "start") continue;
+                  if (isToolUse) {
+                    const match = (m.content || "").match(TOOL_SUMMARY_RE);
+                    toolGroups.get(groupStart).push({
+                      name: match ? match[1] : "Tool",
+                      summary: match ? match[2] : m.content || "",
+                    });
+                  } else {
+                    const meta = m.metadata || {};
+                    toolGroups.get(groupStart).push({
+                      name: meta.tool_name || "Tool",
+                      summary: m.content || "",
+                    });
+                  }
                 } else {
                   groupStart = null;
                 }
               }
               if (toolGroups.size > 0) console.log('[render] tool groups:', toolGroups.size, 'groups,', [...toolGroups.values()].map(g => g.length + ' entries'));
               return visible.map((msg) => {
+                // Grouped tool entries (tool_use + tool_activity) — handled before role checks
+                if (msg.kind === "tool_use" || msg.kind === "tool_activity") {
+                  if (toolGroups.has(msg.id)) {
+                    const entries = toolGroups.get(msg.id);
+                    if (entries.length > 0) {
+                      return <div key={msg.id} data-msg-id={msg.id} data-msg-type="tool_group"><ToolLogBubble entries={entries} /></div>;
+                    }
+                  }
+                  return null; // part of group or start-only leader with no entries
+                }
                 if (msg.role === "AGENT" && !(msg.content || "").trimStart().startsWith("<task-notification>")) {
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
-                  // Case 1: tool_use kind — rendered by grouping logic
-                  if (msg.kind === "tool_use") {
-                    if (toolGroups.has(msg.id)) {
-                      return <div key={msg.id} data-msg-id={msg.id} data-msg-type="tool_group"><ToolLogBubble entries={toolGroups.get(msg.id)} /></div>;
-                    }
-                    return null; // subsequent in group, already rendered
-                  }
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
                     return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>;
