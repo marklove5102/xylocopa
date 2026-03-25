@@ -425,7 +425,7 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         worktree=wt,
         timeout_seconds=body.timeout_seconds,
         session_id=body.resume_session_id,
-        cli_sync=bool(is_sync),
+        cli_sync=True,  # All agents are tmux-managed
         skip_permissions=body.skip_permissions,
         last_message_preview=name,
         last_message_at=_utcnow(),
@@ -453,28 +453,91 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
                 agent.id, body.resume_session_id, project.path
             )
     else:
-        # Normal mode: create the initial user message
+        # Non-sync mode: launch a tmux session and send the prompt.
+        # All agents must be tmux-managed — no subprocess dispatch.
+        import shlex
+        import secrets
+        import subprocess as _sp
+        import uuid as _uuid
+
+        from config import CLAUDE_BIN
+
+        # Get existing tmux session names for collision check
+        try:
+            _tmux_ls = _sp.run(
+                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            _existing_tmux = set(_tmux_ls.stdout.strip().splitlines()) if _tmux_ls.returncode == 0 else set()
+        except (OSError, _sp.TimeoutExpired):
+            _existing_tmux = set()
+
+        tmux_session = f"ah-{agent_id[:8]}"
+        if tmux_session in _existing_tmux:
+            # Collision — regenerate (extremely unlikely since agent_id is unique)
+            tmux_session = f"ah-{secrets.token_hex(4)}"
+
+        # Pre-generate session UUID and write .owner sidecar
+        pre_session_id = str(_uuid.uuid4())
+        from agent_dispatcher import _write_session_owner
+        from session_cache import session_source_dir
+        _sdir = session_source_dir(project.path)
+        os.makedirs(_sdir, exist_ok=True)
+        _write_session_owner(_sdir, pre_session_id, agent_id)
+
+        # Build claude command (interactive mode — no -p)
+        cmd_parts = [CLAUDE_BIN, "--session-id", pre_session_id,
+                     "--output-format", "stream-json", "--verbose"]
+        if body.skip_permissions:
+            cmd_parts.append("--dangerously-skip-permissions")
+        if agent_model:
+            cmd_parts += ["--model", agent_model]
+        if body.effort:
+            cmd_parts += ["--effort", body.effort]
+        if wt:
+            cmd_parts += ["--worktree", wt]
+        claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+
+        _preflight_claude_project(project.path)
+        pane_id = _create_tmux_claude_session(tmux_session, project.path, claude_cmd, agent_id=agent_id)
+        agent.tmux_pane = pane_id
+
+        # Create the initial user message
         ad = getattr(request.app.state, "agent_dispatcher", None)
+        launch_prompt = None
         if ad:
-            msg, _, _ = ad._prepare_dispatch(
+            msg, launch_prompt, _ = ad._prepare_dispatch(
                 db, agent, project, body.prompt,
                 source="web",
-                wrap_prompt=False,  # wrapping deferred to dispatch time
+                wrap_prompt=True,
             )
-            msg.status = MessageStatus.PENDING
         else:
             msg = Message(
                 agent_id=agent.id,
                 role=MessageRole.USER,
                 content=body.prompt,
-                status=MessageStatus.PENDING,
                 source="web",
             )
             db.add(msg)
+        msg.status = MessageStatus.COMPLETED
+        msg.completed_at = _utcnow()
+
         db.commit()
         db.refresh(agent)
 
-    logger.info("Agent %s created for project %s (mode %s, sync=%s)", agent.id, agent.project, agent.mode.value, is_sync)
+        # Schedule background task: wait for Claude TUI to load, send prompt,
+        # detect session JSONL, and start sync.
+        if ad and launch_prompt:
+            launch_task = asyncio.ensure_future(
+                _launch_tmux_background(
+                    ad, agent.id, pane_id, launch_prompt, project.path,
+                    pre_session_id=pre_session_id,
+                )
+            )
+            ad.track_launch_task(agent.id, launch_task)
+
+    logger.info("Agent %s created for project %s (mode %s, sync=%s, tmux=%s)",
+                agent.id, agent.project, agent.mode.value, is_sync, bool(agent.tmux_pane))
     return agent
 
 
@@ -1061,327 +1124,6 @@ async def scan_agents(request: Request, db: Session = Depends(get_db)):
         db.commit()
     return {"ok": True}
 
-
-# ---------------------------------------------------------------------------
-# Unlinked sessions — manual Claude Code sessions not launched by orchestrator
-# ---------------------------------------------------------------------------
-
-_PENDING_SESSIONS_DIR = "/tmp/ahive-pending-sessions"
-
-
-def _ingest_pending_sessions():
-    """Process sessions that accumulated while orchestrator was offline.
-
-    The SessionStart hook script writes to /tmp/ahive-pending-sessions/
-    when the orchestrator is unreachable.  On startup we ingest these
-    and create unlinked entries for user confirmation.
-    """
-    if not os.path.isdir(_PENDING_SESSIONS_DIR):
-        return
-    from agent_dispatcher import _write_unlinked_entry
-    from session_cache import session_source_dir
-    from database import SessionLocal
-    db = SessionLocal()
-    try:
-        # Load active session IDs to avoid creating entries for owned sessions
-        active_sids: set[str] = {
-            r[0] for r in db.query(Agent.session_id).filter(
-                Agent.session_id.is_not(None),
-                Agent.status != AgentStatus.STOPPED,
-            ).all()
-        }
-        projects = db.query(Project).filter(Project.archived == False).all()
-        proj_by_path = {os.path.realpath(p.path): p for p in projects}
-    finally:
-        db.close()
-
-    ingested = 0
-    for fname in list(os.listdir(_PENDING_SESSIONS_DIR)):
-        if not fname.endswith(".json"):
-            continue
-        fpath = os.path.join(_PENDING_SESSIONS_DIR, fname)
-        try:
-            with open(fpath) as f:
-                info = json.load(f)
-            os.unlink(fpath)  # Consume immediately
-        except (OSError, json.JSONDecodeError):
-            try:
-                os.unlink(fpath)
-            except OSError:
-                pass
-            continue
-
-        sid = info.get("session_id", "")
-        agent_id = info.get("agent_id", "")
-        cwd = info.get("cwd", "")
-
-        if not sid:
-            continue
-
-        # Managed agent: write signal file (successor detection handles it)
-        if agent_id:
-            try:
-                with open(f"/tmp/ahive-{agent_id}.newsession", "w") as f:
-                    f.write(sid)
-            except OSError:
-                pass
-            continue
-
-        # Unmanaged session: match CWD to project → unlinked entry
-        if sid in active_sids:
-            continue
-        cwd_real = os.path.realpath(cwd) if cwd else ""
-        matched_proj = None
-        for pp, p in proj_by_path.items():
-            if cwd_real == pp or cwd_real.startswith(pp + "/"):
-                matched_proj = p
-                break
-        if not matched_proj:
-            continue
-
-        sdir = session_source_dir(matched_proj.path)
-        transcript = os.path.join(sdir, f"{sid}.jsonl")
-
-        _write_unlinked_entry(
-            session_id=sid,
-            cwd=cwd_real,
-            transcript_path=transcript if os.path.isfile(transcript) else "",
-            tmux_pane=info.get("tmux_pane") or None,
-            project_name=matched_proj.name,
-        )
-        ingested += 1
-
-    if ingested:
-        logger.info("Ingested %d pending sessions from offline hook fallback", ingested)
-
-
-_UNLINKED_DIR: str | None = None
-
-
-def _get_unlinked_dir() -> str:
-    """Return (and lazily create) the unlinked-sessions directory."""
-    global _UNLINKED_DIR
-    if _UNLINKED_DIR is None:
-        from config import BACKUP_DIR
-        _UNLINKED_DIR = os.path.join(BACKUP_DIR, "unlinked-sessions")
-    os.makedirs(_UNLINKED_DIR, exist_ok=True)
-    return _UNLINKED_DIR
-
-
-def _clean_stale_unlinked(max_age: int = 3600):
-    """Remove unlinked session entries whose JSONL hasn't been updated in max_age seconds.
-
-    Preserves entries whose tmux pane still has a running process, even if
-    the JSONL is stale (idle sessions detected via Tier 3 / hook push).
-    """
-    udir = _get_unlinked_dir()
-    now = _time.time()
-    removed = 0
-    try:
-        for fname in os.listdir(udir):
-            if not fname.endswith(".json"):
-                continue
-            fpath = os.path.join(udir, fname)
-            try:
-                with open(fpath) as f:
-                    info = json.load(f)
-                transcript = info.get("transcript_path", "")
-                if transcript and os.path.isfile(transcript):
-                    mtime = os.path.getmtime(transcript)
-                    if now - mtime < max_age:
-                        continue  # still active
-                # Transcript stale or gone — check if tmux pane is alive
-                # with the SAME process (guards against pane ID reuse).
-                tmux_pane = info.get("tmux_pane", "")
-                stored_pid = info.get("pane_pid")
-                if tmux_pane:
-                    try:
-                        import subprocess
-                        r = subprocess.run(
-                            ["tmux", "display-message", "-t", tmux_pane, "-p", "#{pane_pid}"],
-                            capture_output=True, text=True, timeout=3,
-                        )
-                        current_pid = r.stdout.strip() if r.returncode == 0 else ""
-                        if current_pid and (not stored_pid or str(stored_pid) == current_pid):
-                            continue  # same pane, same process — keep entry
-                    except (subprocess.TimeoutExpired, OSError) as e:
-                        logger.debug("Pane liveness check failed: %s", e)
-                # Transcript gone/stale and no live pane → remove
-                os.unlink(fpath)
-                removed += 1
-            except (OSError, json.JSONDecodeError):
-                try:
-                    os.unlink(fpath)
-                    removed += 1
-                except OSError:
-                    pass
-    except OSError:
-        pass
-    if removed:
-        logger.info("Cleaned %d stale unlinked session entries", removed)
-    return removed
-
-
-@router.get("/api/unlinked-sessions")
-async def list_unlinked_sessions(db: Session = Depends(get_db)):
-    """List manually-launched Claude Code sessions not bound to any agent."""
-    _clean_stale_unlinked()
-    udir = _get_unlinked_dir()
-
-    # Pre-fetch session IDs owned by ACTIVE agents to filter out adopted sessions.
-    # Stopped/errored agents are excluded: their sessions may be re-detected
-    # (Tier 3 / hook push) and the adopt endpoint will revive them.
-    bound_sids: set[str] = {
-        r[0] for r in db.query(Agent.session_id).filter(
-            Agent.session_id.is_not(None),
-            Agent.status.notin_([AgentStatus.STOPPED, AgentStatus.ERROR]),
-        ).all()
-    }
-
-    sessions = []
-    try:
-        for fname in sorted(os.listdir(udir)):
-            if not fname.endswith(".json"):
-                continue
-            fpath = os.path.join(udir, fname)
-            try:
-                with open(fpath) as f:
-                    info = json.load(f)
-                sid = info.get("session_id", "")
-                if sid in bound_sids:
-                    # Already adopted — clean up stale signal file
-                    try:
-                        os.unlink(fpath)
-                    except OSError:
-                        pass
-                    continue
-                # Use stored project name or derive from CWD
-                cwd = info.get("cwd", "")
-                if not info.get("project_name"):
-                    info["project_name"] = os.path.basename(cwd.rstrip("/")) if cwd else ""
-                info["file"] = fname
-                sessions.append(info)
-            except (OSError, json.JSONDecodeError):
-                continue
-    except OSError:
-        pass
-    return sessions
-
-
-@router.post("/api/unlinked-sessions/{session_id}/adopt")
-async def adopt_unlinked_session(
-    session_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    """Bind an unlinked session to a new agent and start syncing.
-
-    Body: {"project": "project-name"}
-    Optional: {"agent_id": "existing-agent-id"} to bind to existing agent.
-    """
-    import secrets
-    from config import CC_MODEL
-
-    udir = _get_unlinked_dir()
-    info_path = os.path.join(udir, f"{session_id}.json")
-    if not os.path.isfile(info_path):
-        raise HTTPException(status_code=404, detail="Unlinked session not found")
-
-    try:
-        with open(info_path) as f:
-            info = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read session info: {e}")
-
-    body = await request.json()
-    project_name = body.get("project") or os.path.basename(info.get("cwd", "").rstrip("/"))
-    existing_agent_id = body.get("agent_id")
-
-    # Check if session is already bound to an agent
-    existing = db.query(Agent).filter(Agent.session_id == session_id).first()
-    if existing:
-        if existing.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            # Dissociate session from stopped/errored agent so a fresh
-            # agent can take over.  Avoids reviving stale task/cost state.
-            existing.session_id = None
-            db.flush()
-        else:
-            # Active agent owns this session — can't adopt
-            try:
-                os.unlink(info_path)
-            except OSError:
-                pass
-            raise HTTPException(
-                status_code=409,
-                detail=f"Session already bound to active agent {existing.id} ({existing.name})",
-            )
-
-    proj = db.get(Project, project_name)
-    if not proj:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-    # Enforce per-project capacity (only for new agents, not rebinding existing ones)
-    if not existing_agent_id:
-        _check_project_capacity(db, project_name)
-
-    ad = getattr(request.app.state, "agent_dispatcher", None)
-    if not ad:
-        raise HTTPException(status_code=503, detail="Agent dispatcher not ready")
-
-    if existing_agent_id:
-        # Bind to existing agent
-        agent = db.get(Agent, existing_agent_id)
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        agent.session_id = session_id
-        if agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
-            agent.status = AgentStatus.SYNCING
-        agent.cli_sync = True
-    else:
-        # Create new agent
-        for _ in range(20):
-            agent_hex = secrets.token_hex(6)
-            if db.get(Agent, agent_hex) is None:
-                break
-        else:
-            raise HTTPException(status_code=500, detail="Failed to generate agent ID")
-
-        agent = Agent(
-            id=agent_hex,
-            project=project_name,
-            name=(f"Detected: {info['tmux_session']}" if info.get("tmux_session") else f"Manual: {os.path.basename(info.get('cwd', 'session'))}")[:80],
-            mode=AgentMode.AUTO,
-            status=AgentStatus.SYNCING,
-            model=info.get("model") or proj.default_model or CC_MODEL,
-            cli_sync=True,
-            session_id=session_id,
-            tmux_pane=info.get("tmux_pane"),
-            last_message_preview="Confirmed session",
-            last_message_at=datetime.now(timezone.utc),
-        )
-        db.add(agent)
-
-    db.commit()
-    db.refresh(agent)
-
-    # Write .owner and start sync
-    ad.start_session_sync(agent.id, session_id, proj.path)
-
-    # Remove the unlinked entry
-    try:
-        os.unlink(info_path)
-    except OSError:
-        pass
-
-    logger.info(
-        "Adopted unlinked session %s → agent %s (project %s)",
-        session_id[:12], agent.id, project_name,
-    )
-
-    from websocket import emit_agent_update
-    asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
-
-    return AgentOut.model_validate(agent)
 
 
 @router.get("/api/agents", response_model=list[AgentBrief])
