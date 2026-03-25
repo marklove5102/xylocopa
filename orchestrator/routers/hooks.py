@@ -389,14 +389,17 @@ async def hook_agent_post_compact(request: Request):
 
         # 3. End the compact tool activity in DB.
         from sync_engine import _end_compact_activity
+        _compact_activity_id = None
         if ctx:
-            _end_compact_activity(db, agent_id, ctx.session_id)
+            _compact_activity_id = _end_compact_activity(db, agent_id, ctx.session_id)
         db.commit()
 
         # Update display file with delivery/completion status
+        from display_writer import update_last
         if compact_msg:
-            from display_writer import update_last
             update_last(agent_id, compact_msg.id)
+        if _compact_activity_id:
+            update_last(agent_id, _compact_activity_id)
 
         # 4. Write "Conversation compacted" system bubble to display file.
         #    Don't wait for the sync loop — write it now so it appears immediately.
