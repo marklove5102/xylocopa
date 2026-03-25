@@ -48,7 +48,6 @@ import { useToast } from "../contexts/ToastContext";
 
 const AGENT_TABS = [
   { key: "starred", label: "Starred" },
-  { key: "syncing", label: "Syncing" },
   { key: "active", label: "Active" },
   { key: "stopped", label: "Stopped" },
   { key: "sessions", label: "Sessions" },
@@ -963,17 +962,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Filter agents by tab
   const filtered =
-    agentTab === "syncing"
-      ? agents.filter((a) => a.status === "SYNCING")
-      : agentTab === "active"
-        ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
-        : agents.filter((a) => a.status === "STOPPED");
+    agentTab === "active"
+      ? agents.filter((a) => a.status !== "STOPPED")
+      : agents.filter((a) => a.status === "STOPPED");
 
   // Tab counts
   const tabCounts = {
     starred: (sessions || []).filter((s) => s.starred).length,
-    syncing: agents.filter((a) => a.status === "SYNCING").length,
-    active: agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING").length,
+    active: agents.filter(a => a.status !== "STOPPED").length,
     stopped: agents.filter((a) => a.status === "STOPPED").length,
     sessions: sessions != null ? sessions.length : 0,
   };

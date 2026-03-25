@@ -15,7 +15,6 @@ import { useToast } from "../contexts/ToastContext";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
-  { key: "SYNCING", label: "Syncing" },
   { key: "ACTIVE", label: "Active" },
   { key: "INSIGHTS", label: "Insights" },
   { key: "STOPPED", label: "Stopped" },
@@ -285,13 +284,11 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const statusFiltered = useMemo(() =>
     filter === "ALL"
       ? agents
-      : filter === "SYNCING"
-        ? agents.filter((a) => a.status === "SYNCING")
-        : filter === "ACTIVE"
-          ? agents.filter((a) => a.status !== "STOPPED" && a.status !== "SYNCING")
-          : filter === "INSIGHTS"
-            ? agents.filter((a) => a.has_pending_suggestions)
-            : agents.filter((a) => a.status === "STOPPED"),
+      : filter === "ACTIVE"
+        ? agents.filter((a) => a.status !== "STOPPED")
+        : filter === "INSIGHTS"
+          ? agents.filter((a) => a.has_pending_suggestions)
+          : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
   const filtered = useMemo(() =>
@@ -339,8 +336,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   const filterCounts = useMemo(() => ({
     ALL: agents.length,
-    SYNCING: agents.filter(a => a.status === "SYNCING").length,
-    ACTIVE: agents.filter(a => a.status !== "STOPPED" && a.status !== "SYNCING").length,
+    ACTIVE: agents.filter(a => a.status !== "STOPPED").length,
     STOPPED: agents.filter(a => a.status === "STOPPED").length,
     INSIGHTS: agents.filter(a => a.has_pending_suggestions).length,
   }), [agents]);
