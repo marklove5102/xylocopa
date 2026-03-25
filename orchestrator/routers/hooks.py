@@ -132,6 +132,8 @@ async def hook_agent_user_prompt(request: Request):
         if msg:
             now = _utcnow()
             msg.delivered_at = now
+            msg.status = MessageStatus.COMPLETED
+            msg.completed_at = now
             db.commit()
 
             from display_writer import update_last
