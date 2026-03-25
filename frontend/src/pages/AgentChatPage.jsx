@@ -2495,8 +2495,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       // ── KEYBOARD OPENING / OPEN: direct DOM ──
       if (open) {
-        el.style.height = `${h}px`;
-        el.classList.remove('h-full');
+        // Only update height if it changed significantly (>= 8px).
+        // Prevents jitter from 1-2px visualViewport fluctuations during typing
+        // (autocomplete bar, prediction changes, etc.)
+        const currentH = parseInt(el.style.height) || 0;
+        const heightChanged = currentH === 0 || Math.abs(h - currentH) >= 8;
+
+        if (heightChanged) {
+          el.style.height = `${h}px`;
+          el.classList.remove('h-full');
+        }
 
         if (!isOpen) {
           // Boundary: just opened — tell React (for class toggles)
@@ -2509,10 +2517,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           window.scrollTo(0, 0);
         }
 
-        // Keep messages at bottom
-        const sc = scrollContainerRef.current;
-        if (sc && !userScrolledUp.current) {
-          sc.scrollTop = sc.scrollHeight - sc.clientHeight;
+        // Keep messages at bottom — only when height actually changed to
+        // avoid layout thrashing (scrollHeight read forces reflow)
+        if (heightChanged) {
+          const sc = scrollContainerRef.current;
+          if (sc && !userScrolledUp.current) {
+            sc.scrollTop = sc.scrollHeight - sc.clientHeight;
+          }
         }
       }
     };
