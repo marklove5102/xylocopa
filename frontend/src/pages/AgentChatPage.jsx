@@ -2513,10 +2513,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           setKbOpen(true);
         }
 
-        // Reset iOS body scroll during transition
-        if (!settled && (window.scrollY > 0 || vv.offsetTop > 0)) {
-          window.scrollTo(0, 0);
-        }
       } else if (isOpen) {
         finalizeClose();
       }
@@ -2642,8 +2638,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     const el = scrollContainerRef.current;
     if (!el) return;
     if (kbOpen && !prevKbOpen.current) {
-      // Keyboard just opened — undo iOS body scroll, stick to bottom
-      window.scrollTo(0, 0);
+      // Keyboard just opened — stick to bottom
       if (!userScrolledUp.current) {
         el.scrollTop = el.scrollHeight;
       }
