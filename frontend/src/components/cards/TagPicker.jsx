@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
  * Uses portal + absolute positioning (page coords) to avoid both
  * stacking-context clipping and iOS keyboard viewport issues.
  */
-export default function TagPicker({ options, value, onSelect, className, children, extra }) {
+export default function TagPicker({ options, value, onSelect, className, children, extra, keepOpenOnSelect }) {
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState(null);
@@ -30,7 +30,7 @@ export default function TagPicker({ options, value, onSelect, className, childre
   const handleSelect = (optValue) => (e) => {
     e.stopPropagation();
     onSelect(optValue);
-    handleClose();
+    if (!keepOpenOnSelect?.(optValue)) handleClose();
   };
 
   // Close on click/touch outside

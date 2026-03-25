@@ -439,6 +439,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                     {task.project_name || "Project"}
                   </TagPicker>
                   <TagPicker options={WT_PICKER} value={task.use_worktree !== false} onSelect={(v) => update("use_worktree", v)}
+                    keepOpenOnSelect={(v) => v === true}
                     className={`text-[11px] font-medium px-1.5 py-0.5 rounded-full cursor-pointer active:scale-90 transition-all ${
                       task.use_worktree !== false ? "bg-purple-500/15 text-purple-500 dark:text-purple-400" : "bg-elevated text-faint"
                     }`}
