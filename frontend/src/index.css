@@ -118,17 +118,10 @@
 }
 
 /* ── Global overflow prevention ── */
-body {
+html, body {
+  overflow: hidden;
+  height: 100%;
   overflow-wrap: break-word;
-}
-/* Make body 1px taller than viewport so window.scrollBy actually
-   triggers a real scroll event.  iOS Safari only reflows the visual
-   viewport desync in response to a genuine scroll — programmatic
-   scrollTo is a no-op when there's nothing to scroll. */
-body::after {
-  content: "";
-  display: block;
-  height: 1px;
 }
 
 /* ── dvh fallback for browsers that don't support it ── */
