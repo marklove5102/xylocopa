@@ -1839,8 +1839,8 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 flex justify-center px-4 z-20 pointer-events-none ${kbOpen ? "" : "pb-2 safe-area-pb-tight"}`}
-      style={{ transform: 'translateY(calc(-1 * var(--kb-h, 0px)))', willChange: 'transform' }}
+      className={`absolute left-0 right-0 flex justify-center px-4 z-20 pointer-events-none ${kbOpen ? "" : "bottom-0 pb-2 safe-area-pb-tight"}`}
+      style={{ bottom: 'var(--kb-h, 0px)' }}
     >
       <div
         className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1 rounded-b-xl" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
@@ -2517,7 +2517,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       if (off !== prevOff) {
         prevOff = off;
-        // Instant: CSS variable drives transform (GPU-composited, no layout)
+        // Instant: CSS variable drives bottom positioning (layout-synced
+        // with iOS scroll — no desync unlike transform approach)
         if (open) {
           el.style.setProperty('--kb-h', `${off}px`);
         } else {
