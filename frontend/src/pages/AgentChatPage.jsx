@@ -2525,18 +2525,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         }
       }
 
-      // Debounced: scroll container padding (uses kbHeight for correct
-      // keyboard coverage, not off which varies with scroll)
+      // Scroll container padding: just enough to clear the input bar
+      // (~140px). Don't use kbHeight — iOS scrolls the page to handle
+      // the keyboard; we only need to keep messages above the input bar.
       if (open !== isOpen) {
         clearTimeout(padTimer);
         padTimer = setTimeout(() => {
           const sc = scrollContainerRef.current;
           if (!sc) return;
-          if (open) {
-            sc.style.paddingBottom = `${kbHeight + 144}px`;
-          } else {
-            sc.style.paddingBottom = '';
-          }
+          sc.style.paddingBottom = open ? '180px' : '';
         }, 80);
       }
 
