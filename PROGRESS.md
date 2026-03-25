@@ -138,3 +138,8 @@
 - Root cause: The CSS variable approach (`--kb-h`) with 8px dead zone suppressed small keyboard height changes. The `kbHeight` prop was passed as `kbOpen ? 1 : 0` (boolean only), losing actual pixel height information. The golden version (commit `b2f17ae`) was the correct approach all along.
 - Resolution: Reverted to the golden version approach — React state `kbOffset` updated on every poll tick (no dead zone), input bar `bottom: ${kbOffset}px` via inline style, scroll padding `${kbOffset + 144}px` via React. Removed CSS variable indirection and `kbContainerRef`.
 - Lesson: The golden version (`b2f17ae`) formula `window.innerHeight - vv.height - vv.offsetTop` with direct React state was the simplest and most adaptive approach. The CSS variable "optimization" and dead zone added complexity while removing the very adaptiveness the user valued. Don't over-optimize working code — React re-renders for a single state value are cheap.
+
+### 2026-03-24 | Task: Discourage agents from updating PROGRESS.md | Status: success
+- What: Changed task prompt in `agent_dispatcher.py` so agents are told NOT to write to PROGRESS.md. User is setting up a controlled process for selected sessions only.
+- Resolution: Replaced the "append to PROGRESS.md" guideline with "Do NOT write to or modify PROGRESS.md". Removed retry prompt's instruction to log failures there. Reading PROGRESS.md for context is still allowed.
+- Lesson: Straightforward — no issues. Two locations in `_build_task_prompt()`: the main guidelines block (line ~2756) and the retry instructions block (line ~2726).
