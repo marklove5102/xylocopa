@@ -2087,7 +2087,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   };
 
   const [resuming, setResuming] = useState(false);
-  const [showResumeModal, setShowResumeModal] = useState(false);
   const [starred, setStarred] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
   const [muted, setMuted] = useState(() => isAgentMuted(id));
@@ -3041,16 +3040,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Resume agent
-  const handleResume = async (mode = null) => {
-    // For cli_sync agents without a successor, show the resume modal
-    if (!mode && agent?.cli_sync && !agent?.successor_id) {
-      setShowResumeModal(true);
-      return;
-    }
+  // Resume agent — always uses tmux
+  const handleResume = async () => {
     setResuming(true);
-    setShowResumeModal(false);
     try {
+      // All agents resume as tmux sessions
+      const mode = agent?.cli_sync && !agent?.successor_id ? "tmux" : null;
       await resumeAgent(id, mode ? { mode } : null);
       showToast("Agent resumed");
       loadData();
@@ -3785,42 +3780,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 type="button"
                 onClick={() => { setShowStopConfirm(false); setTaskComplete(true); setIncompleteReason(""); clearFeedbackAttachments(); }}
                 className="flex-1 min-h-[44px] rounded-lg bg-input hover:bg-elevated text-body text-sm transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showResumeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-surface rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-card">
-            <h3 className="text-lg font-bold text-heading">Resume Agent</h3>
-            <p className="text-sm text-label">
-              This was a tmux CLI session. How would you like to resume it?
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                disabled={resuming}
-                onClick={() => handleResume("tmux")}
-                className="min-h-[44px] rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-sm transition-colors disabled:opacity-50"
-              >
-                {resuming ? "Resuming..." : "Resume in new tmux session"}
-              </button>
-              <button
-                type="button"
-                disabled={resuming}
-                onClick={() => handleResume("normal")}
-                className="min-h-[44px] rounded-lg bg-input hover:bg-elevated text-body font-semibold text-sm transition-colors disabled:opacity-50"
-              >
-                Resume as normal agent
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowResumeModal(false)}
-                className="min-h-[44px] rounded-lg text-dim text-sm transition-colors hover:text-body"
               >
                 Cancel
               </button>

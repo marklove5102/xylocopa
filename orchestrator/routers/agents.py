@@ -1650,7 +1650,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         body = await request.json()
     except (ValueError, UnicodeDecodeError):
         pass  # Empty body or no content-type — use defaults
-    resume_mode = body.get("mode")  # "tmux" | "normal" | None
+    resume_mode = body.get("mode")  # "tmux" | None
 
     wm.ensure_project_ready(project)
 
@@ -1662,15 +1662,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
 
     resumed_sync = False
 
-    if agent.cli_sync and resume_mode == "normal":
-        # Convert to normal (non-sync) agent
-        agent.cli_sync = False
-        if ad:
-            ad._clear_agent_pane(db, agent, kill_tmux=False)
-        else:
-            agent.tmux_pane = None
-        agent.status = AgentStatus.IDLE
-    elif agent.cli_sync and resume_mode == "tmux":
+    if agent.cli_sync and resume_mode == "tmux":
         # Launch a new tmux session and resume the CLI session in it
         import shlex
         import subprocess
