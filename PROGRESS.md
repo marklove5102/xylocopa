@@ -111,3 +111,8 @@
 - What: Added `isStarting` check to disable the chat input bar when an agent's status is "STARTING", with placeholder text "Agent is starting…"
 - Attempts: Straightforward — no issues. Three-line change in AgentChatPage.jsx.
 - Lesson: The disabled logic chain (`isStarting || isStopped || isError || hasPendingInteractive`) should be checked whenever new blocking statuses are introduced.
+
+### 2026-03-24 | Task: Switch voice from streaming to batch record-then-transcribe | Status: success
+- What: Replaced OpenAI Realtime API streaming transcription with simpler batch approach: record fully via MediaRecorder → upload to Whisper API → optional LLM refine. Inspired by Stet's architecture.
+- Resolution: Rewrote useVoiceRecorder.js (MediaRecorder instead of AudioWorklet + WebSocket), deleted voice_stream.py (Realtime API proxy) and pcm-processor.js (AudioWorklet), removed /ws/transcribe route, replaced streamingText displays with refining indicator across 7 files.
+- Lesson: The batch `POST /api/voice` endpoint and `transcribeVoice()` API call already existed (legacy code) — the migration was mostly a frontend hook rewrite. MediaRecorder is dramatically simpler than AudioWorklet + WebSocket + bidirectional proxy.
