@@ -1839,11 +1839,12 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
 
   return (
     <div
-      className={`absolute left-0 right-0 flex justify-center px-4 z-20 pointer-events-none ${kbOpen ? "" : "bottom-0 pb-2 safe-area-pb-tight"}`}
-      style={{ bottom: 'var(--kb-h, 0px)' }}
+      className={`absolute left-0 right-0 bottom-0 flex flex-col items-center z-20 pointer-events-none ${kbOpen ? "" : "pb-2 safe-area-pb-tight"}`}
+      style={kbOpen ? { paddingBottom: 'var(--kb-h, 0px)', background: 'var(--color-glass-nav)' } : {}}
     >
+      <div className="w-full px-4 flex justify-center">
       <div
-        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1 rounded-b-xl" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
+        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1 rounded-b-none border-b-0" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
         style={{ maxWidth: "24rem" }}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
@@ -1995,6 +1996,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
             </svg>
           </button>
         </div>
+      </div>
       </div>
       {attPreviewIndex != null && attachments.length > 0 && (
         <ImageLightbox
