@@ -1283,8 +1283,8 @@ async def stop_agent(agent_id: str, request: Request,
         if _should_summarize and not _project_path:
             _should_summarize = False
 
-    # Kill the tmux pane/session if this is a CLI-synced agent
-    if agent.cli_sync and agent.tmux_pane:
+    # Kill the tmux pane/session if active
+    if agent.tmux_pane:
         _graceful_kill_tmux(agent.tmux_pane, f"ah-{agent.id[:8]}")
         logger.info("Killed tmux pane %s for agent %s", agent.tmux_pane, agent.id)
 
@@ -1647,7 +1647,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     if not wm:
         raise HTTPException(status_code=500, detail="Worker manager not available")
 
-    # Parse optional body for cli_sync resume mode
+    # Parse optional body for resume mode
     body = {}
     try:
         body = await request.json()
@@ -1665,7 +1665,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
 
     resumed_sync = False
 
-    if agent.cli_sync and resume_mode == "tmux":
+    if resume_mode == "tmux":
         # Launch a new tmux session and resume the CLI session in it
         import shlex
         import subprocess
@@ -1691,7 +1691,7 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         if agent.session_id and ad:
             ad.start_session_sync(agent.id, agent.session_id, project.path)
         resumed_sync = True
-    elif agent.cli_sync and ad:
+    elif ad:
         # Default: try to re-establish sync with existing tmux pane
         from agent_dispatcher import _detect_tmux_pane_for_session, _resolve_session_jsonl
         from session_cache import session_source_dir
@@ -2119,7 +2119,7 @@ async def send_agent_message(
                         msg.id, agent.id, agent.generating_msg_id)
             return msg
 
-    # --- Agents without active tmux pane, or scheduled messages: store as PENDING ---
+    # --- Fallback: store as PENDING (e.g., scheduled messages) ---
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
         project = db.get(Project, agent.project)
@@ -2353,7 +2353,7 @@ async def answer_agent_interactive(
     if agent.status not in (AgentStatus.IDLE, AgentStatus.EXECUTING, AgentStatus.IDLE):
         raise HTTPException(status_code=400, detail=f"Agent is {agent.status}, not in interactive state")
 
-    # Agents without active tmux pane: patch DB only.
+    # Agents without an active tmux pane (e.g. pane lost): patch DB only.
     # Claude auto-approves with --dangerously-skip-permissions, so the card is informational.
     has_tmux = bool(agent.tmux_pane)
     if has_tmux:

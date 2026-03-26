@@ -281,10 +281,10 @@ async def hook_agent_stop(request: Request):
                 import slash_commands as _sc
                 _sc.mark_completed(agent_id)
         else:
-            # Worker agents (cli_sync=False) never have a sync context —
-            # this is expected, not an error.
+            # Edge case: no sync context for agent (e.g., dispatcher not yet
+            # initialized or agent registered before sync started).
             logger.debug(
-                "hook_agent_stop: no sync context for %s (expected for worker agents)",
+                "hook_agent_stop: no sync context for %s (dispatcher may not be initialized)",
                 agent_id[:8],
             )
     else:
@@ -466,7 +466,7 @@ async def hook_agent_post_compact(request: Request):
 
         # 5. Transition agent status.
         #    After /compact, Claude returns to the prompt — no longer executing.
-        #    tmux agents → IDLE (sync loop keeps tailing the new session)
+        #    All agents are tmux-managed → IDLE (sync loop keeps tailing the new session)
         agent = db.get(Agent, agent_id)
         if agent and agent.status == AgentStatus.EXECUTING:
             agent.status = AgentStatus.IDLE

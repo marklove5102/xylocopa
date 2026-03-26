@@ -1550,7 +1550,7 @@ class AgentDispatcher:
         self._timeout_retries: dict[str, int] = {}
         self._max_timeout_retries = 2
 
-        # Grace retries for IDLE cli_sync agents that temporarily lose
+        # Grace retries for IDLE agents that temporarily lose
         # tmux pane association (e.g. tmux hiccup or race during re-detect).
         # agent_id -> consecutive no-pane ticks
         self._idle_no_pane_retries: dict[str, int] = {}
@@ -2394,7 +2394,7 @@ Here are the day's conversations (with timestamps):
         db = SessionLocal()
         try:
             agent = db.get(Agent, agent_id)
-            if not agent or not agent.session_id or not agent.cli_sync:
+            if not agent or not agent.session_id:
                 return False
             project = db.get(Project, agent.project) if agent.project else None
             if not project:
@@ -2789,7 +2789,7 @@ Here are the day's conversations (with timestamps):
                         message.delivered_at = None  # Clear: message was never actually delivered
                         from websocket import emit_message_update
                         self._emit(emit_message_update(agent_id, message.id, "PENDING"))
-                    # cli_sync agents return to IDLE so the sync loop can
+                    # Agents return to IDLE so the sync loop can
                     # resume watching the session.
                     agent.status = AgentStatus.IDLE
                     done_agents.append(agent_id)
@@ -2809,7 +2809,7 @@ Here are the day's conversations (with timestamps):
             # The refresh may have reverted it to the old DB value.
             agent.session_id = saved_session_id
 
-            # cli_sync agents return to IDLE so the sync loop can
+            # Agents return to IDLE so the sync loop can
             # resume watching the session JSONL.
             post_exec_status = AgentStatus.IDLE
 
@@ -2996,14 +2996,13 @@ Here are the day's conversations (with timestamps):
                     except OSError as e:
                         logger.warning("Failed to remove output file %s: %s", output_file, e)
 
-        # Restart sync tasks for cli_sync agents that returned to IDLE.
+        # Restart sync tasks for agents that returned to IDLE.
         # The sync loop's reconciliation logic deduplicates turns already
         # imported by the harvest, so no duplicate messages will be created.
         for agent_id in done_agents:
             agent = db.get(Agent, agent_id)
             if (
                 agent
-                and agent.cli_sync
                 and agent.session_id
                 and agent.status == AgentStatus.IDLE
             ):
@@ -3011,7 +3010,7 @@ Here are the day's conversations (with timestamps):
                 if project:
                     self.start_session_sync(agent_id, agent.session_id, project.path)
                     logger.info(
-                        "Restarted sync task for cli_sync agent %s after exec",
+                        "Restarted sync task for agent %s after exec",
                         agent_id,
                     )
 
@@ -3110,12 +3109,11 @@ Here are the day's conversations (with timestamps):
                     except OSError as e:
                         logger.warning("Failed to remove output file %s: %s", output_file, e)
 
-        # Restart sync tasks for timed-out cli_sync agents
+        # Restart sync tasks for timed-out agents
         for agent_id in timed_out:
             agent = db.get(Agent, agent_id)
             if (
                 agent
-                and agent.cli_sync
                 and agent.session_id
                 and agent.status == AgentStatus.IDLE
             ):
@@ -3141,7 +3139,6 @@ Here are the day's conversations (with timestamps):
         # STOPPED transitions from transient tmux lookup failures.
         idle_no_pane = db.query(Agent).filter(
             Agent.status == AgentStatus.IDLE,
-            Agent.cli_sync == True,
             Agent.tmux_pane.is_(None),
         ).all()
         idle_no_pane_ids = {a.id for a in idle_no_pane}
@@ -3196,7 +3193,6 @@ Here are the day's conversations (with timestamps):
         """
         active_sync_agents = db.query(Agent).filter(
             Agent.status.in_([AgentStatus.IDLE, AgentStatus.STARTING]),
-            Agent.cli_sync == True,
             Agent.tmux_pane.is_not(None),
         ).all()
 
@@ -3503,7 +3499,6 @@ Here are the day's conversations (with timestamps):
             named_agent = db.query(Agent).filter(
                 Agent.id.like(f"{agent_prefix}%"),
                 Agent.status == AgentStatus.STOPPED,
-                Agent.cli_sync == True,
             ).first()
             if not named_agent:
                 continue
@@ -4509,8 +4504,8 @@ Here are the day's conversations (with timestamps):
                 if agent.status == AgentStatus.STARTING:
                     continue
 
-                # Check if this CLI-synced agent has an active session
-                if agent.cli_sync and agent.session_id and agent.status in (
+                # Check if this agent has an active session
+                if agent.session_id and agent.status in (
                     AgentStatus.IDLE, AgentStatus.EXECUTING,
                 ):
                     project = db.get(Project, agent.project)
@@ -4534,8 +4529,8 @@ Here are the day's conversations (with timestamps):
                                 )
                             if pane:
                                 session_active = True
-                            elif agent.cli_sync and agent.tmux_pane:
-                                # cli_sync agents that previously had a tmux_pane
+                            elif agent.tmux_pane:
+                                # Agents that previously had a tmux_pane
                                 # should NOT fall back to file freshness — the
                                 # pane is dead, so the session is dead.
                                 session_active = False
@@ -4560,81 +4555,55 @@ Here are the day's conversations (with timestamps):
                             )
                             continue
                         else:
-                            # Session not active — route cli_sync agents
-                            # through the IDLE liveness check below
-                            # (regardless of their current status) so they
-                            # get properly STOPPED instead of silently
-                            # becoming normal IDLE agents.
+                            # Session not active — route through the IDLE
+                            # liveness check below (regardless of current
+                            # status) so agents get properly STOPPED instead
+                            # of silently becoming normal IDLE agents.
                             logger.info(
-                                "Agent %s (cli_sync) session %s not active "
+                                "Agent %s session %s not active "
                                 "(was %s) — checking liveness",
                                 agent.id, agent.session_id, agent.status.value,
                             )
 
-                if agent.cli_sync or agent.status == AgentStatus.IDLE:
-                    # Check if this agent's own CLI process is still alive
-                    project = db.get(Project, agent.project)
-                    project_path = project.path if project else ""
+                # Check if this agent's own CLI process is still alive
+                project = db.get(Project, agent.project)
+                project_path = project.path if project else ""
 
-                    # Try to find this agent's tmux pane — use session name
-                    # for definitive matching first.
-                    if not agent.tmux_pane:
-                        expected_name = f"ah-{agent.id[:8]}"
-                        pane = session_name_to_pane.get(expected_name)
-                        if not pane and project_path and agent.session_id:
-                            pane = _detect_tmux_pane_for_session(agent.session_id, project_path)
-                        if pane:
-                            agent.tmux_pane = pane
+                # Try to find this agent's tmux pane — use session name
+                # for definitive matching first.
+                if not agent.tmux_pane:
+                    expected_name = f"ah-{agent.id[:8]}"
+                    pane = session_name_to_pane.get(expected_name)
+                    if not pane and project_path and agent.session_id:
+                        pane = _detect_tmux_pane_for_session(agent.session_id, project_path)
+                    if pane:
+                        agent.tmux_pane = pane
 
-                    alive = False
-                    if agent.tmux_pane:
-                        # Has a pane — check that specific pane
-                        alive = _is_cli_session_alive(project_path, agent.tmux_pane)
-                    elif agent.cli_sync:
-                        # cli_sync agents without a pane: pane detection already
-                        # failed above.  Don't trust file freshness — the CLI
-                        # session is gone.
-                        alive = False
-                    elif project_path and agent.session_id:
-                        # Non-cli_sync IDLE agent without pane — fall back
-                        # to session file freshness
-                        import time as _time
-                        jsonl_path = _resolve_session_jsonl(
-                            agent.session_id, project_path, agent.worktree,
+                alive = False
+                if agent.tmux_pane:
+                    # Has a pane — check that specific pane
+                    alive = _is_cli_session_alive(project_path, agent.tmux_pane)
+                # No pane: pane detection already failed above.
+                # Don't trust file freshness — the CLI session is gone.
+
+                if alive:
+                    agent.status = AgentStatus.IDLE
+                    if agent.session_id:
+                        agents_to_sync.append(
+                            (agent.id, agent.session_id, project_path)
                         )
-                        try:
-                            age = _time.time() - os.path.getmtime(jsonl_path)
-                            alive = age < _STALE_SESSION_THRESHOLD
-                        except OSError as e:
-                            logger.debug("Session freshness check failed for %s: %s", jsonl_path, e)
-                            alive = False
-
-                    if alive:
-                        agent.status = AgentStatus.IDLE
-                        if agent.session_id:
-                            agents_to_sync.append(
-                                (agent.id, agent.session_id, project_path)
-                            )
-                        logger.info(
-                            "Agent %s CLI process alive (pane=%s) — setting IDLE",
-                            agent.id, agent.tmux_pane,
-                        )
-                        continue
-
-                    # Process is dead or session stale — stop
-                    self.stop_agent_cleanup(
-                        db, agent, "CLI session ended — sync stopped",
-                        kill_tmux=False, emit=False, cancel_tasks=False,
+                    logger.info(
+                        "Agent %s CLI process alive (pane=%s) — setting IDLE",
+                        agent.id, agent.tmux_pane,
                     )
                     continue
 
-                if agent.status == AgentStatus.EXECUTING:
-                    # Orphaned EXECUTING agent — stop it
-                    self.stop_agent_cleanup(
-                        db, agent, "Orphaned agent stopped after restart",
-                        kill_tmux=False, emit=False, cancel_tasks=False,
-                    )
-                    continue
+                # Process is dead or session stale — stop
+                self.stop_agent_cleanup(
+                    db, agent, "CLI session ended — sync stopped",
+                    kill_tmux=False, emit=False, cancel_tasks=False,
+                )
+                continue
 
                 # Re-queue EXECUTING messages so the original prompt is
                 # re-dispatched automatically instead of being lost.
@@ -4675,11 +4644,10 @@ Here are the day's conversations (with timestamps):
                     m.completed_at = None
                     m.error_message = None
 
-            # Re-link STOPPED cli_sync agents whose tmux session is still alive.
+            # Re-link STOPPED agents whose tmux session is still alive.
             # These were skipped by the alive_statuses query above.
             stopped_cli = db.query(Agent).filter(
                 Agent.status == AgentStatus.STOPPED,
-                Agent.cli_sync == True,
             ).all()
             for agent in stopped_cli:
                 expected_name = f"ah-{agent.id[:8]}"

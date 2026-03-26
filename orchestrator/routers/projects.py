@@ -1192,8 +1192,8 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
     )
     ad = getattr(request.app.state, "agent_dispatcher", None)
     for agent in active_agents:
-        # Kill agent's tmux pane
-        if agent.cli_sync and agent.tmux_pane:
+        # Kill tmux pane if active
+        if agent.tmux_pane:
             graceful_kill_tmux(agent.tmux_pane, f"ah-{agent.id[:8]}")
         if ad:
             ad.stop_agent_cleanup(db, agent, "Agent stopped — project archived",
