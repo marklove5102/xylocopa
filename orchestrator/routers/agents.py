@@ -1410,6 +1410,11 @@ async def stop_agent(agent_id: str, request: Request,
         thread.start()
         logger.info("Spawned retry summary for task %s", _retry_task_id)
 
+    # Flush "Agent stopped" + "Task dropped"/"Redo" messages to the display
+    # file — the sync engine loop has already exited for this agent.
+    from display_writer import flush_agent as _stop_flush
+    _stop_flush(agent.id)
+
     return agent
 
 
