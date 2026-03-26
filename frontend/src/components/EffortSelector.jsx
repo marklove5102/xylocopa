@@ -1,7 +1,7 @@
 const LEVELS = [
-  ["low", "L"],
-  ["medium", "M"],
-  ["high", "H"],
+  ["low", "Low"],
+  ["medium", "Medium"],
+  ["high", "High"],
   ["max", "Max"],
 ];
 
