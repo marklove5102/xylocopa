@@ -2007,7 +2007,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
               onToggle={voice.toggleRecording}
             />
           </div>
-          {/* Escape button — sends Esc to tmux (always visible for cli_sync agents, disabled when stopped/error) */}
+          {/* Escape button — sends Esc to tmux (always visible for tmux agents, disabled when stopped/error) */}
           {onEscape && (
             <button
               type="button"
@@ -3118,7 +3118,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     setResuming(true);
     try {
       // All agents resume as tmux sessions
-      const mode = agent?.cli_sync && !agent?.successor_id ? "tmux" : null;
+      const mode = !agent?.successor_id ? "tmux" : null;
       await resumeAgent(id, mode ? { mode } : null);
       showToast("Agent resumed");
       loadData();
@@ -3713,7 +3713,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         disabledReason={disabledReason}
         isBusy={!hasTmux && isExecuting}
         tmuxMode={hasTmux}
-        onEscape={(agent.cli_sync || hasTmuxPane) ? async () => {
+        onEscape={hasTmuxPane ? async () => {
           try { await escapeAgent(id); loadData(); } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
         escapeDisabled={isStopped || isError}
