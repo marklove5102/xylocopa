@@ -1367,7 +1367,7 @@ def _is_cli_session_alive(project_path: str, tmux_pane: str | None = None) -> bo
         if not info["is_orchestrator"] and _cwd_matches_project(info["cwd"], real_project):
             return True
 
-    # Check other claude processes (fallback when no tmux pane matched)
+    # Check claude processes not associated with a tmux pane
     try:
         result = _sp.run(
             ["pgrep", "-f", "claude"], capture_output=True, text=True, timeout=5,
@@ -1384,7 +1384,7 @@ def _is_cli_session_alive(project_path: str, tmux_pane: str | None = None) -> bo
                 except (OSError, ValueError):
                     continue
     except (_sp.TimeoutExpired, FileNotFoundError, OSError) as e:
-        logger.debug("Fallback alive check failed for project %s: %s", project_path, e)
+        logger.debug("Non-tmux alive check failed for project %s: %s", project_path, e)
 
     return False
 
@@ -3541,11 +3541,10 @@ Here are the day's conversations (with timestamps):
             self.start_session_sync(aid, sid, ppath)
 
     def _reap_dead_agents(self, db: Session):
-        """Stop agents whose underlying tmux process is dead.
+        """Stop agents whose underlying process is dead.
 
-        Checks all non-STOPPED agents (STARTING/IDLE/EXECUTING/ERROR):
-        verifies the tmux pane still has a running claude process,
-        falling back to session file freshness when no pane is assigned.
+        Checks all non-STOPPED agents: verifies the tmux pane still has a
+        running claude process, or falls back to session file freshness.
         """
         import time
         from websocket import emit_agent_update
@@ -3802,7 +3801,7 @@ Here are the day's conversations (with timestamps):
         if task and not task.done():
             task.cancel()
 
-    # ---- Launch / Sync Task Management ----
+    # ---- Launch task tracking ----
 
     def track_launch_task(self, agent_id: str, task: asyncio.Task):
         """Track a tmux launch background task so it can be cancelled."""
@@ -4530,18 +4529,9 @@ Here are the day's conversations (with timestamps):
                             if pane:
                                 session_active = True
                             elif agent.tmux_pane:
-                                # Agents that previously had a tmux_pane
-                                # should NOT fall back to file freshness — the
-                                # pane is dead, so the session is dead.
+                                # Agent previously had a tmux_pane but the
+                                # pane is dead — session is dead.
                                 session_active = False
-                            else:
-                                # No pane detected — fall back to session file
-                                # freshness (works for panes we can't match)
-                                try:
-                                    age = _time.time() - os.path.getmtime(jsonl_path)
-                                    session_active = age < _STALE_SESSION_THRESHOLD
-                                except OSError as e:
-                                    logger.debug("Session freshness check failed for %s: %s", jsonl_path, e)
 
                         if session_active:
                             agent.status = AgentStatus.IDLE
@@ -4583,8 +4573,7 @@ Here are the day's conversations (with timestamps):
                 if agent.tmux_pane:
                     # Has a pane — check that specific pane
                     alive = _is_cli_session_alive(project_path, agent.tmux_pane)
-                # No pane: pane detection already failed above.
-                # Don't trust file freshness — the CLI session is gone.
+                # No pane — pane detection failed, session is gone.
 
                 if alive:
                     agent.status = AgentStatus.IDLE
