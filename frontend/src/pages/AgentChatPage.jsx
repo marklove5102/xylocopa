@@ -1967,7 +1967,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
     >
       {scrollButton}
       <div
-        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1 rounded-b-none" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
+        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
         style={{ maxWidth: "24rem" }}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
