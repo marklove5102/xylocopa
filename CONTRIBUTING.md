@@ -1,0 +1,90 @@
+# Contributing to AgentHive
+
+Thanks for your interest in contributing to AgentHive! Whether you're reporting a bug, suggesting a feature, or submitting code, your help is welcome.
+
+## Reporting Bugs
+
+Open a [GitHub issue](https://github.com/jyao97/AgentHive/issues) with:
+
+- A clear, descriptive title
+- Steps to reproduce the problem
+- Expected vs. actual behavior
+- Relevant logs (check `logs/server.log` and `logs/orchestrator.log`)
+- Your environment (OS, Python version, Node version, browser)
+
+## Suggesting Features
+
+Open a [GitHub issue](https://github.com/jyao97/AgentHive/issues) and label it as a feature request. Describe the use case and why the feature would be valuable. If you have ideas about implementation, include them — but the "why" matters more than the "how."
+
+## Development Setup
+
+### Prerequisites
+
+- Linux (Ubuntu 22.04+ recommended)
+- Python 3.11+
+- Node.js 18+ and npm
+- tmux
+- Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
+
+### Getting Started
+
+```bash
+# Clone the repo
+git clone https://github.com/jyao97/AgentHive.git
+cd AgentHive
+
+# Set up Python
+python3 -m venv venv
+source venv/bin/activate
+pip install -r orchestrator/requirements.txt
+
+# Set up frontend
+cd frontend && npm install && cd ..
+
+# Configure environment
+cp .env.example .env
+# Edit .env — at minimum set HOST_PROJECTS_DIR
+
+# Generate self-signed SSL certs (see README.md for full instructions)
+mkdir -p certs
+LAN_IP=$(hostname -I | awk '{print $1}')
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/selfsigned.key -out certs/selfsigned.crt \
+  -subj "/CN=agenthive" \
+  -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
+
+# Start the application
+./run.sh start
+```
+
+## Running Tests
+
+Backend:
+
+```bash
+cd orchestrator && python3 -m pytest tests/
+```
+
+Frontend:
+
+```bash
+cd frontend && npx vitest run
+```
+
+## Code Style
+
+- Follow existing patterns in the codebase. Don't introduce new conventions.
+- Match the indentation, naming, and structure of surrounding code.
+- No unnecessary refactors or renames — keep changes focused on the task.
+
+## Submitting a Pull Request
+
+1. Fork the repository and create a branch from `master`.
+2. Keep PRs small and focused — one logical change per PR.
+3. Write a clear description of what the PR does and why.
+4. Make sure tests pass before submitting.
+5. Use the commit message format: `[scope] brief description` (e.g., `[frontend] fix image zoom gesture`).
+
+## License
+
+By contributing to AgentHive, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
