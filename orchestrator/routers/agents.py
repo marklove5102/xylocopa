@@ -2567,6 +2567,9 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     # disambiguation delay.  Ctrl+C always interrupts generation reliably.
     if not send_tmux_keys(agent.tmux_pane, ["C-c"]):
         raise HTTPException(status_code=500, detail="Failed to send interrupt to tmux")
+    # CC v2.1.83 restores the interrupted prompt text to its input bar.
+    # Clear it so stale text doesn't linger or get accidentally re-submitted.
+    send_tmux_keys(agent.tmux_pane, ["C-u"])
 
     # Wait briefly for Claude Code to write "[Request interrupted by user]"
     # to JSONL, then verify the interrupt actually happened before clearing state.
