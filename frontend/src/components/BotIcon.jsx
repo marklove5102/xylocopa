@@ -4,7 +4,7 @@
  */
 const STATE_COLORS = {
   idle: "text-dim",
-  running: "text-cyan-500",
+  running: "text-emerald-400",
   error: "text-red-400",
   planning: "text-amber-400",
   completed: "text-green-400",
