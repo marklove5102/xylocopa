@@ -3546,15 +3546,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <div className="text-center py-3 text-xs opacity-40">Beginning of conversation</div>
             )}
 
-            {/* Previous trial bubble for retry tasks */}
-            {taskData && taskData.attempt_number > 1 && (taskData.retry_context || taskData.agent_summary) && (
-              <div className="mx-auto max-w-[85%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
-                <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400 mb-1.5">
-                  Previous trial (attempt #{taskData.attempt_number - 1})
+            {/* Original task description + previous summary for retry tasks */}
+            {taskData && taskData.attempt_number > 1 && (taskData.description || taskData.agent_summary) && (
+              <div className="mx-auto max-w-[85%] mb-3 rounded-xl bg-surface border border-edge/30 px-4 py-3">
+                <p className="text-[11px] font-semibold text-dim mb-1.5">
+                  Original task
                 </p>
+                {taskData.description && (
+                  <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.description.replace(/\[Attached file: [^\]]+\]/g, "").trim()}</p>
+                )}
                 {taskData.agent_summary && (
-                  <div className="mb-2">
-                    <p className="text-[10px] font-medium text-dim mb-0.5">Agent summary</p>
+                  <div className="mt-2">
+                    <p className="text-[10px] font-medium text-dim mb-0.5">Previous agent summary</p>
                     {taskData.agent_summary === ":::generating:::" ? (
                       <p className="text-xs text-dim/50 italic">Generating summary...</p>
                     ) : (
@@ -3562,17 +3565,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     )}
                   </div>
                 )}
-                {taskData.retry_context && (
-                  <div>
-                    <p className="text-[10px] font-medium text-orange-500 dark:text-orange-400 mb-0.5">Your notes</p>
-                    <p className="text-xs text-dim whitespace-pre-wrap">{taskData.retry_context.replace(/^User feedback:\s*/i, "")}</p>
-                  </div>
-                )}
               </div>
             )}
 
             {(() => {
               const visible = messages.filter((m) => !(m.role === "USER" && (m.status === "PENDING" || m.status === "QUEUED")));
+              // For retry tasks, swap the first user bubble to show retry feedback
+              // instead of the full structured prompt (original description is in card above)
+              const retryFirstMsgId = taskData?.attempt_number > 1 && taskData?.retry_context
+                ? visible.find(m => m.role === "USER")?.id
+                : null;
               console.log('[messages] rendering', visible.length, 'messages after filter');
               // Build tool groups: consecutive tool_use + tool_activity messages get merged
               const toolGroups = new Map(); // first msg id -> [entries]
@@ -3640,7 +3642,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} contentOverride={msg.id === retryFirstMsgId ? taskData.retry_context.replace(/^User feedback:\s*/i, "") : undefined} /></div>;
               });
             })()}
 
