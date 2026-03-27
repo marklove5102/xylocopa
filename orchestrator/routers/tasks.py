@@ -325,10 +325,7 @@ async def task_queue_status(
     # Build unified agent list with effective status + task info
     agents_list = []
     for a in active_agents:
-        # Effective status: IDLE + is_generating → EXECUTING (matches Agents page logic)
         effective = a.status.value
-        if a.status == AgentStatus.IDLE and a.is_generating:
-            effective = "EXECUTING"
         entry = {
             "agent_id": a.id,
             "name": a.name,

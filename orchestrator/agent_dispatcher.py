@@ -2193,9 +2193,9 @@ Here are the day's conversations (with timestamps):
 
         # Clear generating state — _cancel_sync_task pops the task before
         # cancel, so the sync loop's finally block skips _stop_generating.
+        # _stop_generating handles DB status → IDLE + generating_msg_id clear.
         if agent.id in self._generating_agents:
             self._stop_generating(agent.id)
-        agent.generating_msg_id = None
 
         agent.status = AgentStatus.STOPPED
 
@@ -2366,10 +2366,22 @@ Here are the day's conversations (with timestamps):
         self._generation_ids[agent_id] = gid
         return gid
 
-    def _start_generating(self, agent_id: str) -> int:
-        """Mark agent as generating and return a new generation_id."""
+    def _start_generating(self, agent_id: str, msg_id: str | None = None) -> int:
+        """Mark agent as generating: in-memory set, DB status, and WS event."""
         gid = self._next_generation_id(agent_id)
         self._generating_agents.add(agent_id)
+        db = SessionLocal()
+        try:
+            agent = db.get(Agent, agent_id)
+            if agent:
+                agent.status = AgentStatus.EXECUTING
+                if msg_id is not None:
+                    agent.generating_msg_id = msg_id
+                db.commit()
+                from websocket import emit_agent_update
+                self._emit(emit_agent_update(agent_id, "EXECUTING", agent.project or ""))
+        finally:
+            db.close()
         return gid
 
     def wake_sync(self, agent_id: str) -> bool:
@@ -2406,18 +2418,25 @@ Here are the day's conversations (with timestamps):
             db.close()
 
     def _stop_generating(self, agent_id: str):
-        """Mark agent as no longer generating and emit stream_end."""
+        """Mark agent as no longer generating: in-memory set, DB status, and WS events."""
         gid = self._generation_ids.get(agent_id)
         self._generating_agents.discard(agent_id)
-        from websocket import emit_agent_stream_end
+        from websocket import emit_agent_stream_end, emit_agent_update
         self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
-        # Persist to DB so state survives restarts
         db = SessionLocal()
         try:
             agent = db.get(Agent, agent_id)
-            if agent and agent.generating_msg_id is not None:
-                agent.generating_msg_id = None
-                db.commit()
+            if agent:
+                changed = False
+                if agent.generating_msg_id is not None:
+                    agent.generating_msg_id = None
+                    changed = True
+                if agent.status == AgentStatus.EXECUTING:
+                    agent.status = AgentStatus.IDLE
+                    changed = True
+                    self._emit(emit_agent_update(agent_id, "IDLE", agent.project or ""))
+                if changed:
+                    db.commit()
         finally:
             db.close()
 
@@ -4669,10 +4688,9 @@ Here are the day's conversations (with timestamps):
                 logger.info("Re-linked %d stopped agents with live tmux sessions", relinked)
 
             # Restore generating state from DB — the in-memory set is lost
-            # on restart, but generating_msg_id persists.
+            # on restart, but status=EXECUTING persists.
             generating = db.query(Agent).filter(
-                Agent.generating_msg_id.is_not(None),
-                Agent.status != AgentStatus.STOPPED,
+                Agent.status == AgentStatus.EXECUTING,
             ).all()
             for ag in generating:
                 self._generating_agents.add(ag.id)

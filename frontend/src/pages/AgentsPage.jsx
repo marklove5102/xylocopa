@@ -10,7 +10,6 @@ import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import useWebSocket, { isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
 import usePageVisible from "../hooks/usePageVisible";
-import { useStreamingAgents } from "../hooks/useStreamingAgents";
 import { useToast } from "../contexts/ToastContext";
 
 const FILTER_TABS = [
@@ -20,13 +19,11 @@ const FILTER_TABS = [
   { key: "STOPPED", label: "Stopped" },
 ];
 
-const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle, isStreaming }) {
+const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle }) {
   const navigate = useNavigate();
-  // When hook/stream activity indicates work during IDLE, promote visual status
-  const effectiveStatus = (agent.status === "IDLE" && (isStreaming || agent.is_generating)) ? "EXECUTING" : agent.status;
-  const state = agentBotState(effectiveStatus);
-  const statusDotColor = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
-  const statusTextColor = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
+  const state = agentBotState(agent.status);
+  const statusDotColor = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
+  const statusTextColor = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
   const [copied, setCopied] = useState(false);
 
   const handleCopyId = (e) => {
@@ -109,9 +106,9 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           )}
         </div>
         <div className="flex items-center gap-1.5 mt-1.5">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDotColor}${isStreaming ? " animate-pulse" : ""}`} />
+          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDotColor}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
           <span className={`text-xs lowercase ${statusTextColor}`}>
-            {effectiveStatus.toLowerCase().replace("_", " ")}
+            {agent.status.toLowerCase().replace("_", " ")}
           </span>
           {agent.model && (
             <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated ml-auto">
@@ -138,9 +135,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const [filter, setFilter] = useDraft("ui:agents:filter", "ALL");
   const [search, setSearch] = useDraft("ui:agents:search", "");
   const pollRef = useRef(null);
-
-  // Track which agents are actively streaming via WebSocket events + API is_generating
-  const streamingAgents = useStreamingAgents();
 
   // Multi-select state
   const [selecting, setSelecting] = useState(false);
@@ -602,7 +596,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
             selecting={selecting}
             selected={selected.has(agent.id)}
             onToggle={toggleOne}
-            isStreaming={streamingAgents.has(agent.id)}
           />
         ))}
 

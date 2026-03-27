@@ -180,23 +180,12 @@ async def hook_agent_user_prompt(request: Request):
         db.close()
 
     # Unconditionally mark executing — latest signal wins.
-    # UserPromptSubmit = executing, Stop = idle. No accumulated state.
+    # _start_generating handles DB status + WS emit.
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
         _gen_msg_id = msg.id if msg else "unknown"
-        ad._start_generating(agent_id)
+        ad._start_generating(agent_id, msg_id=_gen_msg_id)
         logger.info("hook_agent_user_prompt: started generating for %s (msg=%s)", agent_id[:8], _gen_msg_id[:8])
-        from websocket import emit_agent_update
-        db2 = SessionLocal()
-        try:
-            ag = db2.get(Agent, agent_id)
-            if ag:
-                ag.generating_msg_id = _gen_msg_id
-                db2.commit()
-            project = ag.project if ag else ""
-        finally:
-            db2.close()
-        asyncio.ensure_future(emit_agent_update(agent_id, "EXECUTING", project))
         # Wait for JSONL flush then wake sync
         async def _post_prompt_sync(_aid):
             from config import JSONL_FLUSH_DELAY
@@ -464,13 +453,7 @@ async def hook_agent_post_compact(request: Request):
         )
         db.add(compact_sys)
 
-        # 5. Transition agent status.
-        #    After /compact, Claude returns to the prompt — no longer executing.
-        #    All agents are tmux-managed → IDLE (sync loop keeps tailing the new session)
-        agent = db.get(Agent, agent_id)
-        if agent and agent.status == AgentStatus.EXECUTING:
-            agent.status = AgentStatus.IDLE
-            agent.generating_msg_id = None
+        # 5. Status transition handled by _stop_generating below.
 
         db.commit()
 
@@ -485,15 +468,6 @@ async def hook_agent_post_compact(request: Request):
                 agent_id, compact_msg.id, "COMPLETED",
                 completed_at=compact_msg.completed_at.isoformat(),
             ))
-
-        # 8. Emit agent status update to frontend.
-        _post_status = agent.status.value if agent else "IDLE"
-        if agent:
-            from websocket import ws_manager
-            asyncio.ensure_future(ws_manager.broadcast("agent_update", {
-                "agent_id": agent_id,
-                "status": _post_status,
-            }))
     finally:
         db.close()
 
@@ -514,9 +488,7 @@ async def hook_agent_post_compact(request: Request):
     await emit_tool_activity(agent_id, "Compact", "end",
                              tool_output="context compacted")
 
-    # 11. Stop generating LAST — must follow tool_activity "end" because
-    #     useStreamingAgents treats ANY tool_activity event as "active".
-    #     agent_stream_end must be the final signal to clear the typing indicator.
+    # 11. Stop generating LAST — handles DB status → IDLE + WS events.
     ad._stop_generating(agent_id)
 
     logger.info("hook_agent_post_compact: agent=%s", agent_id[:8])
@@ -777,17 +749,8 @@ async def hook_agent_tool_activity(request: Request):
         import slash_commands as _sc
         _compact_msg_id = _sc.mark_delivered(agent_id, "/compact")
         if ad:
-            ad._start_generating(agent_id)
+            ad._start_generating(agent_id, msg_id=_compact_msg_id or "compact")
             logger.info("PreCompact: started generating for %s", agent_id[:8])
-            from database import SessionLocal as _SLC
-            _dbc = _SLC()
-            try:
-                _agc = _dbc.get(Agent, agent_id)
-                if _agc:
-                    _agc.generating_msg_id = _compact_msg_id or "compact"
-                    _dbc.commit()
-            finally:
-                _dbc.close()
         # Pause sync — JSONL is being rewritten
         if ad and ad._sync_contexts.get(agent_id):
             ad._sync_contexts[agent_id].compact_notified = True
