@@ -68,7 +68,7 @@ import VoiceRecorder from "../components/VoiceRecorder";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
-import { useStreamingAgents } from "../hooks/useStreamingAgents";
+import { useExecutingAgents, useExecutingAgentsApi } from "../contexts/ExecutingAgentsContext";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
@@ -2346,8 +2346,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
   const [pendingPermissions, setPendingPermissions] = useState([]); // [{request_id, tool_name, tool_input, summary, created_at}]
-  const streamingAgents = useStreamingAgents();
-  const isStreaming = streamingAgents.has(id);
+  const executingAgents = useExecutingAgents();
+  const { markActive: markAgentActive } = useExecutingAgentsApi();
+  const isStreaming = executingAgents.has(id);
   const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   // Debug: ring buffer of recent WS events for frontend-state reporter
@@ -2466,6 +2467,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) return;
       setAgent(agentData);
+      // Seed global executing state from REST is_generating flag
+      if (agentData.is_generating) markAgentActive(id);
       // Fetch linked task for retry context (fire-and-forget)
       if (agentData.task_id && !taskData) {
         fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
@@ -2487,6 +2490,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           const meta = lastToolMsg.metadata || {};
           setActiveTool({ name: meta.tool_name || "", summary: lastToolMsg.content || "" });
           setToolStartTime(new Date(lastToolMsg.created_at).getTime());
+          markAgentActive(id); // Seed global executing state from display file
         }
       }
       if (!initialLoadDone.current && agentData.muted != null) {
