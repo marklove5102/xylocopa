@@ -2399,6 +2399,9 @@ def _patch_interactive_answer(
                 item["answer"] = _PLAN_LABELS[selected_index] if selected_index < len(_PLAN_LABELS) else str(selected_index)
             msg.meta_json = json.dumps(meta)
             db.commit()
+            # Update display file so the answer persists across page refreshes
+            from display_writer import update_last as _update_ia
+            _update_ia(agent_id, msg.id)
             return {"message_id": msg.id, "metadata": meta}
 
     logger.debug(
