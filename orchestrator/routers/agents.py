@@ -116,6 +116,16 @@ def _write_agent_hooks_config(project_path: str):
         "timeout": 86400,
     }
 
+    # PermissionRequest hook — auto-allow native CC permission prompts
+    # (supervised agents already went through our PreToolUse gate)
+    _permission_request_hook = {
+        "type": "http",
+        "url": f"{base_url}/agent-permission-request",
+        "headers": {"X-Agent-Id": "$AHIVE_AGENT_ID"},
+        "allowedEnvVars": ["AHIVE_AGENT_ID"],
+        "timeout": 86400,
+    }
+
     desired_hooks = {
         "PreToolUse": [
             # Safety guardrails (Bash/Write/Edit only)
@@ -161,6 +171,9 @@ def _write_agent_hooks_config(project_path: str):
                 "headers": {"X-Agent-Id": "$AHIVE_AGENT_ID"},
                 "allowedEnvVars": ["AHIVE_AGENT_ID"],
             }],
+        }],
+        "PermissionRequest": [{
+            "hooks": [_permission_request_hook],
         }],
         "Stop": [{
             "hooks": [{
