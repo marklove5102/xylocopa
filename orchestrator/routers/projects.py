@@ -1574,9 +1574,19 @@ async def update_project_file(name: str, body: ProjectFileUpdate, db: Session = 
     try:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(body.content)
-        return {"saved": True, "content": body.content, "scaffolded": False}
     except OSError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Auto-rebuild insights DB when PROGRESS.md is saved
+    if body.path == "PROGRESS.md" and body.content.strip():
+        try:
+            purged, imported = _rebuild_insights_from_content(name, body.content, db)
+            logger.info("Auto-rebuilt insights after PROGRESS.md save: purged %d, imported %d for %s",
+                        purged, imported, name)
+        except Exception:
+            logger.warning("Auto-rebuild insights failed for %s", name, exc_info=True)
+
+    return {"saved": True, "content": body.content, "scaffolded": False}
 
 
 # ---- CLAUDE.md refresh routes ----
@@ -1826,19 +1836,13 @@ async def apply_progress(name: str, db: Session = Depends(get_db)):
     return {"success": True, "content": final_content, "lines": len(final_content.splitlines())}
 
 
-@router.post("/api/projects/{name}/rebuild-insights")
-async def rebuild_insights(name: str, db: Session = Depends(get_db)):
-    """Purge existing insights and re-import from PROGRESS.md."""
+def _rebuild_insights_from_content(name: str, content: str, db) -> tuple[int, int]:
+    """Purge existing insights and re-import from PROGRESS.md content.
+
+    Returns (purged, imported) counts.
+    """
     from models import ProgressInsight
     from agent_dispatcher import store_insights
-
-    project_path = resolve_project_path(name, db)
-    progress_path = os.path.join(project_path, "PROGRESS.md")
-    if not os.path.isfile(progress_path):
-        raise HTTPException(status_code=404, detail="PROGRESS.md not found")
-
-    with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
-        content = f.read()
 
     # 1. Purge existing insights + FTS5 for this project
     own_db = SessionLocal()
@@ -1849,13 +1853,11 @@ async def rebuild_insights(name: str, db: Session = Depends(get_db)):
             ).all()
         ]
         if existing_ids:
-            # Delete FTS5 entries
             for rid in existing_ids:
                 own_db.execute(
                     text("DELETE FROM progress_insights_fts WHERE rowid = :id"),
                     {"id": rid},
                 )
-            # Delete main table rows
             own_db.query(ProgressInsight).filter(
                 ProgressInsight.project == name
             ).delete(synchronize_session=False)
@@ -1864,7 +1866,7 @@ async def rebuild_insights(name: str, db: Session = Depends(get_db)):
     finally:
         own_db.close()
 
-    # 2. Split PROGRESS.md into dated sections and re-import
+    # 2. Split into dated sections and re-import
     matches = list(_SECTION_DATE_RE.finditer(content))
     total_stored = 0
     for i, m in enumerate(matches):
@@ -1876,6 +1878,21 @@ async def rebuild_insights(name: str, db: Session = Depends(get_db)):
         total_stored += n
 
     logger.info("rebuild-insights: purged %d, imported %d for %s", purged, total_stored, name)
+    return purged, total_stored
+
+
+@router.post("/api/projects/{name}/rebuild-insights")
+async def rebuild_insights(name: str, db: Session = Depends(get_db)):
+    """Purge existing insights and re-import from PROGRESS.md."""
+    project_path = resolve_project_path(name, db)
+    progress_path = os.path.join(project_path, "PROGRESS.md")
+    if not os.path.isfile(progress_path):
+        raise HTTPException(status_code=404, detail="PROGRESS.md not found")
+
+    with open(progress_path, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+
+    purged, total_stored = _rebuild_insights_from_content(name, content, db)
     return {"success": True, "purged": purged, "imported": total_stored}
 
 
