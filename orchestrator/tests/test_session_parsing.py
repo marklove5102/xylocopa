@@ -84,7 +84,7 @@ class TestStripAgentPreamble:
             "— verify before relying on any of them.\n\n"
             "  - Insight one\n"
             "  - Insight two"
-            "\n\nIf you make code changes, commit with message format: [agent-abc12345] short description"
+            "\n\nIf you make code changes, commit with message format: [scope] short description"
         )
         result = _strip_agent_preamble(text)
         assert result == "Please fix the bug in main.py"
@@ -101,7 +101,7 @@ class TestStripAgentPreamble:
             "  - Insight two\n"
             "\n"
             "Please fix the bug in main.py"
-            "\n\nIf you make code changes, commit with message format: [agent-abc12345] short description"
+            "\n\nIf you make code changes, commit with message format: [scope] short description"
         )
         result = _strip_agent_preamble(text)
         assert result == "Please fix the bug in main.py"
@@ -132,7 +132,7 @@ class TestStripAgentPreamble:
             "They may be outdated, incorrect, or irrelevant "
             "— verify before relying on any of them.\n\n"
             "  - Some insight"
-            "\n\nIf you make code changes, commit with message format: [agent-abc12345] short description"
+            "\n\nIf you make code changes, commit with message format: [scope] short description"
         )
         result = _strip_agent_preamble(text)
         assert result == "Fix the login page"
@@ -141,7 +141,7 @@ class TestStripAgentPreamble:
         """Postamble regex strips commit format line when no insights present."""
         text = (
             "Fix the login page"
-            "\n\nIf you make code changes, commit with message format: [agent-abc12345] short description"
+            "\n\nIf you make code changes, commit with message format: [scope] short description"
         )
         result = _strip_agent_preamble(text)
         assert result == "Fix the login page"

@@ -3411,7 +3411,7 @@ Here are the day's conversations (with timestamps):
             f"{user_message}"
             f"{insights_block}\n\n"
             f"If you make code changes, commit with message format: "
-            f"[agent-{agent.id}] short description"
+            f"[scope] short description"
         )
 
     def _format_conversation_history(self, agent: Agent, db: Session) -> str:
