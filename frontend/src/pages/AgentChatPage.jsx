@@ -68,6 +68,7 @@ import VoiceRecorder from "../components/VoiceRecorder";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
+import { useStreamingAgents } from "../hooks/useStreamingAgents";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
@@ -2345,9 +2346,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
   const [pendingPermissions, setPendingPermissions] = useState([]); // [{request_id, tool_name, tool_input, summary, created_at}]
-  const [hookActive, setHookActive] = useState(false); // true when hook events indicate agent is working
-  const lastHookTimeRef = useRef(0);   // timestamp of last hook event (for compact grace period)
-  const hookGraceRef = useRef(null);   // timer for grace period
+  const streamingAgents = useStreamingAgents();
+  const isStreaming = streamingAgents.has(id);
   const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   // Debug: ring buffer of recent WS events for frontend-state reporter
@@ -2487,8 +2487,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           const meta = lastToolMsg.metadata || {};
           setActiveTool({ name: meta.tool_name || "", summary: lastToolMsg.content || "" });
           setToolStartTime(new Date(lastToolMsg.created_at).getTime());
-          setHookActive(true);
-          lastHookTimeRef.current = Date.now();
         }
       }
       if (!initialLoadDone.current && agentData.muted != null) {
@@ -3015,12 +3013,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const gid = event.data.generation_id;
       if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
       clearTimeout(streamTimeoutRef.current);
-      clearTimeout(hookGraceRef.current);
       setStreamingContent(null);
       setActiveTool(null);
       setToolStartTime(null);
-      setHookActive(false);
-      lastHookTimeRef.current = 0;
       return;
     }
 
@@ -3028,20 +3023,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       console.log('[ws] tool_activity', event.data.tool_name, event.data.phase);
       pushWsEvent('tool_activity', { tool: event.data.tool_name, phase: event.data.phase });
       const { tool_name, phase, summary } = event.data;
-      setHookActive(true);
-      lastHookTimeRef.current = Date.now();
-      clearTimeout(hookGraceRef.current);
       if (phase === "start") {
         setActiveTool({ name: tool_name, summary: summary || "" });
         setToolStartTime(Date.now());
       } else if (phase === "end") {
         setActiveTool(null);
         setToolStartTime(null);
-        clearTimeout(hookGraceRef.current);
-        hookGraceRef.current = setTimeout(() => {
-          if (Date.now() - lastHookTimeRef.current < 29_000) return;
-          setHookActive(false);
-        }, 30_000);
       }
       return;
     }
@@ -3069,12 +3056,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         return;
       }
       clearTimeout(streamTimeoutRef.current);
-      clearTimeout(hookGraceRef.current);
       setStreamingContent(null);
       setActiveTool(null);
       setToolStartTime(null);
-      setHookActive(false);
-      lastHookTimeRef.current = 0;
       refreshMessagesRef.current({ syncHint: event.data?.message_id === "sync" });
       return;
     }
@@ -3124,12 +3108,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const status = event.data.status;
       if (status !== "EXECUTING" && status !== "IDLE") {
         clearTimeout(streamTimeoutRef.current);
-        clearTimeout(hookGraceRef.current);
         setStreamingContent(null);
         setActiveTool(null);
         setToolStartTime(null);
-          setHookActive(false);
-        lastHookTimeRef.current = 0;
         generationIdRef.current = null;
       }
       refreshMessagesRef.current();
@@ -3145,7 +3126,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   useEffect(() => {
     return () => {
       clearTimeout(streamTimeoutRef.current);
-      clearTimeout(hookGraceRef.current);
     };
   }, []);
 
@@ -3342,7 +3322,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
   // Smooth EXECUTING→off: hold true for 1s to avoid flicker
   // (must be before early returns to maintain hooks ordering)
-  const isExecutingRaw = agent?.status === "EXECUTING" || (agent?.status === "IDLE" && (hookActive || agent?.is_generating));
+  const isExecutingRaw = agent?.status === "EXECUTING" || (agent?.status === "IDLE" && (isStreaming || agent?.is_generating));
   const [isExecuting, setIsExecuting] = useState(isExecutingRaw);
   const execTimerRef = useRef(null);
   useEffect(() => {
@@ -3383,8 +3363,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const healthDotColor = health === null ? "bg-gray-400" : isHealthy ? "bg-green-500" : "bg-red-500";
   const healthLabel = health === null ? "..." : isHealthy ? "OK" : "Error";
 
-  // When hooks indicate active work during IDLE, promote the visual status to "executing"
-  const effectiveStatus = (agent.status === "IDLE" && (hookActive || agent.is_generating))
+  // When streaming/generating during IDLE, promote the visual status to "executing"
+  const effectiveStatus = (agent.status === "IDLE" && (isStreaming || agent.is_generating))
     ? "EXECUTING" : agent.status;
   const statusDot = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
   const statusText = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
@@ -3834,7 +3814,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 if (!isDuplicate) return <div data-msg-id="streaming" data-msg-type="streaming_bubble"><StreamingBubble content={streamingContent} project={agent.project} activeTool={activeTool} /></div>;
               }
               // Tool activity log — shows completed + in-progress tool calls
-              return (isExecuting || hookActive) ? <div data-msg-id="typing" data-msg-type="typing_indicator"><TypingIndicator /></div> : null;
+              return isExecuting ? <div data-msg-id="typing" data-msg-type="typing_indicator"><TypingIndicator /></div> : null;
             })()}
 
             {/* Pending permission approval cards for supervised agents */}
