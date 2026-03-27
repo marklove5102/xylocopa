@@ -351,7 +351,7 @@ async def task_queue_status(
     )
     pending_list = [TaskOut.model_validate(t).model_dump() for t in pending_tasks]
 
-    # Per-project capacity
+    # Per-project agent counts (no capacity enforcement)
     projects = db.query(Project).filter(Project.archived == False).all()
     capacity = {}
     for proj in projects:
@@ -371,7 +371,6 @@ async def task_queue_status(
             .scalar()
         )
         capacity[proj.name] = {
-            "max_concurrent": proj.max_concurrent,
             "active": active,
             "alive": alive,
             "idle": idle,
