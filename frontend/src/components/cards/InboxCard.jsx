@@ -3,6 +3,7 @@ import { modelDisplayName, MODEL_OPTIONS } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
 import { updateTaskV2, uploadFile, cancelTask, dispatchTask, regenerateTaskSummary } from "../../lib/api";
 import useVoiceRecorder from "../../hooks/useVoiceRecorder";
+import useDraft from "../../hooks/useDraft";
 import useProjects from "../../hooks/useProjects";
 import CardShell, { cardPadding } from "./CardShell";
 import TagPicker from "./TagPicker";
@@ -95,10 +96,17 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
   // --- inline description editing ---
   const [editing, setEditing] = useState(false);
   const editRef = useRef(null);
-  const lastEditedTextRef = useRef(null);
-  const [optimisticDesc, setOptimisticDesc] = useState(undefined);
   const fileInputRef = useRef(null);
   const filePickerOpenRef = useRef(false);
+
+  // Draft-based description persistence (same pattern as chat input)
+  const [draftText, setDraftText] = useDraft(`inbox-desc:${task.id}`, null);
+  const draftTextRef = useRef(draftText);
+  draftTextRef.current = draftText;
+  const saveTimerRef = useRef(null);
+
+  // Effective description text: draft overrides server state
+  const descText = draftText !== null ? draftText : (parsed.text || "");
 
   /** Rebuild full description from text + attached files */
   const buildFullDesc = useCallback((text, files) => {
@@ -107,23 +115,40 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     return parts.filter(Boolean).join("\n") || null;
   }, []);
 
+  // Flush pending description to server immediately
+  const flushServerSave = useCallback(() => {
+    clearTimeout(saveTimerRef.current);
+    const text = draftTextRef.current;
+    if (text == null) return;
+    const p = parsedRef.current;
+    if (text !== (p.text || "").trim()) {
+      const newDesc = buildFullDesc(text, p.files);
+      updateTaskV2(task.id, { description: newDesc }).then(() => onRefresh?.());
+    }
+  }, [task.id, buildFullDesc, onRefresh]);
+
+  // Debounced server save (800ms after last keystroke)
+  const debouncedServerSave = useCallback(() => {
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(flushServerSave, 800);
+  }, [flushServerSave]);
+
+  // Clear draft once server state catches up
   useEffect(() => {
-    if (isExpanded) { lastEditedTextRef.current = null; return; }
+    if (draftText == null) return;
+    if (draftText === (parsed.text || "")) setDraftText(null);
+  }, [task.description, draftText, parsed.text, setDraftText]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+
+  // Collapse: stop editing + flush to server
+  useEffect(() => {
+    if (isExpanded) return;
     setEditing(false);
     setTitleEditing(false);
-    // Collapse-save: if blur didn't fire, save pending description changes
-    const editedText = lastEditedTextRef.current;
-    lastEditedTextRef.current = null;
-    if (editedText !== null && editedText !== (parsedRef.current.text || "").trim()) {
-      const newDesc = buildFullDesc(editedText, parsedRef.current.files);
-      setOptimisticDesc(newDesc);
-      updateTaskV2(task.id, { description: newDesc }).then(() => onRefresh?.());
-      try { localStorage.removeItem(`draft:inbox-desc:${task.id}`); } catch {}
-    }
-  }, [isExpanded, task.id, buildFullDesc, onRefresh]);
-
-  // Clear optimistic override once server data arrives
-  useEffect(() => { setOptimisticDesc(undefined); }, [task.description]);
+    flushServerSave();
+  }, [isExpanded, flushServerSave]);
 
   // --- draft persistence (survives app close/restart) ---
   useLayoutEffect(() => {
@@ -131,9 +156,9 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     try {
       const td = localStorage.getItem(`draft:inbox-title:${task.id}`);
       if (td && titleRef.current) titleRef.current.innerText = td;
-      const dd = localStorage.getItem(`draft:inbox-desc:${task.id}`);
-      if (dd != null && editRef.current) editRef.current.innerText = dd;
     } catch {}
+    // Restore description content from draft or server state
+    if (editRef.current) editRef.current.innerText = descText;
   }, [isExpanded, task.id]);
 
   useEffect(() => {
@@ -147,27 +172,24 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
         else localStorage.removeItem(`draft:inbox-title:${task.id}`);
       } catch {}
     };
-    const saveDescDraft = () => {
-      try {
-        const t = descEl?.innerText?.trim() || "";
-        lastEditedTextRef.current = t;
-        if (t !== (parsed.text || "").trim()) localStorage.setItem(`draft:inbox-desc:${task.id}`, t);
-        else localStorage.removeItem(`draft:inbox-desc:${task.id}`);
-      } catch {}
+    const handleDescInput = () => {
+      const t = descEl?.innerText?.trim() || "";
+      setDraftText(t);
+      debouncedServerSave();
     };
     titleEl?.addEventListener("input", saveTitleDraft);
-    descEl?.addEventListener("input", saveDescDraft);
-    const flush = () => { saveTitleDraft(); saveDescDraft(); };
+    descEl?.addEventListener("input", handleDescInput);
+    const flush = () => { saveTitleDraft(); };
     const onVis = () => { if (document.visibilityState === "hidden") flush(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", flush);
     return () => {
       titleEl?.removeEventListener("input", saveTitleDraft);
-      descEl?.removeEventListener("input", saveDescDraft);
+      descEl?.removeEventListener("input", handleDescInput);
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("pagehide", flush);
     };
-  }, [isExpanded, task.id, task.title, parsed.text]);
+  }, [isExpanded, task.id, task.title, setDraftText, debouncedServerSave]);
 
   // Clear filePickerOpen flag when the file picker is cancelled (no file selected)
   useEffect(() => {
@@ -185,6 +207,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     requestAnimationFrame(() => {
       const el = editRef.current;
       if (!el) return;
+      el.innerText = descText; // Restore content (React clears children on editing transition)
       el.focus();
       const sel = window.getSelection();
       sel.selectAllChildren(el);
@@ -192,31 +215,19 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     });
   };
 
-  const saveDesc = useCallback(async () => {
-    const el = editRef.current;
-    if (!el) return;
-    const text = el.innerText.trim();
-    lastEditedTextRef.current = null; // Mark as handled by blur
+  const handleDescBlur = useCallback(() => {
     setEditing(false);
-    if (text !== parsed.text.trim()) {
-      const newDesc = buildFullDesc(text, parsed.files);
-      setOptimisticDesc(newDesc);
-      await updateTaskV2(task.id, { description: newDesc });
-      onRefresh?.();
-    }
-    try { localStorage.removeItem(`draft:inbox-desc:${task.id}`); } catch {}
-  }, [task.id, parsed, buildFullDesc, onRefresh]);
+    flushServerSave();
+  }, [flushServerSave]);
 
   // --- voice recording ---
   const appendToDesc = useCallback((text) => {
-    const el = editRef.current;
-    const currentText = el ? el.innerText.trim() : parsed.text;
+    const currentText = draftTextRef.current != null ? draftTextRef.current : (parsedRef.current.text || "");
     const updated = currentText ? currentText + "\n" + text : text;
-    if (el) el.innerText = updated;
-    lastEditedTextRef.current = null;
-    try { localStorage.removeItem(`draft:inbox-desc:${task.id}`); } catch {}
-    updateTaskV2(task.id, { description: buildFullDesc(updated, parsed.files) }).then(() => onRefresh?.());
-  }, [task.id, parsed, buildFullDesc, onRefresh]);
+    if (editRef.current) editRef.current.innerText = updated;
+    setDraftText(updated);
+    updateTaskV2(task.id, { description: buildFullDesc(updated, parsedRef.current.files) }).then(() => onRefresh?.());
+  }, [task.id, buildFullDesc, setDraftText, onRefresh]);
 
   const voice = useVoiceRecorder({
     onTranscript: appendToDesc,
@@ -234,11 +245,11 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
       } catch { /* skip */ }
     }
     if (uploadedPaths.length === 0) return;
-    const currentText = editRef.current?.innerText?.trim() || parsed.text;
-    const newFiles = [...parsed.files, ...uploadedPaths];
+    const currentText = draftTextRef.current != null ? draftTextRef.current : (parsedRef.current.text || "");
+    const newFiles = [...parsedRef.current.files, ...uploadedPaths];
     await updateTaskV2(task.id, { description: buildFullDesc(currentText, newFiles) });
     onRefresh?.();
-  }, [task.id, parsed, buildFullDesc, onRefresh]);
+  }, [task.id, buildFullDesc, onRefresh]);
 
   const handleFileSelect = async (e) => {
     e.stopPropagation();
@@ -260,11 +271,11 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
   };
 
   const removeFile = useCallback(async (filePath) => {
-    const currentText = editRef.current?.innerText?.trim() || parsed.text;
-    const newFiles = parsed.files.filter(f => f !== filePath);
+    const currentText = draftTextRef.current != null ? draftTextRef.current : (parsedRef.current.text || "");
+    const newFiles = parsedRef.current.files.filter(f => f !== filePath);
     await updateTaskV2(task.id, { description: buildFullDesc(currentText, newFiles) });
     onRefresh?.();
-  }, [task.id, parsed, buildFullDesc, onRefresh]);
+  }, [task.id, buildFullDesc, onRefresh]);
 
   // --- notify_at ---
   const dateRef = useRef(null);
@@ -287,15 +298,15 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     e.stopPropagation();
     setDispatching(true);
     try {
-      if (editing && editRef.current) {
-        const text = editRef.current.innerText.trim();
-        if (text !== parsed.text.trim()) {
-          await updateTaskV2(task.id, { description: buildFullDesc(text, parsed.files) });
-        }
+      // Flush any pending description edits to server before dispatch
+      clearTimeout(saveTimerRef.current);
+      const text = draftTextRef.current;
+      if (text != null && text !== (parsedRef.current.text || "").trim()) {
+        await updateTaskV2(task.id, { description: buildFullDesc(text, parsedRef.current.files) });
       }
-      lastEditedTextRef.current = null;
+      setDraftText(null);
       await dispatchTask(task.id);
-      try { localStorage.removeItem(`draft:inbox-title:${task.id}`); localStorage.removeItem(`draft:inbox-desc:${task.id}`); } catch {}
+      try { localStorage.removeItem(`draft:inbox-title:${task.id}`); } catch {}
       onRefresh?.();
     } catch {
       setDispatching(false);
@@ -314,11 +325,8 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     onRefresh?.();
   };
 
-  // collapsed preview: text only, no [Attached file:] lines
-  // Use optimistic desc if a save is in-flight (prevents flash of stale text)
-  const preview = optimisticDesc !== undefined
-    ? (parseDesc(optimisticDesc || "").text || null)
-    : (parsed.text || null);
+  // collapsed preview: draft text if editing, otherwise server text
+  const preview = descText || null;
 
   if (dispatching) return null;
 
@@ -383,13 +391,13 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                   ref={editRef}
                   contentEditable={editing}
                   suppressContentEditableWarning
-                  onBlur={saveDesc}
+                  onBlur={handleDescBlur}
                   onPaste={handlePaste}
                   className={`text-sm leading-relaxed outline-none whitespace-pre-wrap ${
-                    editing ? "text-body" : parsed.text ? "text-dim" : "text-faint/40"
+                    editing ? "text-body" : descText ? "text-dim" : "text-faint/40"
                   }`}
                 >
-                  {parsed.text || (editing ? "" : "Tap to add description...")}
+                  {editing ? "" : (descText || "Tap to add description...")}
                 </div>
                 {voice.refining && (
                   <div className="px-1 pb-1 text-sm text-cyan-400/80 italic animate-pulse">
