@@ -51,7 +51,7 @@ _PREAMBLE_RE = re.compile(
 _POSTAMBLE_RE = re.compile(
     r"(?:\n\n---\n"
     r"The following are past insights.*?)?"  # optional insights block
-    r"\n\nIf you make code changes, commit with message format: \[agent-[0-9a-f]+\] short description$",
+    r"\n\nIf you make code changes, commit with message format: \[scope\] short description$",
     re.DOTALL,
 )
 
