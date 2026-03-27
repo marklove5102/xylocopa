@@ -41,9 +41,7 @@ import FilterTabs from "../components/FilterTabs";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import ClaudeMdDiffModal from "../components/ClaudeMdDiffModal";
-// useWebSocket is consumed internally by useStreamingAgents
 import usePageVisible from "../hooks/usePageVisible";
-import { useStreamingAgents } from "../hooks/useStreamingAgents";
 import { useToast } from "../contexts/ToastContext";
 
 const AGENT_TABS = [
@@ -232,10 +230,9 @@ function projectBotState(proj) {
 }
 
 
-function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isStreaming }) {
-  const effectiveStatus = (agent.status === "IDLE" && isStreaming) ? "EXECUTING" : agent.status;
-  const statusDot = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
-  const statusText = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
+function AgentRow({ agent, onClick, starred, onToggleStar, onError, project }) {
+  const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
+  const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
   const [copied, setCopied] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
 
@@ -274,7 +271,7 @@ function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isS
       className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
     >
       <div className="relative shrink-0" onClick={handleCopyId} title={`Copy ID: ${agent.id}`}>
-        <BotIcon state={agentBotState(effectiveStatus)} className="w-9 h-9 cursor-pointer hover:opacity-70 transition-opacity" />
+        <BotIcon state={agentBotState(agent.status)} className="w-9 h-9 cursor-pointer hover:opacity-70 transition-opacity" />
         {copied && (
           <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
             Copied!
@@ -292,8 +289,8 @@ function AgentRow({ agent, onClick, starred, onToggleStar, onError, project, isS
           {agent.last_message_preview || "No messages yet"}
         </p>
         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDot}${isStreaming ? " animate-pulse" : ""}`} />
-          <span className={`text-xs lowercase ${statusText}`}>{effectiveStatus.toLowerCase().replace("_", " ")}</span>
+          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
+          <span className={`text-xs lowercase ${statusText}`}>{agent.status.toLowerCase().replace("_", " ")}</span>
           {agent.model && (
             <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated">
               {modelDisplayName(agent.model)}
@@ -596,9 +593,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [summarizingProgress, setSummarizingProgress] = useState(false);
   const [progressReady, setProgressReady] = useState(false);
   const [progressDiffData, setProgressDiffData] = useState(null);
-
-  // Track which agents are actively streaming via WebSocket hook events
-  const streamingAgents = useStreamingAgents();
 
   // Rename
   const [editingName, setEditingName] = useState(false);
@@ -1562,7 +1556,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 agent={agent}
                 project={name}
                 starred={starredIds.has(agent.session_id || agent.id)}
-                isStreaming={streamingAgents.has(agent.id)}
                 onClick={() => navigate(`/agents/${agent.id}`)}
                 onError={(msg) => showToast(msg, "error")}
                 onToggleStar={(sid, newStarred) => {

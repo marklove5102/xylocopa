@@ -68,7 +68,6 @@ import VoiceRecorder from "../components/VoiceRecorder";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
-import { useExecutingAgents } from "../contexts/ExecutingAgentsContext";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
@@ -2346,8 +2345,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
   const [pendingPermissions, setPendingPermissions] = useState([]); // [{request_id, tool_name, tool_input, summary, created_at}]
-  const executingAgents = useExecutingAgents();
-  const isStreaming = executingAgents.has(id);
   const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   // Debug: ring buffer of recent WS events for frontend-state reporter
@@ -3106,6 +3103,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       console.log('[ws] agent_update', event.data.agent_id?.slice(0,8), event.data.status);
       pushWsEvent('agent_update', { status: event.data.status });
       const status = event.data.status;
+      // Update agent status directly from WS — no wait for REST poll
+      if (event.data.agent_id === id) {
+        setAgent((prev) => prev ? { ...prev, status } : prev);
+      }
       if (status !== "EXECUTING" && status !== "IDLE") {
         clearTimeout(streamTimeoutRef.current);
         setStreamingContent(null);
@@ -3320,9 +3321,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
+  // Agent status is written directly by backend hooks — no frontend derivation needed.
   // Smooth EXECUTING→off: hold true for 1s to avoid flicker
   // (must be before early returns to maintain hooks ordering)
-  const isExecutingRaw = agent?.status === "EXECUTING" || (agent?.status === "IDLE" && (isStreaming || agent?.is_generating));
+  const isExecutingRaw = agent?.status === "EXECUTING";
   const [isExecuting, setIsExecuting] = useState(isExecutingRaw);
   const execTimerRef = useRef(null);
   useEffect(() => {
@@ -3363,11 +3365,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const healthDotColor = health === null ? "bg-gray-400" : isHealthy ? "bg-green-500" : "bg-red-500";
   const healthLabel = health === null ? "..." : isHealthy ? "OK" : "Error";
 
-  // When streaming/generating during IDLE, promote the visual status to "executing"
-  const effectiveStatus = (agent.status === "IDLE" && (isStreaming || agent.is_generating))
-    ? "EXECUTING" : agent.status;
-  const statusDot = AGENT_STATUS_COLORS[effectiveStatus] || "bg-gray-500";
-  const statusText = AGENT_STATUS_TEXT_COLORS[effectiveStatus] || "text-dim";
+  // Status is authoritative from backend — read directly
+  const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
+  const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
   const isIdle = agent.status === "IDLE";
   const hasTmux = isIdle && !!agent.tmux_pane;
   const hasTmuxPane = !!agent.tmux_pane;
@@ -3571,9 +3571,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           {/* Row 2: Status + model + branch | action buttons (ml-9 aligns with name after back btn) */}
           {!compactHeader && <div className="flex items-center gap-2 ml-9">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}${effectiveStatus === "EXECUTING" ? " animate-pulse" : ""}`} />
+              <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
               <span className={`text-xs shrink-0 ${statusText}`}>
-                {effectiveStatus.toLowerCase().replace("_", " ")}
+                {agent.status.toLowerCase().replace("_", " ")}
               </span>
               {hasTmux && (
                 <span className="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 shrink-0">
