@@ -10,6 +10,7 @@ import usePageVisible from "./hooks/usePageVisible";
 import { MonitorProvider } from "./contexts/MonitorContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { WebSocketProvider } from "./contexts/WebSocketContext";
+import { ExecutingAgentsProvider } from "./contexts/ExecutingAgentsContext";
 import SplitScreenButton from "./components/SplitScreenButton";
 import BottomNavBar from "./components/BottomNavBar";
 
@@ -354,6 +355,7 @@ export default function App() {
             element={
               <AuthGuard>
                 <WebSocketProvider>
+                <ExecutingAgentsProvider>
                 <MonitorProvider>
                 <ErrorBoundary>
                   <Suspense fallback={<div/>}>
@@ -361,6 +363,7 @@ export default function App() {
                   </Suspense>
                 </ErrorBoundary>
                 </MonitorProvider>
+                </ExecutingAgentsProvider>
                 </WebSocketProvider>
               </AuthGuard>
             }
