@@ -688,20 +688,50 @@ async def list_projects(db: Session = Depends(get_db)):
     projects = db.query(Project).filter(Project.archived == False).order_by(Project.name).all()
     results = []
     for proj in projects:
-        # Task stats (from first-class Task table)
-        task_row = (
-            db.query(
-                func.count(Task.id).label("total"),
-                func.count(case((Task.status == TaskStatus.COMPLETE, 1))).label("completed"),
-                func.count(
-                    case((Task.status.in_([TaskStatus.FAILED, TaskStatus.TIMEOUT]), 1))
-                ).label("failed"),
-                func.count(
-                    case((Task.status.in_([TaskStatus.PENDING, TaskStatus.EXECUTING]), 1))
-                ).label("running"),
+        # Count agents linked to tasks (matches Agents page filtering)
+        task_agent_base = (
+            db.query(Agent)
+            .join(Task, Agent.task_id == Task.id)
+            .filter(
+                Agent.project == proj.name,
+                Agent.task_id.isnot(None),
+                Agent.is_subagent == False,  # noqa: E712
             )
-            .filter(Task.project == proj.name)
-            .one()
+            .subquery()
+        )
+        task_row_total = db.query(func.count(task_agent_base.c.id)).scalar()
+        task_row_completed = (
+            db.query(func.count(Agent.id))
+            .join(Task, Agent.task_id == Task.id)
+            .filter(
+                Agent.project == proj.name,
+                Agent.task_id.isnot(None),
+                Agent.is_subagent == False,  # noqa: E712
+                Task.status == TaskStatus.COMPLETE,
+            )
+            .scalar()
+        )
+        task_row_failed = (
+            db.query(func.count(Agent.id))
+            .join(Task, Agent.task_id == Task.id)
+            .filter(
+                Agent.project == proj.name,
+                Agent.task_id.isnot(None),
+                Agent.is_subagent == False,  # noqa: E712
+                Task.status.in_([TaskStatus.FAILED, TaskStatus.TIMEOUT]),
+            )
+            .scalar()
+        )
+        task_row_running = (
+            db.query(func.count(Agent.id))
+            .join(Task, Agent.task_id == Task.id)
+            .filter(
+                Agent.project == proj.name,
+                Agent.task_id.isnot(None),
+                Agent.is_subagent == False,  # noqa: E712
+                Task.status.in_([TaskStatus.PENDING, TaskStatus.EXECUTING]),
+            )
+            .scalar()
         )
 
         # Agent stats
@@ -732,10 +762,10 @@ async def list_projects(db: Session = Depends(get_db)):
                 description=proj.description,
                 max_concurrent=proj.max_concurrent,
                 default_model=proj.default_model,
-                task_total=task_row.total,
-                task_completed=task_row.completed,
-                task_failed=task_row.failed,
-                task_running=task_row.running,
+                task_total=task_row_total,
+                task_completed=task_row_completed,
+                task_failed=task_row_failed,
+                task_running=task_row_running,
                 agent_total=agent_row.total,
                 agent_active=agent_row.active,
                 last_activity=last_activity,
@@ -808,13 +838,26 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
                 )
                 .scalar()
             )
-            task_row = (
-                db.query(
-                    func.count(Task.id).label("total"),
-                    func.count(case((Task.status == TaskStatus.COMPLETE, 1))).label("completed"),
+            # Count agents linked to tasks (matches Agents page filtering)
+            task_agent_total = (
+                db.query(func.count(Agent.id))
+                .filter(
+                    Agent.project == dirname,
+                    Agent.task_id.isnot(None),
+                    Agent.is_subagent == False,  # noqa: E712
                 )
-                .filter(Task.project_name == dirname)
-                .one()
+                .scalar()
+            )
+            task_agent_completed = (
+                db.query(func.count(Agent.id))
+                .join(Task, Agent.task_id == Task.id)
+                .filter(
+                    Agent.project == dirname,
+                    Agent.task_id.isnot(None),
+                    Agent.is_subagent == False,  # noqa: E712
+                    Task.status == TaskStatus.COMPLETE,
+                )
+                .scalar()
             )
             # Weekly stats for task ring
             from datetime import timedelta as _td
@@ -831,8 +874,8 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
             _w_total = sum(_w_by.values())
             _w_completed = _w_by.get("COMPLETE", 0)
             entry["agent_active"] = agent_active_count
-            entry["task_total"] = task_row.total
-            entry["task_completed"] = task_row.completed
+            entry["task_total"] = task_agent_total
+            entry["task_completed"] = task_agent_completed
             entry["weekly_total"] = _w_total
             entry["weekly_completed"] = _w_completed
 
