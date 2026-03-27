@@ -1,5 +1,12 @@
 # AgentHive
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![React 19](https://img.shields.io/badge/react-19-61dafb.svg)](https://react.dev)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
+
+> [**Getting Started**](#getting-started) · [**Features**](#features) · [**Configuration**](#configuration) · [**Development**](#development) · [**Contributing**](CONTRIBUTING.md) · [**Roadmap**](#roadmap)
+
 **A self-hosted command center for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — run multiple agents, monitor everything, and manage your projects from your phone.**
 
 AgentHive is not a replacement for the Claude Code CLI. It's a companion. Keep using `claude` in your terminal the way you always have. AgentHive adds a layer on top: sync your CLI sessions to the web, run multiple agents in parallel, and manage everything from a single dashboard — including from your phone while you're away from your desk.
@@ -20,11 +27,11 @@ All your agents, all your projects, one screen. See which agents are running, wh
 
 ### Multi-Agent Concurrency
 
-Run 5, 10, or more Claude agents in parallel across different projects. Each agent gets its own isolated git worktree, so they never step on each other's code. The dispatcher manages concurrency limits per-project and globally, queues messages when agents are busy, and handles timeouts and crash recovery automatically. Think of it as tabs for your AI workforce — switch between conversations, monitor progress, and keep everything moving.
+Run 5, 10, or more Claude agents in parallel across different projects. Each agent gets its own isolated git worktree, so they never step on each other's code. The dispatcher manages global concurrency limits, queues messages when agents are busy, and handles timeouts and crash recovery automatically. Think of it as tabs for your AI workforce — switch between conversations, monitor progress, and keep everything moving.
 
 ### Session Management
 
-Every agent conversation is persisted and resumable. Star important sessions for quick access. Browse session history across projects. AgentHive automatically backs up the SQLite database hourly and caches session JSONL files incrementally. If an agent crashes mid-conversation, it recovers partial output and picks up where it left off. Your work is never lost.
+Every agent conversation is persisted and resumable. Star important sessions for quick access. Browse session history across projects. AgentHive automatically backs up the SQLite database and caches session JSONL files incrementally. If an agent crashes mid-conversation, it recovers partial output and picks up where it left off. Your work is never lost.
 
 ### Project Memory
 
@@ -34,17 +41,17 @@ Each project carries its own CLAUDE.md context that agents read on every task. A
 
 | Category | What you get |
 |---|---|
-| **Agent Control** | Start, stop, resume agents. Choose model per agent (Opus/Sonnet/Haiku). Set timeouts, permissions, and concurrency limits. |
+| **Agent Control** | Start, stop, resume agents. Choose model per agent (Opus/Sonnet/Haiku). Set timeouts and permission modes (supervised or autonomous). |
 | **Chat Interface** | Rich markdown rendering (code blocks, tables, images). Plan mode with approve/reject. Interactive cards for tool confirmations. |
 | **Mobile PWA** | Add to Home Screen on iOS/Android. Full functionality on mobile — voice input, push notifications, task management. |
 | **CLI Session Sync** | Import and live-tail your terminal Claude Code sessions. Read-only — never interferes with the CLI process. |
 | **Voice Input** | Dictate tasks using speech-to-text (OpenAI Whisper). Great for quick ideas on mobile. |
 | **Task Inbox** | Capture tasks as they come, organize by project, dispatch when ready. Drag to reorder priorities. |
-| **Push Notifications** | Get notified when agents finish, need input, or error out. Per-agent mute, global toggles, smart suppression when you're already looking. |
+| **Push Notifications** | Get notified when agents finish, need input, or error out. Supports Web Push and Telegram. Per-agent mute, global toggles, smart suppression. |
 | **Git Integration** | View commit history, diffs, and branch status per project. Agents work in isolated worktrees. |
 | **System Monitor** | Disk, memory, and GPU usage at a glance. Health checks for the backend and Claude CLI. |
-| **Security** | Password auth with rate limiting. Inactivity-based lock. Self-signed SSL for LAN encryption. |
-| **Backups** | Automatic hourly database backups. Session JSONL caching. Crash recovery with partial output salvage. |
+| **Security** | Password auth with exponential-backoff rate limiting. Inactivity-based lock. HTTPS encryption. |
+| **Backups** | Automatic database backups with configurable intervals. Session JSONL caching. Crash recovery with partial output salvage. |
 | **Dark/Light Theme** | System-aware theme toggle. |
 
 ## How It Works
@@ -53,16 +60,24 @@ Each project carries its own CLAUDE.md context that agents read on every task. A
 Your Phone / Browser
     |
     +-- AgentHive Frontend (React PWA, HTTPS)
+    |     +-- WebSocket  <-- real-time agent output, status, permissions
+    |     +-- REST API   <-- agent control, tasks, file uploads
     |
-    +-- AgentHive Backend (FastAPI)
+    +-- AgentHive Backend (FastAPI + Uvicorn)
           |
-          +-- Agent Dispatcher (manages lifecycle, queues, timeouts)
-          +-- tmux Sessions (one per agent)
-          |     +-- claude CLI (the same CLI you use in your terminal)
+          +-- Agent Dispatcher
+          |     +-- tmux sessions (one per agent)
+          |     |     +-- claude CLI (the same CLI you use in your terminal)
           |     +-- Isolated git worktrees per agent
-          +-- Session Sync (tails CLI JSONL files, read-only)
-          +-- Push Notifications (Web Push / VAPID)
-          +-- SQLite Database (conversations, state, config)
+          |     +-- Permission manager (tool approve/deny)
+          |     +-- Timeout & crash recovery
+          |
+          +-- Sync Engine (tails CLI JSONL files, read-only)
+          |     +-- Hook integration (SessionStart/End, tool events)
+          |
+          +-- Push Notifications (Web Push / VAPID + Telegram)
+          |
+          +-- SQLite Database + Automatic Backups
 ```
 
 AgentHive runs on your Linux machine (or any machine reachable over the network). It launches Claude Code CLI instances inside tmux sessions, streams their output to the web UI via WebSocket, and manages their lifecycle. You interact through the browser — from the same machine, from your laptop, or from your phone over Tailscale.
@@ -83,51 +98,62 @@ AgentHive runs on your Linux machine (or any machine reachable over the network)
 
 ```bash
 # 1. Clone
-git clone https://github.com/jyao97/AgentHive.git agenthive-main
-cd agenthive-main
+git clone https://github.com/jyao97/AgentHive.git && cd AgentHive
 
-# 2. Install system deps (if needed)
-sudo apt-get install -y python3 python3-pip python3-venv tmux
-npm install -g @anthropic-ai/claude-code
+# 2. Run automated setup (installs deps, creates venv, generates SSL certs)
+chmod +x setup.sh && ./setup.sh
 
 # 3. Configure
-cp .env.example .env
-nano .env   # Set HOST_PROJECTS_DIR, optionally OPENAI_API_KEY
+nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
 
-# 4. Set up Python
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r orchestrator/requirements.txt
-
-# 5. Create projects directory
-mkdir -p ~/agenthive-projects
-
-# 6. Generate SSL certs (needed for mobile mic access)
-mkdir -p certs
-LAN_IP=$(hostname -I | awk '{print $1}')
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout certs/selfsigned.key -out certs/selfsigned.crt \
-  -subj "/CN=agenthive" \
-  -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
-sudo cp certs/selfsigned.crt /usr/local/share/ca-certificates/agenthive.crt
-sudo update-ca-certificates
-
-# 7. Start backend
-./run.sh
-
-# 8. Start frontend (separate terminal)
-cd frontend && npm install && npm run dev
+# 4. Start
+./run.sh start
 ```
 
 Open `https://<machine-ip>:3000` in your browser. Set a password on first visit.
 
 On iPhone: Safari > Share > **Add to Home Screen** for a native app experience.
 
-For detailed setup, server management, and production deployment, see [QUICKSTART.md](QUICKSTART.md).
+<details>
+<summary><strong>Manual setup (without setup.sh)</strong></summary>
+
+```bash
+# Install system deps
+sudo apt-get install -y python3 python3-pip python3-venv tmux
+npm install -g @anthropic-ai/claude-code
+
+# Set up Python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r orchestrator/requirements.txt
+
+# Install frontend deps
+cd frontend && npm install && cd ..
+
+# Create projects directory
+mkdir -p ~/agenthive-projects
+
+# Configure
+cp .env.example .env
+nano .env
+
+# Generate SSL certs (needed for mobile mic access)
+mkdir -p certs
+LAN_IP=$(hostname -I | awk '{print $1}')
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/selfsigned.key -out certs/selfsigned.crt \
+  -subj "/CN=agenthive" \
+  -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
+
+# Start
+./run.sh start
+```
+
+</details>
 
 ## Configuration
 
-All settings live in `.env`:
+All settings live in `.env` (copy from `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
@@ -141,6 +167,12 @@ All settings live in `.env`:
 | `FRONTEND_PORT` | `3000` | Frontend HTTPS port |
 | `VAPID_PRIVATE_KEY` | — | Web Push private key _(optional)_ |
 | `VAPID_PUBLIC_KEY` | — | Web Push public key _(optional)_ |
+| `BACKUP_INTERVAL_HOURS` | `24` | Database backup interval |
+| `MAX_BACKUPS` | `48` | Number of backups to retain |
+| `AUTH_TIMEOUT_MINUTES` | `30` | Inactivity lock timeout |
+| `DISABLE_AUTH` | — | Set to `1` to disable auth (dev/trusted networks only) |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications _(optional)_ |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications _(optional)_ |
 
 ## Remote Access with Tailscale
 
@@ -156,20 +188,74 @@ No port forwarding, no public exposure. Tailscale creates a secure WireGuard tun
 
 ```
 ~/
-├── agenthive-main/              <- This repo
-│   ├── run.sh                   <- Launch script
-│   ├── orchestrator/            <- FastAPI backend
-│   ├── frontend/                <- React PWA
-│   ├── certs/                   <- SSL certificates
-│   ├── project-configs/         <- Project registry
-│   ├── data/                    <- SQLite database
-│   └── .env                     <- Configuration
+├── AgentHive/                      <- This repo
+│   ├── run.sh                      <- Launch script (systemd services)
+│   ├── setup.sh                    <- First-time setup script
+│   ├── orchestrator/               <- FastAPI backend
+│   ├── frontend/                   <- React PWA (Vite + TailwindCSS)
+│   ├── certs/                      <- SSL certificates
+│   ├── project-configs/            <- Project registry
+│   ├── data/                       <- SQLite database
+│   ├── backups/                    <- Automatic database backups
+│   ├── logs/                       <- Server and orchestrator logs
+│   └── .env                        <- Configuration
 │
-└── agenthive-projects/          <- Your project repositories
+└── agenthive-projects/             <- Your project repositories
     ├── my-web-app/
     ├── ml-pipeline/
     └── ...
 ```
+
+## Development
+
+```bash
+# Clone and setup
+git clone https://github.com/jyao97/AgentHive.git && cd AgentHive
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r orchestrator/requirements.txt
+cd frontend && npm install && cd ..
+cp .env.example .env
+
+# Start in development mode
+./run.sh start          # Backend (FastAPI) + Frontend (Vite dev server)
+
+# Run tests
+cd frontend && npx vitest run                          # Frontend tests
+cd orchestrator && python3 -m pytest tests/            # Backend tests
+
+# Verify backend modules
+cd orchestrator && python3 -c "from models import *; print('OK')"
+
+# Build frontend for production
+cd frontend && npx vite build
+
+# View logs
+./run.sh logs
+```
+
+### Project Structure
+
+| Directory | Description |
+|---|---|
+| `orchestrator/` | FastAPI backend — routers, models, sync engine, agent dispatcher |
+| `orchestrator/routers/` | API route handlers (agents, tasks, projects, auth, git, push) |
+| `orchestrator/tests/` | Pytest test suite |
+| `frontend/src/` | React 19 app — pages, components, hooks, contexts |
+| `frontend/src/pages/` | Main views (Agents, Chat, Projects, Inbox, Git, Settings) |
+| `project-configs/` | Per-project YAML registry and config files |
+
+## Updating
+
+```bash
+cd AgentHive
+git pull origin main
+source .venv/bin/activate
+pip install -r orchestrator/requirements.txt   # Update backend deps
+cd frontend && npm install && cd ..            # Update frontend deps
+./run.sh restart
+```
+
+AgentHive uses SQLite — database migrations are handled automatically on startup when the schema changes. Your data and configuration are preserved across updates.
 
 ## Troubleshooting
 
@@ -194,7 +280,7 @@ AgentHive uses a self-signed SSL certificate. Your server trusts it after setup,
 
 **Download the cert** from another machine:
 ```bash
-scp user@server-ip:~/agenthive-main/certs/selfsigned.crt ~/agenthive.crt
+scp user@server-ip:~/AgentHive/certs/selfsigned.crt ~/agenthive.crt
 ```
 
 <details>
@@ -243,12 +329,34 @@ After installing, restart your browser.
 
 ## Security
 
-- Password authentication with exponential backoff rate limiting
-- Inactivity-based session lock (configurable timeout)
-- All traffic encrypted via HTTPS (self-signed or custom cert)
-- OAuth tokens stored in `.env`, never exposed to agents
-- Agents run as host subprocesses with configurable timeouts and permission controls
-- Per-project concurrency limits prevent resource starvation
+AgentHive is designed for self-hosted, single-user or trusted-network deployments.
+
+| Layer | Implementation |
+|---|---|
+| **Authentication** | Password with SHA-256 hashing. Exponential backoff rate limiting (locks after 5 failed attempts, up to 1-hour lockout). |
+| **Session Management** | JWT tokens with 24-hour server expiry + configurable inactivity timeout (default 30 min). |
+| **Encryption** | All traffic over HTTPS (self-signed or custom cert). OAuth tokens stored in `.env`, never exposed to agents. |
+| **Agent Isolation** | Each agent runs in its own tmux session with a dedicated git worktree. Configurable permission modes: supervised (every tool call requires approval) or autonomous. Read-only tools (Read, Glob, Grep, WebSearch) are always auto-approved. |
+| **Process Safety** | Agents run as host subprocesses with configurable timeouts. Global concurrency limits prevent resource starvation. |
+| **Backups** | Automatic periodic backups (SQLite + project configs + PROGRESS.md files). Path traversal validation on imports. |
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+
+- Reporting bugs and suggesting features
+- Setting up a development environment
+- Running tests and submitting pull requests
+
+## Roadmap
+
+Planned improvements (contributions welcome):
+
+- [ ] **Docker deployment** — one-command setup via Docker Compose
+- [ ] **Multi-user support** — role-based access for teams
+- [ ] **Additional LLM providers** — support for non-Anthropic models
+- [ ] **Plugin system** — extensible agent capabilities
+- [ ] **Improved mobile experience** — native-feeling gestures and offline support
 
 ## License
 
