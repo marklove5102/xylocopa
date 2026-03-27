@@ -1889,12 +1889,6 @@ async def update_project_settings(name: str, request: Request, db: Session = Dep
         proj.auto_progress_summary = bool(body["auto_progress_summary"])
     if "ai_insights" in body:
         proj.ai_insights = bool(body["ai_insights"])
-    if "max_concurrent" in body:
-        val = int(body["max_concurrent"])
-        if val < 1:
-            raise HTTPException(status_code=400, detail="max_concurrent must be >= 1")
-        proj.max_concurrent = val
-
     db.commit()
     db.refresh(proj)
     return ProjectOut.model_validate(proj)
