@@ -31,7 +31,7 @@ import {
 import ProjectFileModal from "../components/ProjectFileModal";
 import FloatingTaskCard from "../components/FloatingTaskCard";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
-import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
+import { relativeTime, renderMarkdown, extractFileAttachments } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
 
 // Mini error boundary that wraps individual markdown renders so a single
@@ -111,9 +111,10 @@ function SystemBubble({ message }) {
 
 // --- Stop note card (Redo / Drop) ---
 function StopNoteCard({ message }) {
-  const isDrop = message.content.startsWith("Task dropped");
+  const meta = message.metadata || {};
+  const isDrop = meta.stop_action ? meta.stop_action === "dropped" : message.content.startsWith("Task dropped");
   const label = isDrop ? "Dropped" : "Redo";
-  const note = message.content.replace(/^(Task dropped|Redo)\s*—\s*/, "");
+  const note = meta.stop_action ? message.content : message.content.replace(/^(Task dropped|Redo)\s*—\s*/, "");
   const color = isDrop ? "gray" : "amber";
   return (
     <div className={`mx-4 my-3 rounded-xl border px-4 py-3 ${
@@ -134,10 +135,11 @@ function StopNoteCard({ message }) {
 
 function SubAgentBubble({ message, project }) {
   const [expanded, setExpanded] = useState(false);
+  const tn = message.metadata?.task_notification;
   const content = message.content || "";
-  const status = content.match(/<status>(.*?)<\/status>/s)?.[1] || "";
-  const summary = content.match(/<summary>([\s\S]*?)<\/summary>/)?.[1] || "";
-  const result = content.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim();
+  const status = tn?.status || content.match(/<status>(.*?)<\/status>/s)?.[1] || "";
+  const summary = tn?.summary || content.match(/<summary>([\s\S]*?)<\/summary>/)?.[1] || "";
+  const result = tn?.result ?? content.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim();
 
   const statusColor = status === "completed"
     ? "text-emerald-400"
@@ -1025,14 +1027,14 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     return null;
   }
   if (message.role === "SYSTEM") {
-    if (message.content.startsWith("Task dropped") || message.content.startsWith("Redo")) {
+    if (message.metadata?.stop_action || message.content.startsWith("Task dropped") || message.content.startsWith("Redo")) {
       return <StopNoteCard message={message} />;
     }
     return <SystemBubble message={message} />;
   }
 
   // Sub-agent task notifications get their own collapsible bubble
-  if ((message.content || "").trimStart().startsWith("<task-notification>")) {
+  if (message.metadata?.task_notification || (message.content || "").trimStart().startsWith("<task-notification>")) {
     return <SubAgentBubble message={message} project={project} />;
   }
 
@@ -1162,17 +1164,16 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   };
 
   const attachments = useMemo(
-    () => extractFileAttachments(message.content, project, message.role),
-    [message.content, project, message.role],
+    () => extractFileAttachments(message.content, project, message.role, message.metadata),
+    [message.content, project, message.role, message.metadata],
   );
 
   // Strip [Attached file: ...] tags from user message display text.
   // When contentOverride is provided (interleaved mode), use it directly.
   const displayContent = useMemo(() => {
     if (contentOverride != null) return contentOverride;
-    if (isUser) return stripAttachmentTags(message.content);
     return message.content;
-  }, [contentOverride, isUser, message.content]);
+  }, [contentOverride, message.content]);
 
   const scheduledTime = isScheduled
     ? new Date(message.scheduled_at).toLocaleTimeString([], TIME_SHORT)
