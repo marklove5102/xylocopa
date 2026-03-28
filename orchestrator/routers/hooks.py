@@ -435,32 +435,11 @@ async def hook_agent_post_compact(request: Request):
         if _compact_activity_id:
             update_last(agent_id, _compact_activity_id)
 
-        # 4. Write "Conversation compacted" system bubble to display file.
-        #    Don't wait for the sync loop — write it now so it appears immediately.
-        #    _create_system_msg in sync_engine will content-dedup if sync re-imports.
-        #    Use /compact message's completed_at as the anchor — this is the moment
-        #    compact finished, guaranteed before the new session's JSONL timestamps.
-        _compact_ts = compact_msg.completed_at if compact_msg else _utcnow()
-        compact_sys = Message(
-            agent_id=agent_id,
-            role=MessageRole.SYSTEM,
-            content="Conversation compacted",
-            status=MessageStatus.COMPLETED,
-            source="hook",
-            created_at=_compact_ts,
-            completed_at=_compact_ts,
-            delivered_at=_compact_ts,
-            jsonl_uuid=f"compact-sys-{agent_id[:8]}",
-        )
-        db.add(compact_sys)
+        # 4. "Conversation compacted" system bubble: created by sync engine
+        #    from JSONL (compact_boundary).  Do NOT write to DB here — avoids
+        #    jsonl_uuid collision with sync engine's dedup.
 
         # 5. Status transition handled by _stop_generating below.
-
-        db.commit()
-
-        # Don't flush here — let the deferred sync loop pick up both the
-        # "Conversation compacted" and "This session is being continued..."
-        # messages in a single flush_agent() call so they appear together.
 
         # 6. Emit completed_at update so frontend shows double tick.
         if compact_msg:
@@ -774,123 +753,52 @@ async def hook_agent_tool_activity(request: Request):
         if _ctx and _ctx.compact_notified:
             _in_compact = True
     if tool_name and phase and not (kind == "subagent" and _in_compact):
-        from database import SessionLocal as _SL2
-        from uuid import uuid4
-        _db2 = _SL2()
-        try:
-            _tool_use_id = body.get("tool_use_id", "") or ""
-            _tool_uuid = f"tool-{_tool_use_id}" if _tool_use_id else f"tool-{uuid4().hex[:12]}"
-
-            if phase in ("start", "permission"):
-                _tool_msg = Message(
-                    agent_id=agent_id,
-                    role=MessageRole.SYSTEM,
-                    kind="tool_activity",
-                    content=summary or "",
-                    source="hook",
-                    status=MessageStatus.EXECUTING,
-                    meta_json=json.dumps({
+        # Tool activity messages are created by the sync engine from JSONL
+        # (same tool-{tool_use_id} UUID).  Hooks must NOT write them to DB
+        # to avoid UNIQUE constraint collisions on jsonl_uuid.
+        #
+        # Permission cards are hook-only (no jsonl_uuid, not in JSONL) —
+        # these still need a DB write.
+        if phase in ("start", "permission") and kind == "permission":
+            from database import SessionLocal as _SL2
+            from uuid import uuid4
+            _db2 = _SL2()
+            try:
+                _perm_id = f"perm-{uuid4().hex[:12]}"
+                _perm_question = summary or f"{tool_name} requires permission"
+                _perm_meta = {
+                    "interactive": [{
+                        "type": "permission_prompt",
+                        "tool_use_id": _perm_id,
                         "tool_name": tool_name,
-                        "tool_kind": kind,
-                        "tool_use_id": _tool_use_id,
-                        "phase": "start",
-                    }),
-                    jsonl_uuid=_tool_uuid,
+                        "questions": [{
+                            "header": "Permission",
+                            "question": _perm_question,
+                            "options": [
+                                {"label": "Yes", "description": "Allow this operation"},
+                                {"label": "Yes, and always allow", "description": "Don't ask again for this scope"},
+                                {"label": "No", "description": "Block this operation"},
+                            ],
+                        }],
+                        "answer": None,
+                    }],
+                }
+                _perm_msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.AGENT,
+                    kind=None,
+                    content="",
+                    source="hook",
+                    status=MessageStatus.COMPLETED,
+                    meta_json=json.dumps(_perm_meta),
+                    tool_use_id=_perm_id,
                 )
-                _db2.add(_tool_msg)
+                _db2.add(_perm_msg)
                 _db2.commit()
-                # Flush immediately so tool_activity persists in the
-                # display file.  WS events provide real-time feedback,
-                # but the display file is the durable source of truth.
                 from display_writer import flush_agent as _flush_ta
                 _flush_ta(agent_id)
-
-                # --- Native permission prompt: interactive card ---
-                # When Claude Code shows a permission prompt in the terminal
-                # (e.g. sensitive-file access), create an interactive card so
-                # the user can respond from the web UI via tmux keys.
-                if kind == "permission":
-                    _perm_id = f"perm-{uuid4().hex[:12]}"
-                    _perm_question = summary or f"{tool_name} requires permission"
-                    _perm_meta = {
-                        "interactive": [{
-                            "type": "permission_prompt",
-                            "tool_use_id": _perm_id,
-                            "tool_name": tool_name,
-                            "questions": [{
-                                "header": "Permission",
-                                "question": _perm_question,
-                                "options": [
-                                    {"label": "Yes", "description": "Allow this operation"},
-                                    {"label": "Yes, and always allow", "description": "Don't ask again for this scope"},
-                                    {"label": "No", "description": "Block this operation"},
-                                ],
-                            }],
-                            "answer": None,
-                        }],
-                    }
-                    _perm_msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.AGENT,
-                        kind=None,
-                        content="",
-                        source="hook",
-                        status=MessageStatus.COMPLETED,
-                        meta_json=json.dumps(_perm_meta),
-                        tool_use_id=_perm_id,
-                    )
-                    _db2.add(_perm_msg)
-                    _db2.commit()
-                    _flush_ta(agent_id)
-
-            elif phase == "end":
-                # Find the start message by tool UUID
-                _existing = (
-                    _db2.query(Message)
-                    .filter(
-                        Message.agent_id == agent_id,
-                        Message.jsonl_uuid == _tool_uuid,
-                    )
-                    .first()
-                )
-                if _existing:
-                    _meta = json.loads(_existing.meta_json or "{}")
-                    _meta["phase"] = "end"
-                    _meta["output_summary"] = output_summary or ""
-                    _meta["is_error"] = is_error
-                    _existing.meta_json = json.dumps(_meta)
-                    _existing.completed_at = _utcnow()
-                    _existing.status = MessageStatus.COMPLETED
-                    _db2.commit()
-                    from display_writer import flush_agent, update_last
-                    flush_agent(agent_id)
-                    update_last(agent_id, _existing.id)
-                else:
-                    # No matching start — insert a completed record
-                    _tool_msg = Message(
-                        agent_id=agent_id,
-                        role=MessageRole.SYSTEM,
-                        kind="tool_activity",
-                        content=summary or "",
-                        source="hook",
-                        status=MessageStatus.COMPLETED,
-                        completed_at=_utcnow(),
-                        meta_json=json.dumps({
-                            "tool_name": tool_name,
-                            "tool_kind": kind,
-                            "tool_use_id": _tool_use_id,
-                            "phase": "end",
-                            "output_summary": output_summary or "",
-                            "is_error": is_error,
-                        }),
-                        jsonl_uuid=_tool_uuid,
-                    )
-                    _db2.add(_tool_msg)
-                    _db2.commit()
-                    from display_writer import flush_agent
-                    flush_agent(agent_id)
-        finally:
-            _db2.close()
+            finally:
+                _db2.close()
 
     # Wake the JSONL sync loop so new message content is picked up
     # immediately instead of waiting for the next poll cycle.
