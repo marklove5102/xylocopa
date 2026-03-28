@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import uuid
 
 from config import CLAUDE_BIN, PROJECTS_DIR
@@ -132,7 +133,7 @@ class WorkerManager:
         """Start an ephemeral worker subprocess for a task. Returns PID string."""
         prompt = self._build_prompt(task, project)
         project_path = project.path
-        output_file = f"/tmp/claude-output-{uuid.uuid4().hex[:8]}.log"
+        output_file = os.path.join(tempfile.gettempdir(), f"claude-output-{uuid.uuid4().hex[:8]}.log")
 
         cmd = [
             CLAUDE_BIN, "-p", prompt,

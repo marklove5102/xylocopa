@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import time as _time
@@ -1636,7 +1637,7 @@ async def permanently_delete_agent(agent_id: str, request: Request, db: Session 
 
     # 5. Delete output log files for all messages
     for mid in msg_ids:
-        log_path = f"/tmp/claude-output-{mid}.log"
+        log_path = os.path.join(tempfile.gettempdir(), f"claude-output-{mid}.log")
         if os.path.isfile(log_path):
             try:
                 os.remove(log_path)
