@@ -147,6 +147,7 @@ class _AgentBase(BaseModel):
     claude_agent_id: str | None = None
     is_generating: bool = False
     has_pending_suggestions: bool = False
+    insight_status: str | None = None
 
     model_config = {"from_attributes": True}
 

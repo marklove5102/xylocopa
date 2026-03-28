@@ -483,6 +483,13 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Add insight_status column to agents if missing ---
+        if "insight_status" not in agent_cols_suggestions:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN insight_status VARCHAR(20)"
+            ))
+            conn.commit()
+
         # --- progress_insights FTS5 ---
         tables = [r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"
