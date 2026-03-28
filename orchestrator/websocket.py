@@ -174,12 +174,16 @@ async def emit_system_alert(message: str, level: str = "warning"):
     })
 
 
-async def emit_agent_update(agent_id: str, status: str, project: str):
-    await ws_manager.broadcast("agent_update", {
+async def emit_agent_update(agent_id: str, status: str, project: str,
+                            insight_status: str | None = None):
+    data = {
         "agent_id": agent_id,
         "status": status,
         "project": project,
-    })
+    }
+    if insight_status is not None:
+        data["insight_status"] = insight_status
+    await ws_manager.broadcast("agent_update", data)
 
 
 async def emit_new_message(agent_id: str, message_id: str,

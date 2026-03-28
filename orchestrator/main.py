@@ -127,6 +127,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to rebuild display files on startup")
 
+    # Mark interrupted insight generations as failed
+    try:
+        from models import Agent
+        _startup_db = SessionLocal()
+        _stuck = _startup_db.query(Agent).filter(Agent.insight_status == "generating").all()
+        for _a in _stuck:
+            _a.insight_status = "failed"
+            logger.info("Marked interrupted insight generation as failed for agent %s", _a.id)
+        if _stuck:
+            _startup_db.commit()
+        _startup_db.close()
+    except Exception:
+        logger.exception("Failed to mark interrupted insight generations")
+
     db = SessionLocal()
     try:
         load_registry(db)

@@ -256,6 +256,8 @@ export const applyAgentSuggestions = (agentId, payload) =>
   });
 export const discardAgentSuggestions = (agentId) =>
   request(`/api/agents/${agentId}/suggestions`, { method: "DELETE" });
+export const regenerateAgentInsights = (agentId) =>
+  request(`/api/agents/${agentId}/regenerate-insights`, { method: "POST" });
 
 // --- Message search ---
 export const searchMessages = (query, { project, role, limit } = {}) => {

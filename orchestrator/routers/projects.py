@@ -454,6 +454,29 @@ def _gather_agent_conversation_context(db, agent_id: str) -> str:
     return "\n".join(parts)
 
 
+def _set_insight_status(agent_id: str, status: str | None, project_name: str = ""):
+    """Set insight_status on an agent and emit WS update (from background thread)."""
+    own_db = SessionLocal()
+    _agent_status = None
+    try:
+        agent = own_db.get(Agent, agent_id)
+        if agent:
+            agent.insight_status = status
+            _agent_status = agent.status.value if agent.status else "STOPPED"
+            own_db.commit()
+    finally:
+        own_db.close()
+
+    from websocket import emit_agent_update
+    loop = _main_event_loop
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            emit_agent_update(agent_id, _agent_status or "STOPPED", project_name,
+                              insight_status=status or ""),
+            loop,
+        )
+
+
 def _run_agent_summary_background(agent_id: str, agent_name: str,
                                   task_title: str, project_name: str,
                                   project_path: str):
@@ -468,6 +491,7 @@ def _run_agent_summary_background(agent_id: str, agent_name: str,
 
     if not context:
         logger.info("No conversation context for agent %s — skipping summary", agent_id)
+        _set_insight_status(agent_id, "failed", project_name)
         return
 
     prompt = f"""You are a project analyst. Read the following agent conversation and extract insights worth remembering for PROGRESS.md.
@@ -499,18 +523,26 @@ Agent: {agent_name} | Task: {task_title}
         if result.returncode != 0:
             logger.warning("Agent summary failed for %s (rc=%d): %s",
                            agent_id, result.returncode, result.stderr[:500])
+            _set_insight_status(agent_id, "failed", project_name)
             return
 
         raw_output = result.stdout.strip()
     except subprocess.TimeoutExpired:
         logger.warning("Agent summary timed out for %s", agent_id)
+        _set_insight_status(agent_id, "failed", project_name)
         return
     except FileNotFoundError:
         logger.warning("Claude CLI not found for agent summary")
+        _set_insight_status(agent_id, "failed", project_name)
+        return
+    except Exception:
+        logger.exception("Unexpected error in agent summary for %s", agent_id)
+        _set_insight_status(agent_id, "failed", project_name)
         return
 
     if not raw_output:
         logger.info("Claude returned empty output for agent %s summary", agent_id)
+        _set_insight_status(agent_id, "failed", project_name)
         return
 
     # Strip markdown fences if LLM wrapped output
@@ -526,6 +558,7 @@ Agent: {agent_name} | Task: {task_title}
     insight_items = re.findall(r"^\d+\.\s+(.+)", raw_output, re.MULTILINE)
     if not insight_items:
         logger.info("No insights parsed from agent %s summary", agent_id)
+        _set_insight_status(agent_id, "failed", project_name)
         return
 
     # Store as AgentInsightSuggestion rows
@@ -539,6 +572,7 @@ Agent: {agent_name} | Task: {task_title}
         agent = own_db.get(Agent, agent_id)
         if agent:
             agent.has_pending_suggestions = True
+            agent.insight_status = None  # Clear — success
             # Save combined insights as task agent_summary (replaces the
             # quick last_message_preview saved at stop time)
             if agent.task_id:

@@ -1417,6 +1417,8 @@ async def stop_agent(agent_id: str, request: Request,
 
     # Spawn background summary thread if requested
     if _should_summarize:
+        agent.insight_status = "generating"
+        db.commit()
         thread = threading.Thread(
             target=_run_agent_summary_background,
             args=(agent.id, agent.name, _task_title, agent.project, _project_path),
@@ -1563,6 +1565,44 @@ async def discard_agent_suggestions(agent_id: str, db: Session = Depends(get_db)
     ).update({"status": "rejected"})
     agent.has_pending_suggestions = False
     db.commit()
+    return {"success": True}
+
+
+@router.post("/api/agents/{agent_id}/regenerate-insights")
+async def regenerate_agent_insights(agent_id: str, db: Session = Depends(get_db)):
+    """Re-trigger insight generation for a stopped agent (e.g. after interrupted generation)."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.status != AgentStatus.STOPPED:
+        raise HTTPException(status_code=400, detail="Agent must be stopped")
+    if agent.insight_status == "generating":
+        raise HTTPException(status_code=400, detail="Already generating")
+    if agent.has_pending_suggestions:
+        raise HTTPException(status_code=400, detail="Suggestions already pending")
+
+    # Need task + project path for context
+    _task_title = "Unknown task"
+    _project_path = None
+    if agent.task_id:
+        _t = db.get(Task, agent.task_id)
+        if _t:
+            _task_title = _t.title or "Unknown task"
+    _p = db.get(Project, agent.project)
+    _project_path = _p.path if _p else None
+    if not _project_path:
+        raise HTTPException(status_code=400, detail="Project path not found")
+
+    agent.insight_status = "generating"
+    db.commit()
+
+    thread = threading.Thread(
+        target=_run_agent_summary_background,
+        args=(agent.id, agent.name, _task_title, agent.project, _project_path),
+        daemon=True,
+    )
+    thread.start()
+    logger.info("Regenerating insights for agent %s", agent.id)
     return {"success": True}
 
 

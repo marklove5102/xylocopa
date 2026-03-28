@@ -24,6 +24,7 @@ import {
   fetchProcessedSuggestions,
   applyAgentSuggestions,
   discardAgentSuggestions,
+  regenerateAgentInsights,
   fetchTaskV2,
   wakeSync,
 } from "../lib/api";
@@ -747,6 +748,53 @@ function ProgressSuggestionsCard({ agentId, onDone }) {
           Discard All
         </button>
       </div>
+    </div>
+  );
+}
+
+function InsightStatusCard({ status, agentId, onRetry }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleRetry = async () => {
+    setSubmitting(true);
+    try {
+      await regenerateAgentInsights(agentId);
+      onRetry?.();
+    } catch (err) {
+      console.error("Failed to regenerate insights:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (status === "generating") {
+    return (
+      <div className="mt-4 rounded-xl bg-blue-500/10 border border-blue-500/20 p-3 flex items-center gap-2">
+        <svg className="w-4 h-4 text-blue-400/60 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span className="text-sm text-blue-300/70">Generating insights...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-xl bg-red-500/10 border border-red-500/20 p-3 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <svg className="w-4 h-4 text-red-400/60" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+        </svg>
+        <span className="text-sm text-red-300/70">Insight generation failed</span>
+      </div>
+      <button
+        type="button"
+        onClick={handleRetry}
+        disabled={submitting}
+        className="text-xs px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300/80 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+      >
+        {submitting ? "Retrying..." : "Retry"}
+      </button>
     </div>
   );
 }
@@ -2964,7 +3012,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const status = event.data.status;
       // Update agent status directly from WS — no wait for REST poll
       if (event.data.agent_id === id) {
-        setAgent((prev) => prev ? { ...prev, status } : prev);
+        const patch = { status };
+        if ("insight_status" in event.data) {
+          patch.insight_status = event.data.insight_status || null;
+        }
+        setAgent((prev) => prev ? { ...prev, ...patch } : prev);
       }
       if (status !== "EXECUTING" && status !== "IDLE") {
         clearTimeout(streamTimeoutRef.current);
@@ -2977,6 +3029,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
 
     if (event.type === "progress_suggestions_ready") {
+      if (event.data.agent_id === id) {
+        setAgent((prev) => prev ? { ...prev, has_pending_suggestions: true, insight_status: null } : prev);
+      }
       loadData();
       showToast("Insights ready for review");
     }
@@ -3737,10 +3792,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
 
         {/* Progress suggestions card */}
-        {agent?.has_pending_suggestions && agent?.status === "STOPPED" && (
+        {agent?.status === "STOPPED" && agent?.insight_status === "generating" && (
+          <InsightStatusCard status="generating" agentId={id} onRetry={loadData} />
+        )}
+        {agent?.status === "STOPPED" && agent?.insight_status === "failed" && (
+          <InsightStatusCard status="failed" agentId={id} onRetry={loadData} />
+        )}
+        {agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <ProgressSuggestionsCard agentId={id} onDone={loadData} />
         )}
-        {!agent?.has_pending_suggestions && agent?.status === "STOPPED" && (
+        {!agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <InsightsHistoryCard agentId={id} />
         )}
 
