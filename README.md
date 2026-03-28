@@ -246,17 +246,6 @@ cd frontend && npx vite build
 ./run.sh logs
 ```
 
-### Project Structure
-
-| Directory | Description |
-|---|---|
-| `orchestrator/` | FastAPI backend — routers, models, sync engine, agent dispatcher |
-| `orchestrator/routers/` | API route handlers (agents, tasks, projects, auth, git, push) |
-| `orchestrator/tests/` | Pytest test suite |
-| `frontend/src/` | React 19 app — pages, components, hooks, contexts |
-| `frontend/src/pages/` | Main views (Agents, Chat, Projects, Inbox, Git, Settings) |
-| `project-configs/` | Per-project YAML registry and config files |
-
 ## Updating
 
 ```bash
@@ -269,23 +258,6 @@ cd frontend && npm install && cd ..            # Update frontend deps
 ```
 
 AgentHive uses SQLite — database migrations are handled automatically on startup when the schema changes. Your data and configuration are preserved across updates.
-
-## Troubleshooting
-
-**Can't access from phone?**
-Make sure port 3000 is open (`sudo ufw allow 3000`). Accept the self-signed certificate in your browser (tap "Advanced" > "Proceed").
-
-**Agent fails to start?**
-Check `logs/orchestrator.log`. Usually an expired OAuth token — run `claude setup-token` again.
-
-**Voice input not working?**
-Microphone requires HTTPS. Make sure you're accessing via `https://` and have valid SSL certs.
-
-**Rate limited?**
-Claude Max has usage limits. Reduce `MAX_CONCURRENT_WORKERS` or switch to a smaller model (Sonnet/Haiku).
-
-**"Address already in use"?**
-Another process is using the port. Kill it: `lsof -ti:8080 | xargs kill`
 
 ## Installing the CA Certificate
 
