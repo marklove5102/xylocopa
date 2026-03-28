@@ -135,6 +135,27 @@ body::after {
   height: 1px;
 }
 
+/* ── User bubble markdown overrides (white-on-cyan) ── */
+.user-md h2, .user-md h3, .user-md h4 { color: inherit; }
+.user-md p { color: inherit; }
+.user-md code {
+  background: rgba(255,255,255,0.2);
+  color: inherit;
+}
+.user-md pre {
+  background: rgba(0,0,0,0.15);
+  color: rgba(255,255,255,0.95);
+}
+.user-md pre code {
+  background: transparent;
+}
+.user-md table { color: inherit; }
+.user-md th { color: inherit; border-color: rgba(255,255,255,0.3); }
+.user-md td { border-color: rgba(255,255,255,0.2); }
+.user-md tr:nth-child(odd) { background: rgba(255,255,255,0.06); }
+.user-md .border-divider { border-color: rgba(255,255,255,0.25); }
+.user-md a { color: rgba(255,255,255,0.9); text-decoration: underline; }
+
 /* ── dvh fallback for browsers that don't support it ── */
 @supports not (height: 100dvh) {
   .h-dvh {

@@ -169,7 +169,7 @@ export function renderMarkdown(text, project) {
 
     // Regular paragraph — apply inline formatting
     elements.push(
-      <p key={elements.length} className="text-sm text-body leading-relaxed">
+      <p key={elements.length} className="text-sm text-body leading-relaxed break-words">
         {renderInline(line)}
       </p>
     );
