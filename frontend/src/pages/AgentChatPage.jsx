@@ -1021,9 +1021,9 @@ function splitMessageSegments(content) {
 function AgentTextSegment({ text, project }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[85%]">
-        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md">
-          <div className="text-sm">
+      <div className="max-w-[85%] min-w-0">
+        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
+          <div className="text-sm break-words overflow-hidden">
             <SafeMarkdown fallback={text}>
               {renderMarkdown(text, project)}
             </SafeMarkdown>
@@ -1203,7 +1203,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
     return (
       <div className="flex justify-end my-2">
-        <div className="max-w-[85%]">
+        <div className="max-w-[85%] min-w-0">
           <div className="rounded-2xl px-4 py-2.5 bg-amber-600/60 text-white rounded-br-md space-y-2 overflow-hidden">
             <textarea
               ref={editTextareaRef}
@@ -1257,7 +1257,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
-      <div className={`max-w-[85%] relative ${isUser ? "flex flex-col items-end" : ""}`}>
+      <div className={`max-w-[85%] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2" : undefined}>
         {isUndeliveredTimedOut && (
           <div className="flex-shrink-0 text-red-400" title="Message not delivered — Claude may not have received this">
@@ -1279,7 +1279,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                       ? "bg-cyan-600/70 text-white/80 rounded-br-md"
                       : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
-          } ${canModify ? "select-none" : ""}`}
+          } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
           onTouchStart={handleLongPressStart}
           onTouchEnd={handleLongPressEnd}
@@ -1313,10 +1313,16 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 </div>
               </div>
             ) : (
-              displayContent && <p className="text-sm whitespace-pre-wrap break-words">{displayContent}</p>
+              displayContent && (
+                <div className="text-sm user-md break-words overflow-hidden">
+                  <SafeMarkdown fallback={displayContent}>
+                    {renderMarkdown(displayContent, project)}
+                  </SafeMarkdown>
+                </div>
+              )
             )
           ) : (
-            <div className="text-sm" ref={markdownRef} onClick={handleMarkdownClick}>
+            <div className="text-sm break-words overflow-hidden" ref={markdownRef} onClick={handleMarkdownClick}>
               <SafeMarkdown fallback={displayContent}>
                 {renderMarkdown(displayContent, project)}
               </SafeMarkdown>
@@ -1655,9 +1661,9 @@ function SyncPrompt({ agentId, onSync }) {
 function StreamingBubble({ content, project, activeTool }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[85%]">
-        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md">
-          <div className="text-sm">
+      <div className="max-w-[85%] min-w-0">
+        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
+          <div className="text-sm break-words overflow-hidden">
             <SafeMarkdown fallback={content}>
               {renderMarkdown(content, project)}
             </SafeMarkdown>
