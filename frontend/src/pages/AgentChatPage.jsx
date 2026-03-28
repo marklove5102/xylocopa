@@ -3333,26 +3333,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             ) : (
               /* Full: icon buttons */
               <div className="shrink-0 flex items-center">
-                {["CLAUDE.md", "PROGRESS.md"].map((fn) => {
-                  const letter = fn === "CLAUDE.md" ? "C" : "P";
-                  const exists = fileExists[fn];
-                  const color = exists === false ? "text-zinc-500 hover:text-zinc-400" : "text-cyan-400 hover:text-cyan-300";
-                  return (
-                    <button
-                      key={fn}
-                      type="button"
-                      onClick={() => setFileModal(fn)}
-                      title={fn}
-                      className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors ${color}`}
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
-                        <text x="12" y="17" textAnchor="middle" fill="currentColor" stroke="none" fontSize="7" fontWeight="700" fontFamily="system-ui">{letter}</text>
-                      </svg>
-                    </button>
-                  );
-                })}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await wakeSync(id);
+                      setTimeout(() => refreshMessages(), 800);
+                    } catch {}
+                  }}
+                  title="Refresh (incremental sync)"
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-cyan-400 hover:bg-input transition-colors"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.49 9A9 9 0 005.64 5.64L4 4m16 16l-1.64-1.64A9 9 0 014.51 15" />
+                  </svg>
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowBrowser(true)}
