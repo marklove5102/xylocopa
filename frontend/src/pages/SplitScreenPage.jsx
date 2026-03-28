@@ -148,7 +148,7 @@ function PaneShell({ theme, onToggleTheme, onPathChange }) {
 
       {/* Pane bottom nav — reuses shared BottomNavBar component */}
       {!hideNav && (
-        <BottomNavBar className="shrink-0 flex justify-center px-3 pb-1.5 -mt-1" />
+        <BottomNavBar className="shrink-0 flex justify-center px-3 pb-1.5 -mt-1 relative z-20" />
       )}
     </div>
   );
