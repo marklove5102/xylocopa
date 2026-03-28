@@ -149,7 +149,7 @@ function SubAgentBubble({ message, project }) {
 
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%]">
+      <div className="max-w-[85%]">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -1021,7 +1021,7 @@ function splitMessageSegments(content) {
 function AgentTextSegment({ text, project }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] min-w-0">
+      <div className="max-w-[85%] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={text}>
@@ -1257,7 +1257,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
-      <div className={`max-w-[70%] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
+      <div className={`${isUser ? "max-w-[70%]" : "max-w-[85%]"} min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2" : undefined}>
         {isUndeliveredTimedOut && (
           <div className="flex-shrink-0 text-red-400" title="Message not delivered — Claude may not have received this">
@@ -1504,7 +1504,7 @@ function ToolLogBubble({ entries }) {
 
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] rounded-2xl px-4 py-2.5 bg-surface shadow-card rounded-bl-md">
+      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-surface shadow-card rounded-bl-md">
         <div className="space-y-0.5 text-xs font-mono">
           {shouldCollapse && !expanded ? (
             <button type="button" onClick={() => setExpanded(true)} className="flex items-center gap-1.5 text-dim hover:text-cyan-300">
@@ -1579,7 +1579,7 @@ function ToolActivityBubble({ message }) {
 
   return (
     <div className="flex justify-start my-1">
-      <div className="max-w-[70%] rounded-2xl px-3 py-1.5 bg-surface shadow-card rounded-bl-md">
+      <div className="max-w-[85%] rounded-2xl px-3 py-1.5 bg-surface shadow-card rounded-bl-md">
         <div className={`flex items-center gap-1.5 text-xs font-mono ${isError ? "text-red-400" : "text-dim"}`}>
           <span className="shrink-0">{icon()}</span>
           <span className={nameColor()}>{toolName}</span>
@@ -1661,7 +1661,7 @@ function SyncPrompt({ agentId, onSync }) {
 function StreamingBubble({ content, project, activeTool }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] min-w-0">
+      <div className="max-w-[85%] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={content}>
