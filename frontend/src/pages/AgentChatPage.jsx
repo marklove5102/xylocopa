@@ -1203,7 +1203,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
     return (
       <div className="flex justify-end my-2">
-        <div className="max-w-[70%] min-w-0">
+        <div className="max-w-[85%] min-w-0">
           <div className="rounded-2xl px-4 py-2.5 bg-amber-600/60 text-white rounded-br-md space-y-2 overflow-hidden">
             <textarea
               ref={editTextareaRef}
@@ -1257,7 +1257,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
-      <div className={`${isUser ? "max-w-[70%]" : "max-w-[85%]"} min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
+      <div className={`max-w-[85%] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2" : undefined}>
         {isUndeliveredTimedOut && (
           <div className="flex-shrink-0 text-red-400" title="Message not delivered — Claude may not have received this">
