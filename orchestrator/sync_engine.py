@@ -309,31 +309,6 @@ def _create_system_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, kind, jso
             logger.debug("Agent %s: dedup skip uuid=%s", ctx.agent_id[:8], jsonl_uuid)
             return None
 
-    # Content dedup for "Conversation compacted" — PostCompact hook may have
-    # already written this with a different UUID (compact-sys-...).
-    # Adopt the JSONL UUID *and* timestamp so the bubble sorts correctly
-    # relative to the post-compact summary turn.  The hook fires after Claude
-    # writes the JSONL, so the hook timestamp is always later; the JSONL
-    # compact_boundary timestamp is authoritative.
-    if content == "Conversation compacted":
-        existing = db.query(Message).filter(
-            Message.agent_id == ctx.agent_id,
-            Message.role == MessageRole.SYSTEM,
-            Message.content == "Conversation compacted",
-        ).order_by(Message.created_at.desc()).first()
-        if existing:
-            if jsonl_uuid:
-                existing.jsonl_uuid = jsonl_uuid
-            # Adopt JSONL timestamp — ensures correct ordering
-            _ts = _parse_jsonl_ts(jsonl_ts)
-            if _ts:
-                existing.created_at = _ts
-                existing.completed_at = _ts
-                existing.delivered_at = _ts
-            logger.debug("Agent %s: compact system msg already exists, adopting uuid=%s ts=%s",
-                         ctx.agent_id[:8], jsonl_uuid, jsonl_ts)
-            return None
-
     logger.debug("Agent %s: creating message role=system kind=%s uuid=%s seq=%d",
                  ctx.agent_id[:8], kind, jsonl_uuid, seq)
     _now = _parse_jsonl_ts(jsonl_ts) or _utcnow()
