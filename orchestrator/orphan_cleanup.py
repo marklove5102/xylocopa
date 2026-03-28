@@ -4,6 +4,7 @@ import glob
 import logging
 import os
 import shutil
+import tempfile
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +22,7 @@ STALE_AGENT_DAYS = 30
 
 
 def scan_orphans() -> dict:
-    """Walk ~/.claude/projects/ and /tmp/claude-output-*.log, return orphan
+    """Walk ~/.claude/projects/ and tempdir/claude-output-*.log, return orphan
     file list with sizes.  Does NOT delete anything."""
     with engine.connect() as conn:
         rows = conn.execute(
@@ -51,10 +52,10 @@ def scan_orphans() -> dict:
                         sz = 0
                     orphan_sessions.append({"path": fp, "size": sz})
 
-    # 2. Output log files in /tmp
+    # 2. Output log files in system temp dir
     orphan_logs = []
     total_logs = 0
-    for log_path in glob.glob("/tmp/claude-output-*.log"):
+    for log_path in glob.glob(os.path.join(tempfile.gettempdir(), "claude-output-*.log")):
         total_logs += 1
         basename = os.path.basename(log_path)
         msg_id = basename.replace("claude-output-", "").replace(".log", "")

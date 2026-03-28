@@ -10,6 +10,7 @@ Run from the cc-orchestrator directory:
 import os
 import sys
 import glob
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "orchestrator"))
 
@@ -66,12 +67,12 @@ def main():
     print(f"  Total: {total_size / 1024 / 1024:.1f} MB")
     print()
 
-    # 2. Scan output log files in /tmp
+    # 2. Scan output log files in system temp dir
     orphan_logs = []
     total_logs = 0
-    for log_path in glob.glob("/tmp/claude-output-*.log"):
+    for log_path in glob.glob(os.path.join(tempfile.gettempdir(), "claude-output-*.log")):
         total_logs += 1
-        # Extract message ID: /tmp/claude-output-{msg_id}.log
+        # Extract message ID: claude-output-{msg_id}.log
         basename = os.path.basename(log_path)
         msg_id = basename.replace("claude-output-", "").replace(".log", "")
         if msg_id not in live_msg_ids:

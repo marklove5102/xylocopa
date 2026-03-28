@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time as _time
 from datetime import datetime, timezone
@@ -1315,7 +1316,7 @@ async def delete_project(name: str, request: Request, db: Session = Depends(get_
         if agent_ids:
             msg_ids = [m.id for m in db.query(Message.id).filter(Message.agent_id.in_(agent_ids)).all()]
             for mid in msg_ids:
-                for f in globmod.glob(f"/tmp/claude-output-*-{mid}.log"):
+                for f in globmod.glob(os.path.join(tempfile.gettempdir(), f"claude-output-*-{mid}.log")):
                     try:
                         os.remove(f)
                     except OSError:
