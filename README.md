@@ -312,19 +312,6 @@ sudo update-ca-certificates
 
 After installing, restart your browser.
 
-## Security
-
-AgentHive is designed for self-hosted, single-user or trusted-network deployments.
-
-| Layer | Implementation |
-|---|---|
-| **Authentication** | Password with SHA-256 hashing. Exponential backoff rate limiting (locks after 5 failed attempts, up to 1-hour lockout). |
-| **Session Management** | JWT tokens with 24-hour server expiry + configurable inactivity timeout (default 30 min). |
-| **Encryption** | All traffic over HTTPS (self-signed or custom cert). OAuth tokens stored in `.env`, never exposed to agents. |
-| **Agent Isolation** | Each agent runs in its own tmux session with a dedicated git worktree. Configurable permission modes: supervised (every tool call requires approval) or autonomous. Read-only tools (Read, Glob, Grep, WebSearch) are always auto-approved. |
-| **Process Safety** | Agents run as host subprocesses with configurable timeouts. Global concurrency limits prevent resource starvation. |
-| **Backups** | Automatic periodic backups (SQLite + project configs + PROGRESS.md files). Path traversal validation on imports. |
-
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
