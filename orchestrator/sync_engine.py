@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import or_ as _or
-from sqlalchemy.exc import DatabaseError, IntegrityError, PendingRollbackError
+from sqlalchemy.exc import DatabaseError, IntegrityError
 
 from database import SessionLocal
 from models import (
@@ -531,7 +531,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
 
         try:
             db.commit()
-        except (DatabaseError, IntegrityError, PendingRollbackError) as exc:
+        except (DatabaseError, IntegrityError) as exc:
             db.rollback()
             logger.warning(
                 "Commit failed for agent %s, will retry next cycle: %s",
