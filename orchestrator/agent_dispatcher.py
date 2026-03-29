@@ -2409,7 +2409,11 @@ Here are the day's conversations (with timestamps):
             db.close()
 
     def _stop_generating(self, agent_id: str):
-        """Mark agent as no longer generating: in-memory set, DB status, and WS events."""
+        """Mark agent as no longer generating: in-memory set, DB status, and WS events.
+
+        Also schedules dispatch of any PENDING messages after a short delay,
+        covering all paths (stop hook, interrupt, sync cleanup) uniformly.
+        """
         gid = self._generation_ids.get(agent_id)
         self._generating_agents.discard(agent_id)
         from websocket import emit_agent_stream_end, emit_agent_update
@@ -2430,6 +2434,11 @@ Here are the day's conversations (with timestamps):
                     db.commit()
         finally:
             db.close()
+
+        # Dispatch any PENDING messages now that the agent is idle.
+        # 2s delay lets the sync loop import the last response first
+        # so display_seq ordering stays correct.
+        asyncio.ensure_future(self.dispatch_pending_message(agent_id, delay=2.0))
 
     async def dispatch_pending_message(self, agent_id: str, delay: float = 0):
         """Dispatch the first PENDING user message to the agent's tmux pane.
