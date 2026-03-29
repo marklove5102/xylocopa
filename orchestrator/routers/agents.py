@@ -2064,12 +2064,27 @@ async def get_agent_display(
 
 @router.post("/api/agents/{agent_id}/wake-sync")
 async def wake_agent_sync(agent_id: str, request: Request, db: Session = Depends(get_db)):
-    """Wake the sync loop for an agent to trigger immediate JSONL import."""
+    """Wake the sync loop for an agent to trigger immediate JSONL import.
+
+    For ERROR agents, recovers to IDLE first so the sync loop doesn't
+    immediately exit.  This is the only path that does ERROR→IDLE —
+    hooks calling wake_sync() won't auto-recover.
+    """
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     ad = getattr(request.app.state, "agent_dispatcher", None)
-    if ad and ad.wake_sync(agent_id):
+    if not ad:
+        raise HTTPException(status_code=503, detail="Dispatcher not ready")
+    # Explicit user action: recover ERROR agents before waking sync
+    if agent.status == AgentStatus.ERROR:
+        agent.status = AgentStatus.IDLE
+        agent.error_message = None
+        db.commit()
+        from websocket import emit_agent_update
+        ad._emit(emit_agent_update(agent.id, "IDLE", agent.project))
+        logger.info("wake-sync: recovered agent %s from ERROR → IDLE", agent_id[:8])
+    if ad.wake_sync(agent_id):
         return {"status": "ok", "detail": "Sync woken"}
     raise HTTPException(status_code=409, detail="No active sync loop for this agent")
 
