@@ -793,6 +793,7 @@ async def hook_agent_tool_activity(request: Request):
                     status=MessageStatus.COMPLETED,
                     meta_json=json.dumps(_perm_meta),
                     tool_use_id=_perm_id,
+                    jsonl_uuid=_perm_id,
                 )
                 _db2.add(_perm_msg)
                 _db2.commit()
@@ -992,6 +993,7 @@ async def hook_agent_permission(request: Request):
             status=MessageStatus.COMPLETED,
             meta_json=json.dumps(_perm_meta),
             tool_use_id=_perm_tool_use_id,
+            jsonl_uuid=_perm_tool_use_id,
         )
         _db_perm.add(_perm_msg)
         _db_perm.commit()

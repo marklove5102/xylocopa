@@ -448,27 +448,16 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         if not agent or agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
             return "exit"
 
-        # Finalize previous turn if it grew (streaming → new turn arrived).
-        # Match by jsonl_uuid when available so we update the correct DB
-        # message — falling back to "latest AGENT by created_at" only when
-        # the turn has no UUID.
+        # Finalize previous turn if it grew (streaming → new turn arrived)
         if ctx.last_turn_count > 0:
             prev_role, prev_content, *prev_rest = turns[ctx.last_turn_count - 1]
             prev_uuid = prev_rest[1] if len(prev_rest) > 1 else None
             prev_meta = prev_rest[0] if prev_rest else None
             if prev_role == "assistant":
-                # Prefer exact UUID match to avoid updating the wrong message.
-                last_agent_msg = None
-                if prev_uuid:
-                    last_agent_msg = db.query(Message).filter(
-                        Message.agent_id == ctx.agent_id,
-                        Message.jsonl_uuid == prev_uuid,
-                    ).first()
-                if last_agent_msg is None:
-                    last_agent_msg = db.query(Message).filter(
-                        Message.agent_id == ctx.agent_id,
-                        Message.role == MessageRole.AGENT,
-                    ).order_by(Message.created_at.desc()).first()
+                last_agent_msg = db.query(Message).filter(
+                    Message.agent_id == ctx.agent_id,
+                    Message.role == MessageRole.AGENT,
+                ).order_by(Message.created_at.desc()).first()
                 if (last_agent_msg
                         and len(last_agent_msg.content or "") < len(prev_content)):
                     last_agent_msg.content = prev_content
