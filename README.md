@@ -7,9 +7,9 @@
 
 > [**Getting Started**](#getting-started) · [**The Loop**](#the-loop) · [**Features**](#features) · [**Contributing**](CONTRIBUTING.md)
 
-**A web-based task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — capture tasks, dispatch them to AI agents, and check back when they're done.**
+**A web-based task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — capture tasks, dispatch them to AI agents, and iterate until they're right.**
 
-AgentHive is not a replacement for the Claude Code CLI. It's the layer that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. You keep using `claude` the way you always have — AgentHive adds the ability to capture ideas on your phone, dispatch them to agents, monitor multiple agents in parallel, and review results when you're ready. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over.
+AgentHive is not a replacement for the Claude Code CLI. It's the layer that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. You keep using `claude` the way you always have — AgentHive adds the ability to capture ideas from your phone or by voice, dispatch them to multiple agents running in parallel on isolated worktrees, monitor progress in real time, and when an agent doesn't nail it — stop, summarize what was tried, and re-dispatch with full context. Every session builds on the last: project knowledge accumulates across agents and survives across time. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over.
 
 ## The Loop
 
