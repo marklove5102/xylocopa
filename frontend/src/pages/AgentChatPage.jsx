@@ -2719,7 +2719,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         document.body.style.position = 'fixed';
         document.body.style.width = '100%';
         document.body.style.top = '0';
-        document.body.style.touchAction = 'manipulation';
+        document.body.style.touchAction = 'none';
         window.scrollTo(0, 0);
         // Block touchmove outside scroll container to prevent iOS
         // visual-viewport scroll via touch gestures on the input bar.
@@ -3627,7 +3627,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         data-chat-container
         onScroll={handleScroll}
         className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 ${kbOpen ? "" : "pb-36"} ${embedded ? "" : "max-w-2xl"} mx-auto w-full flex flex-col`}
-        style={{ overflowAnchor: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}
+        style={{ overflowAnchor: "auto", overscrollBehavior: "contain" }}
       >
         <div className="mt-auto" />
         {messages.length === 0 && agent.status === "STARTING" ? (
