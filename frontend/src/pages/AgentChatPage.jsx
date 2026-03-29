@@ -2633,12 +2633,63 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     let prevOff = 0;
     let isOpen = false;
 
-    // Prevent touchmove outside the message scroll container so iOS
-    // visual-viewport doesn't scroll when dragging on the input bar.
+    // --- Manual touch-scroll for message list when keyboard is open ---
+    // body has touch-action:none which kills native scroll at CSS level.
+    // We intercept touch events and manually drive scrollTop + momentum.
+    let touchLastY = 0;
+    let touchActive = false;
+    let momentumRaf = null;
+    const touchSamples = [];
+
+    const handleScrollTouchStart = (e) => {
+      const sc = scrollContainerRef.current;
+      if (!sc) return;
+      if (sc.contains(e.target)) {
+        touchActive = true;
+        if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
+        touchLastY = e.touches[0].clientY;
+        touchSamples.length = 0;
+        touchSamples.push({ y: e.touches[0].clientY, t: Date.now() });
+      } else {
+        touchActive = false;
+      }
+    };
+
     const blockTouchOutsideScroll = (e) => {
       const sc = scrollContainerRef.current;
-      if (sc && sc.contains(e.target)) return; // allow message list scroll
+      if (touchActive && sc) {
+        const touch = e.touches[0];
+        const deltaY = touchLastY - touch.clientY;
+        sc.scrollTop += deltaY;
+        touchLastY = touch.clientY;
+        const now = Date.now();
+        touchSamples.push({ y: touch.clientY, t: now });
+        if (touchSamples.length > 5) touchSamples.shift();
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
+    };
+
+    const handleScrollTouchEnd = () => {
+      if (!touchActive) return;
+      touchActive = false;
+      const sc = scrollContainerRef.current;
+      if (!sc || touchSamples.length < 2) return;
+      const first = touchSamples[0];
+      const last = touchSamples[touchSamples.length - 1];
+      const dt = last.t - first.t;
+      if (dt <= 0) return;
+      let v = ((first.y - last.y) / dt) * 16; // px per frame
+      if (Math.abs(v) < 1) return;
+      const friction = 0.95;
+      const tick = () => {
+        if (Math.abs(v) < 0.5) { momentumRaf = null; return; }
+        sc.scrollTop += v;
+        v *= friction;
+        momentumRaf = requestAnimationFrame(tick);
+      };
+      momentumRaf = requestAnimationFrame(tick);
     };
 
     // --- KB debug logging: batch samples and flush to backend ---
@@ -2723,7 +2774,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         window.scrollTo(0, 0);
         // Block touchmove outside scroll container to prevent iOS
         // visual-viewport scroll via touch gestures on the input bar.
+        document.addEventListener('touchstart', handleScrollTouchStart, { passive: true });
         document.addEventListener('touchmove', blockTouchOutsideScroll, { passive: false });
+        document.addEventListener('touchend', handleScrollTouchEnd, { passive: true });
         setKbOpen(true);
         const sc = scrollContainerRef.current;
         if (sc && !userScrolledUp.current) {
@@ -2736,7 +2789,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         document.body.style.width = '';
         document.body.style.top = '';
         document.body.style.touchAction = '';
+        document.removeEventListener('touchstart', handleScrollTouchStart);
         document.removeEventListener('touchmove', blockTouchOutsideScroll);
+        document.removeEventListener('touchend', handleScrollTouchEnd);
+        if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
         setKbOpen(false);
         const sc = scrollContainerRef.current;
         if (sc && !userScrolledUp.current) {
@@ -2773,7 +2829,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (rafId) cancelAnimationFrame(rafId);
       if (stopTimer) clearTimeout(stopTimer);
       clearTimeout(padTimer);
+      document.removeEventListener('touchstart', handleScrollTouchStart);
       document.removeEventListener('touchmove', blockTouchOutsideScroll);
+      document.removeEventListener('touchend', handleScrollTouchEnd);
+      if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
       document.body.style.touchAction = '';
       kbFlush(); // flush remaining samples
     };
