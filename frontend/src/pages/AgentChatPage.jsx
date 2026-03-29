@@ -1075,7 +1075,7 @@ function AgentTextSegment({ text, project }) {
   return (
     <div className="flex justify-start my-2">
       <div className="max-w-[85%] min-w-0">
-        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden select-none">
+        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={text}>
               {renderMarkdown(text, project)}
@@ -1333,7 +1333,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                       ? "bg-cyan-600/70 text-white/80 rounded-br-md"
                       : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
-          } select-none overflow-hidden`}
+          } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
           onTouchStart={handleLongPressStart}
           onTouchEnd={handleLongPressEnd}
@@ -1716,7 +1716,7 @@ function StreamingBubble({ content, project, activeTool }) {
   return (
     <div className="flex justify-start my-2">
       <div className="max-w-[85%] min-w-0">
-        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden select-none">
+        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={content}>
               {renderMarkdown(content, project)}
@@ -2013,7 +2013,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
     >
       {scrollButton}
       <div
-        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto touch-none`}
+        className={`glass-bar-nav rounded-[22px] px-3 pt-2 ${kbOpen ? "pb-1" : "pb-2.5"} flex flex-col gap-2 w-full relative pointer-events-auto`}
         style={{ maxWidth: "24rem" }}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
@@ -2714,17 +2714,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       if (open && !isOpen) {
         isOpen = true;
-        // Lock body to prevent iOS viewport scroll.  Use overflow:hidden
-        // instead of position:fixed — fixed positioning breaks nested
-        // overflow-y:auto momentum scrolling on iOS Safari, making the
-        // message list unscrollable while the keyboard is open.
-        // blockTouchOutsideScroll handler prevents visual-viewport drift
-        // from touch gestures on the input bar / header.
-        // NOTE: do NOT set touch-action:none on body — iOS Safari
-        // propagates it into descendant scroll containers and kills
-        // touch scrolling in the message list.
-        document.documentElement.style.overflow = 'hidden';
-        document.body.style.overflow = 'hidden';
+        // Lock body to prevent iOS viewport scroll — CSS lock is
+        // applied once (no per-frame fight), so no shake.
+        document.body.style.position = 'fixed';
+        document.body.style.width = '100%';
+        document.body.style.top = '0';
+        document.body.style.touchAction = 'none';
         window.scrollTo(0, 0);
         // Block touchmove outside scroll container to prevent iOS
         // visual-viewport scroll via touch gestures on the input bar.
@@ -2737,15 +2732,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       } else if (!open && isOpen) {
         isOpen = false;
         // Unlock body
-        document.documentElement.style.overflow = '';
-        document.body.style.overflow = '';
-        // Trigger viewport reflow — the App-level microScroll may have
-        // fired while overflow:hidden was still set (keyboard closing
-        // animation), so repeat the 1→0 trick here after unlocking.
-        requestAnimationFrame(() => {
-          window.scrollTo({ top: 1, behavior: "instant" });
-          window.scrollTo({ top: 0, behavior: "instant" });
-        });
+        document.body.style.position = '';
+        document.body.style.width = '';
+        document.body.style.top = '';
+        document.body.style.touchAction = '';
         document.removeEventListener('touchmove', blockTouchOutsideScroll);
         setKbOpen(false);
         const sc = scrollContainerRef.current;
@@ -2784,8 +2774,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (stopTimer) clearTimeout(stopTimer);
       clearTimeout(padTimer);
       document.removeEventListener('touchmove', blockTouchOutsideScroll);
-      document.documentElement.style.overflow = '';
-      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
       kbFlush(); // flush remaining samples
     };
   }, []);
@@ -3335,7 +3324,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     <div ref={kbContainerRef} className="flex flex-col h-full relative">
 
       {/* Header */}
-      <div className={`shrink-0 bg-surface border-b border-divider px-4 ${compactHeader ? "py-1.5" : "py-2"} safe-area-pt relative z-10 touch-none`}>
+      <div className={`shrink-0 bg-surface border-b border-divider px-4 ${compactHeader ? "py-1.5" : "py-2"} safe-area-pt relative z-10`}>
         <div className={`${embedded ? "" : "max-w-2xl"} mx-auto ${compactHeader ? "" : "space-y-1.5"}`}>
           {/* Row 1: Back + name | project + icon buttons */}
           <div className="flex items-center gap-2">
@@ -3582,7 +3571,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       </div>
 
       {/* Agent ID + session size + parent link */}
-      {!compactHeader && <div className="shrink-0 bg-surface border-b border-divider px-4 py-1 touch-none">
+      {!compactHeader && <div className="shrink-0 bg-surface border-b border-divider px-4 py-1">
         <div className={`${embedded ? "" : "max-w-2xl"} mx-auto flex items-center gap-2 pl-2.5`}>
           {agent.parent_id && (
             <button
