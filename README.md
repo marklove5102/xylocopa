@@ -44,7 +44,7 @@ Watch everything happen in real time — from your desk or your phone.
 - **Mobile-first web UI** — a full PWA you can add to your Home Screen. Works on any device, any screen size.
 - **Split screen** — monitor 2, 3, or 4 agents side by side (2-column, 3-column, 2x2 grid on desktop; stacked on mobile). Each pane navigates independently.
 - **Rich chat interface** — markdown rendering, inline image and media preview, interactive cards for tool approvals and plan review. Approve, deny, or respond to agents directly in the conversation.
-- **Dual-directional CLI sync** — CLI sessions appear in the web app, web app sessions are resumable from the CLI. One conversation history, two interfaces.
+- **Dual-directional CLI sync** — CLI sessions appear in the web app, web app sessions are resumable from the CLI. Attach to any agent's terminal with `tmux attach -t ah-<agent-id>` and keep working from your keyboard. One conversation history, two interfaces.
 - **Smart notifications** — Web Push and Telegram with dual-channel in-use detection: if you're viewing an agent in the browser (WebSocket presence) or attached to its tmux pane, notifications are suppressed. Permission requests always cut through.
 - **System & usage monitoring** — disk, memory, GPU status, and token usage at a glance.
 
