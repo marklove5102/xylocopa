@@ -27,7 +27,7 @@
 ## Commit Safety (public repo)
 - **No secrets**: never commit API keys, tokens, passwords, or private keys — even as "examples". Use empty values in `.env.example` (e.g. `OPENAI_API_KEY=`), not fake-looking ones like ``
 - **No certificates**: `.pem`, `.crt`, `.key`, `.p12` etc. are gitignored — never force-add them
-- **No personal paths**: use `~/`, `/home/YOUR_USERNAME/`, or relative paths in committed files — never `/home/YOUR_USERNAME/` or other real user paths
+- **No personal paths**: use `~/`, `/home/YOUR_USERNAME/`, or relative paths in committed files — never hardcode real user home paths
 - **No internal docs**: don't commit audit reports, release strategy, or internal planning docs — they expose security details and roadmap
 - **No database files**: `.db`, `.sqlite3`, `:memory:` stubs are gitignored — never force-add them
 - **Before committing new config/example files**: verify they contain only placeholders or empty values
