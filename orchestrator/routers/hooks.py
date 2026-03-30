@@ -1250,8 +1250,8 @@ async def hook_agent_session_start(request: Request):
         return {}
 
     # If this tmux pane is already owned by an active agent, treat this as
-    # a session rotation (e.g. /clear) — write a signal file instead of
-    # creating a new unlinked entry.
+    # a session rotation (e.g. /clear) — write a signal file for the sync
+    # engine to pick up.
     from database import SessionLocal as _SL
     _db = _SL()
     try:
@@ -1271,70 +1271,16 @@ async def hook_agent_session_start(request: Request):
                 )
             except OSError as e:
                 logger.warning("SessionStart hook: failed to write pane-owner signal %s: %s", signal_path, e)
-            return {}
     finally:
         _db.close()
 
-    # Match CWD to a registered project
-    from database import SessionLocal
-    db = SessionLocal()
-    try:
-        cwd_real = os.path.realpath(cwd)
-        projects = db.query(Project).filter(Project.archived == False).all()
-        matched_proj = None
-        for p in projects:
-            proj_real = os.path.realpath(p.path)
-            if cwd_real == proj_real or cwd_real.startswith(proj_real + "/"):
-                matched_proj = p
-                break
-        if not matched_proj:
-            logger.debug(
-                "SessionStart hook: unmanaged session %s CWD %s doesn't match any project",
-                session_id[:12], cwd,
-            )
-            return {}
-
-        # Guard: don't create entry if session already owned by an agent
-        existing = db.query(Agent).filter(Agent.session_id == session_id).first()
-        if existing:
-            logger.debug(
-                "SessionStart hook: session %s already owned by agent %s",
-                session_id[:12], existing.id[:8],
-            )
-            return {}
-    finally:
-        db.close()
-
-    # Resolve transcript JSONL path
-    from session_cache import session_source_dir
-    sdir = session_source_dir(matched_proj.path)
-    transcript_path = os.path.join(sdir, f"{session_id}.jsonl")
-    if not os.path.isfile(transcript_path):
-        transcript_path = ""
-
-    # Resolve tmux session name from pane ID
-    tmux_session_name = None
-    if tmux_pane:
-        try:
-            tmux_session_name = subprocess.check_output(
-                ["tmux", "display-message", "-t", tmux_pane, "-p", "#{session_name}"],
-                timeout=2, text=True,
-            ).strip() or None
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            pass
-
-    from agent_dispatcher import _write_unlinked_entry
-    _write_unlinked_entry(
-        session_id=session_id,
-        cwd=cwd_real,
-        transcript_path=transcript_path,
-        tmux_pane=tmux_pane or None,
-        tmux_session=tmux_session_name,
-        project_name=matched_proj.name,
+    # Unmanaged sessions without a pane owner are detected exclusively by
+    # the polling scan (_auto_detect_cli_sessions) to avoid duplicate
+    # unlinked entries — the hook and the poll used different file keys
+    # (session_id vs pane) for the same pane.
+    logger.debug(
+        "SessionStart hook: unmanaged session %s (pane=%s) — "
+        "skipping unlinked entry, polling scan will detect it",
+        session_id[:12], tmux_pane,
     )
-    logger.info(
-        "SessionStart hook: unmanaged session %s → unlinked entry (project=%s, pane=%s, tmux_session=%s)",
-        session_id[:12], matched_proj.name, tmux_pane or "?", tmux_session_name or "?",
-    )
-
     return {}
