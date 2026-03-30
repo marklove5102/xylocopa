@@ -3651,7 +3651,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               // Only show on retry agents (not the first attempt)
               if (myIdx < 1) return null;
               return (
-                <div className="mx-auto max-w-[70%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3 relative max-h-[160px] overflow-hidden">
+                <div className="mx-auto max-w-[70%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
                   {/* Attempt navigation pills */}
                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                     <span className="text-[10px] font-semibold text-orange-500 dark:text-orange-400 mr-1">Attempts</span>
@@ -3683,8 +3683,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       )}
                     </div>
                   )}
-                  {/* Fade-out overlay at bottom */}
-                  <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-orange-50/90 dark:from-orange-950/60 to-transparent pointer-events-none rounded-b-xl" />
                 </div>
               );
             })()}
