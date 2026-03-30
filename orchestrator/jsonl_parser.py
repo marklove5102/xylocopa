@@ -508,7 +508,9 @@ def parse_session_turns_from_lines(
                 # Interrupt marker → system message with kind="interrupt"
                 if is_interrupt_message(stripped):
                     flush_all()
-                    turns.append(("system", stripped, None, entry_uuid, "interrupt", entry_ts))
+                    # Strip brackets for display: "[Request interrupted by user]" → "Request interrupted by user"
+                    display = stripped[1:-1]
+                    turns.append(("system", display, None, entry_uuid, "interrupt", entry_ts))
                     continue
                 # Compact summary → system message instead of user
                 if stripped.startswith(
