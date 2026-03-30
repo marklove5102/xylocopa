@@ -1289,10 +1289,28 @@ async def hook_agent_session_start(request: Request):
     finally:
         _db.close()
 
-    # Write a pending-session signal so that _discover_session_id_from_pane()
-    # can resolve session_id when the user confirms (adopts) this session.
-    # Unlinked entry creation is left to the polling scan exclusively to
-    # avoid duplicates (the hook and poll used different file keys).
+    # Update the existing poll-created unlinked entry (pane-X.json) with the
+    # session_id so the adopt endpoint can use it directly — no discovery needed.
+    # Also write a pending-session signal as fallback for _discover_session_id_from_pane().
+    from config import BACKUP_DIR
+    udir = os.path.join(BACKUP_DIR, "unlinked-sessions")
+    pane_key = f"pane-{tmux_pane.replace('%', '').replace('/', '_')}"
+    pane_entry_path = os.path.join(udir, f"{pane_key}.json")
+    if os.path.isfile(pane_entry_path):
+        try:
+            with open(pane_entry_path) as f:
+                entry = json.load(f)
+            entry["session_id"] = session_id
+            with open(pane_entry_path, "w") as f:
+                json.dump(entry, f)
+            logger.info(
+                "SessionStart hook: updated unlinked entry %s with session %s",
+                pane_key, session_id[:12],
+            )
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("SessionStart hook: failed to update %s: %s", pane_entry_path, e)
+
+    # Also write pending-session signal as fallback
     pending_dir = os.path.join(tempfile.gettempdir(), "ahive-pending-sessions")
     os.makedirs(pending_dir, exist_ok=True)
     pending_path = os.path.join(pending_dir, f"{session_id}.json")
