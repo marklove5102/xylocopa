@@ -560,25 +560,20 @@ async def system_restart():
         frontend_port = int(os.environ.get("FRONTEND_PORT", 3000))
         log_path = os.path.join(project_root, "logs", "server.log")
 
-        # Collect PIDs to kill using the platform layer (cross-platform)
-        kill_pids = set()
-        kill_pids.update(_platform.find_port_listeners(frontend_port))
-        kill_pids.update(_platform.find_port_listeners(port))
-        kill_pids.discard(0)
-
-        # Build a portable kill sequence
-        kill_cmds = " ".join(f'kill {p} 2>/dev/null;' for p in kill_pids)
+        # Stop PM2-managed processes cleanly so PM2 state stays consistent.
+        # Direct-killing PM2 children corrupts its process table and causes
+        # crash loops on the next `pm2 restart`.
         _sp.Popen(
             [
                 "bash", "-c",
-                # 1. Kill discovered listeners
-                f'{kill_cmds} '
-                # 2. Also kill ourselves if still alive
+                # 1. Stop and remove PM2 processes cleanly
+                f'pm2 delete all 2>/dev/null; '
+                # 2. Kill ourselves if still alive
                 f'kill {my_pid} 2>/dev/null; '
                 # 3. Wait for ports to be free
                 f'sleep 1; '
-                # 4. Force-kill any stragglers
-                f'{" ".join(f"kill -9 {p} 2>/dev/null;" for p in kill_pids)} '
+                # 4. Kill any stragglers not managed by PM2
+                f'{" ".join(f"kill -9 {p} 2>/dev/null;" for p in (_platform.find_port_listeners(port) | _platform.find_port_listeners(frontend_port)) - {0})} '
                 f'sleep 0.5; '
                 # 5. Start fresh (run.sh starts both Vite and uvicorn)
                 f'exec bash "{run_script}" >> "{log_path}" 2>&1',

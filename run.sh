@@ -82,7 +82,11 @@ case "$CMD" in
         ;;
     restart|start)
         echo "Restarting AgentHive..."
-        pm2 restart "$ECOSYSTEM" 2>/dev/null || pm2 start "$ECOSYSTEM"
+        # Delete stale processes first — a prior crash or direct-kill can leave
+        # PM2's process table referencing dead PIDs, causing TypeError crashes
+        # on `pm2 restart`.  `delete` is idempotent and clears that state.
+        pm2 delete all 2>/dev/null || true
+        pm2 start "$ECOSYSTEM"
 
         # Wait for backend health
         echo -n "Waiting for backend..."
