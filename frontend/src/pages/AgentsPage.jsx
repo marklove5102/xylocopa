@@ -258,10 +258,11 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    scanAgents().catch((err) => console.error('scanAgents failed:', err));
-    wakeSyncAll().catch((err) => console.error('wakeSyncAll failed:', err));
+    // Fire scan + wake in parallel, then wait for sync loops to import
+    await Promise.allSettled([scanAgents(), wakeSyncAll()]);
+    // Give sync loops time to read JSONL and write to DB (like chat view's 800ms)
+    await new Promise((r) => setTimeout(r, 1000));
     await load();
-    // Minimum 400ms spinner display to prevent jarring sub-frame flicker
     setTimeout(() => setRefreshing(false), 400);
   }, [load]);
 

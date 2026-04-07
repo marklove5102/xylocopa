@@ -1146,16 +1146,41 @@ async def scan_agents(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/agents/wake-sync-all")
 async def wake_all_agent_syncs(request: Request, db: Session = Depends(get_db)):
-    """Wake sync loops for all active (non-STOPPED) agents."""
+    """Wake sync loops for all active (non-STOPPED) agents.
+
+    Mirrors the per-agent ``/api/agents/{id}/wake-sync`` endpoint:
+    recovers ERROR→IDLE, restarts dead sync loops, redispatches stuck
+    queued messages, and dispatches pending messages.
+    """
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if not ad:
         raise HTTPException(status_code=503, detail="Dispatcher not ready")
     active = db.query(Agent).filter(Agent.status != AgentStatus.STOPPED).all()
+
+    # Phase 1: recover ERROR agents (matches individual wake-sync)
+    recovered_ids: list[str] = []
+    for agent in active:
+        if agent.status == AgentStatus.ERROR:
+            agent.status = AgentStatus.IDLE
+            agent.error_message = None
+            recovered_ids.append(agent.id)
+    if recovered_ids:
+        db.commit()
+        from websocket import emit_agent_update
+        for aid in recovered_ids:
+            ag = db.get(Agent, aid)
+            if ag:
+                ad._emit(emit_agent_update(ag.id, "IDLE", ag.project))
+        logger.info("wake-sync-all: recovered %d ERROR agents", len(recovered_ids))
+
+    # Phase 2: wake / restart sync loops + redispatch
     woken = 0
     for agent in active:
+        asyncio.ensure_future(ad.redispatch_stuck_queued(agent.id))
+        asyncio.ensure_future(ad.dispatch_pending_message(agent.id, delay=0))
         if ad.wake_sync(agent.id):
             woken += 1
-    return {"ok": True, "woken": woken, "total": len(active)}
+    return {"ok": True, "woken": woken, "recovered": len(recovered_ids), "total": len(active)}
 
 
 # ---- Unlinked (detected) sessions ----
