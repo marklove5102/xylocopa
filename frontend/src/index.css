@@ -60,9 +60,6 @@
 
 /* ── Semantic Utility Classes ── */
 @layer utilities {
-  /* Chat bubble width cap — centralised so every bubble type stays consistent */
-  .max-w-bubble { max-width: min(70%, 24rem); }
-
   /* Backgrounds */
   .bg-page      { background-color: var(--color-page); }
   .bg-surface   { background-color: var(--color-surface); }
