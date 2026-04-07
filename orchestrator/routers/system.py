@@ -605,39 +605,16 @@ async def system_restart():
             detail="Restart aborted — import check timed out",
         )
 
-    logger.warning("Restart requested via API — spawning new instance and exiting")
+    logger.warning("Restart requested via API — spawning pm2 restart")
 
-    log_path = os.path.join(project_root, "logs", "server.log")
-    lock_path = os.path.join(project_root, "logs", ".restart.lock")
+    ecosystem = os.path.join(project_root, "ecosystem.config.cjs")
 
-    # PM2 treekill walks the PPID chain and kills ALL descendants of the
-    # managed process, including Popen children (even with start_new_session).
-    # To survive, we write a restart script to a temp file and double-fork:
-    # outer bash backgrounds setsid, then exits immediately — the inner
-    # process is reparented to init (PPID=1) before pm2 delete runs.
-    import tempfile
-    script = (
-        f'#!/bin/bash\n'
-        f'exec 9>"{lock_path}"\n'
-        f'flock -n 9 || exit 0\n'
-        f'sleep 1\n'                              # let HTTP response flush
-        f'pm2 delete all 2>/dev/null\n'
-        f'sleep 2\n'                              # let PM2 daemon settle
-        f'bash "{run_script}" >> "{log_path}" 2>&1\n'
-        f'rm -f "{lock_path}" "$0"\n'             # clean up lock + script
-    )
-    fd, script_path = tempfile.mkstemp(suffix='.sh', dir=os.path.join(project_root, 'logs'))
-    os.write(fd, script.encode())
-    os.close(fd)
-    os.chmod(script_path, 0o755)
-
-    # Double-fork: outer bash starts setsid in background, then exits.
-    # The setsid process is immediately reparented to init — PM2 treekill
-    # cannot reach it when it kills the uvicorn process tree.
+    # Let PM2 handle the restart lifecycle — it's the process manager,
+    # not us.  --update-env re-reads ecosystem.config.cjs for config
+    # changes (ports, max_size, env vars).
     _sp.Popen(
-        ["bash", "-c", f'setsid bash "{script_path}" &'],
+        ["pm2", "restart", ecosystem, "--update-env"],
         cwd=project_root,
-        start_new_session=True,
         stdout=_sp.DEVNULL,
         stderr=_sp.DEVNULL,
     )
