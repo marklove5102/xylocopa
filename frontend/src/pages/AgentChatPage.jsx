@@ -33,6 +33,7 @@ import FloatingTaskCard from "../components/FloatingTaskCard";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
+import { uploadUrl } from "../lib/urls";
 
 // Mini error boundary that wraps individual markdown renders so a single
 // broken message doesn't crash the entire chat page.
@@ -150,7 +151,7 @@ function SubAgentBubble({ message, project }) {
 
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%]">
+      <div className="max-w-[min(70%,30rem)]">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -1074,7 +1075,7 @@ function splitMessageSegments(content) {
 function AgentTextSegment({ text, project }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] min-w-0">
+      <div className="max-w-[min(70%,30rem)] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={text}>
@@ -1256,7 +1257,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
     return (
       <div className="flex justify-end my-2">
-        <div className="max-w-[70%] min-w-0">
+        <div className="max-w-[min(70%,30rem)] min-w-0">
           <div className="rounded-2xl px-4 py-2.5 bg-amber-600/60 text-white rounded-br-md space-y-2 overflow-hidden">
             <textarea
               ref={editTextareaRef}
@@ -1311,7 +1312,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
-      <div className={`max-w-[70%] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
+      <div className={`max-w-[min(70%,30rem)] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2" : undefined}>
         {isUndeliveredTimedOut && (
           <div className="flex-shrink-0 text-red-400" title="Message not delivered — Claude may not have received this">
@@ -1558,7 +1559,7 @@ function ToolLogBubble({ entries }) {
 
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] rounded-2xl px-4 py-2.5 bg-surface shadow-card rounded-bl-md">
+      <div className="max-w-[min(70%,30rem)] rounded-2xl px-4 py-2.5 bg-surface shadow-card rounded-bl-md">
         <div className="space-y-0.5 text-xs font-mono">
           {shouldCollapse && !expanded ? (
             <button type="button" onClick={() => setExpanded(true)} className="flex items-center gap-1.5 text-dim hover:text-cyan-300">
@@ -1633,7 +1634,7 @@ function ToolActivityBubble({ message }) {
 
   return (
     <div className="flex justify-start my-1">
-      <div className="max-w-[70%] rounded-2xl px-3 py-1.5 bg-surface shadow-card rounded-bl-md">
+      <div className="max-w-[min(70%,30rem)] rounded-2xl px-3 py-1.5 bg-surface shadow-card rounded-bl-md">
         <div className={`flex items-center gap-1.5 text-xs font-mono ${isError ? "text-red-400" : "text-dim"}`}>
           <span className="shrink-0">{icon()}</span>
           <span className={nameColor()}>{toolName}</span>
@@ -1715,7 +1716,7 @@ function SyncPrompt({ agentId, onSync }) {
 function StreamingBubble({ content, project, activeTool }) {
   return (
     <div className="flex justify-start my-2">
-      <div className="max-w-[70%] min-w-0">
+      <div className="max-w-[min(70%,30rem)] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
           <div className="text-sm break-words overflow-hidden chat-bubble-content">
             <SafeMarkdown fallback={content}>
@@ -1823,7 +1824,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
         mimeType: a.mimeType || a.file?.type || null,
         thumbnailUrl: a.thumbnailUrl || (
           (a.mimeType || a.file?.type || "").startsWith("image/")
-            ? `/api/uploads/${a.uploadedPath.split("/").pop()}`
+            ? uploadUrl(a.uploadedPath.split("/").pop())
             : null
         ),
       }));
@@ -2170,7 +2171,7 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
       {attPreviewIndex != null && attachments.length > 0 && (
         <ImageLightbox
           media={attachments.filter(a => !a.uploading).map(a => ({
-            src: a.previewUrl || `/api/uploads/${a.uploadedPath?.split("/").pop()}`,
+            src: a.previewUrl || uploadUrl(a.uploadedPath?.split("/").pop()),
             filename: a.originalName,
             type: "image",
           }))}
@@ -3651,7 +3652,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               // Only show on retry agents (not the first attempt)
               if (myIdx < 1) return null;
               return (
-                <div className="mx-auto max-w-[70%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
+                <div className="mx-auto max-w-[min(70%,30rem)] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
                   {/* Attempt navigation pills */}
                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                     <span className="text-[10px] font-semibold text-orange-500 dark:text-orange-400 mr-1">Attempts</span>
