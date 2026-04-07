@@ -1077,7 +1077,7 @@ function AgentTextSegment({ text, project }) {
     <div className="flex justify-start my-2">
       <div className="max-w-[min(85%,30rem)] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
-          <div className="text-sm break-words overflow-hidden chat-bubble-content">
+          <div className="text-sm break-words chat-bubble-content">
             <SafeMarkdown fallback={text}>
               {renderMarkdown(text, project)}
             </SafeMarkdown>
@@ -1369,7 +1369,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               </div>
             ) : (
               displayContent && (
-                <div className="text-sm user-md break-words overflow-hidden chat-bubble-content">
+                <div className="text-sm user-md break-words chat-bubble-content">
                   <SafeMarkdown fallback={displayContent}>
                     {renderMarkdown(displayContent, project)}
                   </SafeMarkdown>
@@ -1377,7 +1377,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               )
             )
           ) : (
-            <div className="text-sm break-words overflow-hidden chat-bubble-content" ref={markdownRef} onClick={handleMarkdownClick}>
+            <div className="text-sm break-words chat-bubble-content" ref={markdownRef} onClick={handleMarkdownClick}>
               <SafeMarkdown fallback={displayContent}>
                 {renderMarkdown(displayContent, project)}
               </SafeMarkdown>
@@ -1718,7 +1718,7 @@ function StreamingBubble({ content, project, activeTool }) {
     <div className="flex justify-start my-2">
       <div className="max-w-[min(85%,30rem)] min-w-0">
         <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
-          <div className="text-sm break-words overflow-hidden chat-bubble-content">
+          <div className="text-sm break-words chat-bubble-content">
             <SafeMarkdown fallback={content}>
               {renderMarkdown(content, project)}
             </SafeMarkdown>
