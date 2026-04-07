@@ -1,7 +1,8 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { clearAuthToken } from "../lib/api";
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 const ACTIVITY_KEY = "cc-last-activity";
 
 /** Record user activity timestamp in localStorage (shared across tabs). */
@@ -19,27 +20,19 @@ function idleMs() {
  * Hook that monitors user activity and locks (clears token + redirects
  * to /login) after IDLE_TIMEOUT_MS of inactivity.
  *
- * Listens to pointer, keyboard, scroll, and touch events. Activity
- * is shared across tabs via localStorage.
+ * Uses polling (every 30s) instead of a single long setTimeout to handle
+ * mobile devices that suspend timers in the background.  Activity is
+ * shared across tabs via localStorage.
+ *
+ * Listens to pointer, keyboard, and touch events (NOT scroll — programmatic
+ * scrolls from auto-scroll and microScroll would reset the timer falsely).
  */
 export default function useIdleLock(navigate) {
-  const timerRef = useRef(null);
-
   const lock = useCallback(() => {
-    // Don't lock from a stale timer that fired while the page was hidden
-    // (iOS resumes suspended timers before dispatching visibilitychange).
-    // The visibilitychange handler below will re-evaluate on return.
-    if (document.visibilityState === "hidden") return;
     clearAuthToken();
     localStorage.removeItem(ACTIVITY_KEY);
     navigate("/login", { replace: true });
   }, [navigate]);
-
-  const resetTimer = useCallback(() => {
-    touch();
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(lock, IDLE_TIMEOUT_MS);
-  }, [lock]);
 
   useEffect(() => {
     // On mount, check if already idle too long
@@ -48,46 +41,50 @@ export default function useIdleLock(navigate) {
       return;
     }
 
-    // Initial touch + timer
-    resetTimer();
+    // Initial touch
+    touch();
 
-    // User activity events (passive to avoid perf impact)
-    const events = ["pointerdown", "keydown", "scroll", "touchstart"];
-    const handler = () => resetTimer();
+    // User activity events — no 'scroll' (programmatic scrolls cause
+    // false resets via microScroll, auto-scroll, etc.)
+    const events = ["pointerdown", "keydown", "touchstart"];
+    const onActivity = () => touch();
     for (const e of events) {
-      window.addEventListener(e, handler, { passive: true });
+      window.addEventListener(e, onActivity, { passive: true });
     }
 
     // Listen for activity changes from other tabs
     const storageHandler = (e) => {
       if (e.key === ACTIVITY_KEY && e.newValue) {
-        resetTimer();
+        // Another tab recorded activity — no action needed, the
+        // polling check will read the updated timestamp.
       }
     };
     window.addEventListener("storage", storageHandler);
 
-    // Reset timer when the page becomes visible again (returning from
-    // background / tab switch).  This pairs with the hidden-guard in
-    // lock() — together they ensure idle time only counts while the
-    // page is actually visible.
+    // Poll-based idle check — reliable on mobile (no suspended timers)
+    const checkIdle = () => {
+      if (idleMs() > IDLE_TIMEOUT_MS) {
+        lock();
+      }
+    };
+    const intervalId = setInterval(checkIdle, CHECK_INTERVAL_MS);
+
+    // Also check on visibility change (immediate response when
+    // returning from background)
     const visibilityHandler = () => {
       if (document.visibilityState === "visible") {
-        if (idleMs() > IDLE_TIMEOUT_MS) {
-          lock();
-        } else {
-          resetTimer();
-        }
+        checkIdle();
       }
     };
     document.addEventListener("visibilitychange", visibilityHandler);
 
     return () => {
       for (const e of events) {
-        window.removeEventListener(e, handler);
+        window.removeEventListener(e, onActivity);
       }
       window.removeEventListener("storage", storageHandler);
       document.removeEventListener("visibilitychange", visibilityHandler);
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearInterval(intervalId);
     };
-  }, [resetTimer, lock]);
+  }, [lock]);
 }
