@@ -58,6 +58,7 @@ module.exports = {
       log_file: path.join(ROOT, 'logs', 'backend-pm2.log'),
       error_file: path.join(ROOT, 'logs', 'backend-pm2-error.log'),
       merge_logs: true,
+      max_size: '50M',
     },
     {
       name: 'agenthive-frontend',
@@ -71,6 +72,7 @@ module.exports = {
       log_file: path.join(ROOT, 'logs', 'frontend-pm2.log'),
       error_file: path.join(ROOT, 'logs', 'frontend-pm2-error.log'),
       merge_logs: true,
+      max_size: '50M',
     },
   ],
 };

@@ -360,6 +360,61 @@ async def system_stale_agents_clean(
     return delete_stale_agents(db, scan)
 
 
+@router.post("/api/system/logs/truncate")
+async def system_logs_truncate():
+    """Truncate non-essential log files (PM2 logs, frontend-debug, old rotated logs)."""
+    import glob as globmod
+
+    def _truncate():
+        truncated = []
+        freed = 0
+
+        # Files safe to truncate in-place (PM2 keeps the fd open)
+        truncatable = [
+            "backend-pm2.log", "backend-pm2-error.log",
+            "frontend-pm2.log", "frontend-pm2-error.log",
+            "frontend-debug.log",
+        ]
+        for name in truncatable:
+            fp = os.path.join(LOG_DIR, name)
+            try:
+                sz = os.path.getsize(fp)
+                if sz > 0:
+                    with open(fp, "w"):
+                        pass  # truncate
+                    freed += sz
+                    truncated.append(name)
+            except OSError:
+                pass
+
+        # Remove old rotated orchestrator logs (keep current orchestrator.log)
+        for fp in globmod.glob(os.path.join(LOG_DIR, "orchestrator.log.*")):
+            try:
+                sz = os.path.getsize(fp)
+                os.remove(fp)
+                freed += sz
+                truncated.append(os.path.basename(fp))
+            except OSError:
+                pass
+
+        # Remove old rotated PM2 logs (pm2 max_size creates numbered copies)
+        for pattern in ["backend-pm2*.log.*", "backend-pm2-error*.log.*",
+                        "frontend-pm2*.log.*", "frontend-pm2-error*.log.*",
+                        "frontend-debug*.log.*"]:
+            for fp in globmod.glob(os.path.join(LOG_DIR, pattern)):
+                try:
+                    sz = os.path.getsize(fp)
+                    os.remove(fp)
+                    freed += sz
+                    truncated.append(os.path.basename(fp))
+                except OSError:
+                    pass
+
+        return {"truncated": truncated, "freed_bytes": freed}
+
+    return await asyncio.get_event_loop().run_in_executor(None, _truncate)
+
+
 @router.get("/api/system/backup")
 async def get_backup_status():
     """Return current backup config, on-disk stats, and backup list."""

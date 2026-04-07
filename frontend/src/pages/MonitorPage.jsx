@@ -5,7 +5,7 @@ import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants"
 import {
   scanOrphans, cleanOrphans, fetchBackupStatus, purgeBackups,
   triggerBackup, deleteSingleBackup, restoreBackup, updateBackupConfig,
-  importBackup, downloadBackupUrl,
+  importBackup, downloadBackupUrl, truncateLogs,
 } from "../lib/api";
 import { useMonitor } from "../contexts/MonitorContext";
 
@@ -92,7 +92,21 @@ function formatBytes(bytes) {
   return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
 }
 
-function StorageChart({ data }) {
+function StorageChart({ data, onRefresh }) {
+  const [cleaning, setCleaning] = useState(false);
+
+  const handleCleanLogs = useCallback(async () => {
+    setCleaning(true);
+    try {
+      await truncateLogs();
+      if (onRefresh) await onRefresh();
+    } catch (err) {
+      console.error("Failed to truncate logs:", err);
+    } finally {
+      setCleaning(false);
+    }
+  }, [onRefresh]);
+
   if (!data) return null;
   const { categories, total_bytes } = data;
   const visible = categories.filter((c) => c.size_bytes > 0);
@@ -148,11 +162,26 @@ function StorageChart({ data }) {
         <div className="flex-1 min-w-0 space-y-1">
           {visible.map((cat) => {
             const colors = STORAGE_COLORS[cat.color] || STORAGE_COLORS.gray;
+            const isLogs = cat.name === "Logs";
             return (
               <div key={cat.name} className="flex items-center gap-2 text-xs">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
                 <span className="text-label truncate flex-1">{cat.name}</span>
                 <span className="text-dim font-mono shrink-0">{formatBytes(cat.size_bytes)}</span>
+                {isLogs && cat.size_bytes > 50 * 1024 * 1024 && (
+                  <button
+                    onClick={handleCleanLogs}
+                    disabled={cleaning}
+                    className="ml-1 text-dim hover:text-orange-500 transition-colors disabled:opacity-40"
+                    title="Truncate log files"
+                  >
+                    {cleaning ? (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.48-8.48l2.83-2.83M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83" /></svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                    )}
+                  </button>
+                )}
               </div>
             );
           })}
@@ -463,7 +492,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
         <TokenUsageSection tokenUsage={tokenUsage} onRefresh={refreshTokenUsage} />
 
         {/* Storage */}
-        <StorageChart data={storageStats} />
+        <StorageChart data={storageStats} onRefresh={refresh} />
 
         {/* Backup Management */}
         {backupInfo && (

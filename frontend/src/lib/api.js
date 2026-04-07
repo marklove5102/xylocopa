@@ -294,6 +294,7 @@ export const checkoutBranch = (project, branch) =>
 // --- System ---
 export const fetchSystemStats = () => request("/api/system/stats");
 export const fetchStorageStats = () => request("/api/system/storage");
+export const truncateLogs = () => request("/api/system/logs/truncate", { method: "POST" });
 export const fetchTokenUsage = () => request("/api/system/token-usage");
 export const restartServer = () => request("/api/system/restart", { method: "POST" });
 export const scanOrphans = () => request("/api/system/orphans/scan");
