@@ -86,6 +86,7 @@ case "$CMD" in
         # PM2's process table referencing dead PIDs, causing TypeError crashes
         # on `pm2 restart`.  `delete` is idempotent and clears that state.
         pm2 delete all 2>/dev/null || true
+        sleep 1   # let PM2 daemon finish cleanup to avoid stale-process race
         pm2 start "$ECOSYSTEM"
 
         # Wait for backend health
