@@ -628,7 +628,7 @@ async def system_restart():
                 # 3. Wait for ports to be free
                 f'sleep 1; '
                 # 4. Kill any stragglers not managed by PM2
-                f'{" ".join(f"kill -9 {p} 2>/dev/null;" for p in (_platform.find_port_listeners(port) | _platform.find_port_listeners(frontend_port)) - {0})} '
+                f'{" ".join(f"kill -9 {p} 2>/dev/null;" for p in set(_platform.find_port_listeners(port) + _platform.find_port_listeners(frontend_port)) - {0})} '
                 f'sleep 0.5; '
                 # 5. Start fresh (run.sh starts both Vite and uvicorn)
                 f'exec bash "{run_script}" >> "{log_path}" 2>&1',
