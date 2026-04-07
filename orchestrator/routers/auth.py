@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from auth import (
     get_password_hash,
     login_limiter,
     needs_rehash,
+    rotate_jwt_secret,
     set_password_hash,
     verify_password,
     verify_token,
@@ -20,6 +22,8 @@ from config import AUTH_TIMEOUT_MINUTES
 from database import get_db
 
 logger = logging.getLogger("orchestrator")
+
+_setup_lock = threading.Lock()
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -47,16 +51,17 @@ async def auth_check(request: Request, db: Session = Depends(get_db)):
 @router.post("/set-password")
 async def auth_set_password(request: Request, db: Session = Depends(get_db)):
     """First-time password setup. Only works if no password has been set yet."""
-    pw_hash = get_password_hash(db)
-    if pw_hash is not None:
-        raise HTTPException(status_code=400, detail="Password already set")
+    with _setup_lock:
+        pw_hash = get_password_hash(db)
+        if pw_hash is not None:
+            raise HTTPException(status_code=400, detail="Password already set")
 
-    body = await request.json()
-    password = body.get("password", "")
-    if len(password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+        body = await request.json()
+        password = body.get("password", "")
+        if len(password) < 4:
+            raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
 
-    set_password_hash(db, password)
+        set_password_hash(db, password)
     jwt_secret = get_jwt_secret(db)
     token = create_token(jwt_secret)
     logger.info("Initial password set")
@@ -136,7 +141,7 @@ async def auth_change_password(request: Request, db: Session = Depends(get_db)):
 
     login_limiter.record_success(ip)
     set_password_hash(db, new_pw)
-    jwt_secret = get_jwt_secret(db)
+    jwt_secret = rotate_jwt_secret(db)
     token = create_token(jwt_secret)
     logger.info("Password changed")
     return {"token": token, "expires_minutes": AUTH_TIMEOUT_MINUTES}

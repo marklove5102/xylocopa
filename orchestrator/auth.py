@@ -20,9 +20,17 @@ from config import AUTH_TIMEOUT_MINUTES
 # Password hashing (bcrypt with transparent SHA-256 migration)
 # ---------------------------------------------------------------------------
 
+def _sanitize_password(password: str) -> str:
+    """Strip null bytes — some bcrypt implementations truncate at \\x00."""
+    return password.replace("\x00", "")
+
+
 def hash_password(password: str) -> str:
     """Hash a password with bcrypt (cost factor 12)."""
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+    password = _sanitize_password(password)
+    # Pre-hash with SHA-256 so passwords >72 bytes aren't silently truncated by bcrypt
+    derived = hashlib.sha256(password.encode()).hexdigest().encode()
+    return bcrypt.hashpw(derived, bcrypt.gensalt(rounds=12)).decode()
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
@@ -32,8 +40,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
     - bcrypt: starts with "$2b$"
     - legacy SHA-256: "salt:hex_digest" (auto-migrated on successful verify)
     """
+    password = _sanitize_password(password)
     if stored_hash.startswith("$2b$"):
-        return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        derived = hashlib.sha256(password.encode()).hexdigest().encode()
+        return bcrypt.checkpw(derived, stored_hash.encode())
 
     # Legacy SHA-256 format: "salt:sha256hex"
     if ":" not in stored_hash:
@@ -180,6 +190,20 @@ def get_jwt_secret(db_session) -> str:
         return row.value
     secret = secrets.token_hex(32)
     db_session.add(SystemConfig(key="jwt_secret", value=secret))
+    db_session.commit()
+    return secret
+
+
+def rotate_jwt_secret(db_session) -> str:
+    """Rotate JWT secret, invalidating all existing tokens."""
+    from models import SystemConfig
+
+    secret = secrets.token_hex(32)
+    row = db_session.get(SystemConfig, "jwt_secret")
+    if row:
+        row.value = secret
+    else:
+        db_session.add(SystemConfig(key="jwt_secret", value=secret))
     db_session.commit()
     return secret
 
