@@ -325,10 +325,14 @@ async def auth_middleware(request: Request, call_next):
             token = request.query_params.get("token", "")
 
         if not token:
+            # Skip noisy debug endpoints to keep logs clean
+            if path != "/api/debug/frontend-state":
+                logger.info("AUTH_REJECT no_token: %s %s", request.method, path)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         jwt_secret = get_jwt_secret(db)
         if not verify_token(token, jwt_secret):
+            logger.info("AUTH_REJECT bad_token: %s %s (token=%s…)", request.method, path, token[:16])
             return JSONResponse({"detail": "Token expired or invalid"}, status_code=401)
     finally:
         db.close()

@@ -31,7 +31,13 @@ export async function authedFetch(url, opts = {}) {
 }
 
 /** Handle 401 by clearing auth and emitting event. */
-function handle401() {
+function handle401(requestToken) {
+  // If the token changed since this request was sent (e.g. user re-logged in
+  // while this stale request was in-flight), don't nuke the fresh token.
+  const currentToken = getAuthToken();
+  if (currentToken && currentToken !== requestToken) {
+    throw new Error("Not authenticated");
+  }
   clearAuthToken();
   if (window.location.pathname !== "/login") {
     window.dispatchEvent(new Event("auth-expired"));
@@ -48,7 +54,7 @@ async function request(url, opts = {}) {
 
   const res = await fetch(`${BASE}${url}`, { ...opts, headers });
 
-  if (res.status === 401) handle401();
+  if (res.status === 401) handle401(token);
 
   // Calibrate clock offset from HTTP Date header (works before WS connects)
   const serverDate = res.headers.get("Date");
@@ -341,7 +347,7 @@ async function formDataRequest(url, formData, errorLabel = "Request") {
     body: formData,
     headers,
   });
-  if (res.status === 401) handle401();
+  if (res.status === 401) handle401(token);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail || `${errorLabel} (${res.status})`);
