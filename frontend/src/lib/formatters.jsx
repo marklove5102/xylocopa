@@ -1,5 +1,34 @@
+import { useState, useCallback } from "react";
+import { Copy, Check } from "lucide-react";
 import { serverNow } from "./serverTime";
 import { uploadUrl, fileUrl, fileUrlToThumbUrl, API_FILES_PREFIX, RE_UPLOADS_PATH, RE_PROJECTS_PATH, PROJECTS_DIR_SEGMENT } from "./urls";
+
+/** Code block with copy button. */
+function CodeBlock({ code }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback((e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }, [code]);
+  return (
+    <div className="group/code relative my-2">
+      <pre className="p-3 rounded-lg bg-inset text-sm text-body overflow-auto max-h-80 font-mono bubble-scroll">
+        <code>{code}</code>
+      </pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="absolute top-1.5 right-1.5 p-1 rounded-md bg-inset text-dim opacity-0 group-hover/code:opacity-100 hover:text-body transition-opacity cursor-pointer"
+        title="Copy code"
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
+    </div>
+  );
+}
 
 /** Shared date format options for toLocaleString / toLocaleTimeString. */
 export const DATE_SHORT = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
@@ -55,12 +84,7 @@ export function renderMarkdown(text, project) {
       }
       i++; // skip closing ```
       elements.push(
-        <pre
-          key={elements.length}
-          className="my-2 p-3 rounded-lg bg-inset text-sm text-body overflow-auto max-h-80 font-mono bubble-scroll"
-        >
-          <code>{codeLines.join("\n")}</code>
-        </pre>
+        <CodeBlock key={elements.length} code={codeLines.join("\n")} />
       );
       continue;
     }
