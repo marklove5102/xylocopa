@@ -21,7 +21,7 @@ function CodeBlock({ code }) {
       <button
         type="button"
         onClick={handleCopy}
-        className="absolute top-1.5 right-1.5 p-1 rounded-md bg-inset text-dim opacity-0 group-hover/code:opacity-100 hover:text-body transition-opacity cursor-pointer"
+        className="absolute top-1.5 right-1.5 p-1 rounded-md bg-inset text-dim opacity-100 sm:opacity-0 sm:group-hover/code:opacity-100 hover:text-body transition-opacity cursor-pointer"
         title="Copy code"
       >
         {copied ? <Check size={14} /> : <Copy size={14} />}
