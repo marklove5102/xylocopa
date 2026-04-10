@@ -102,7 +102,7 @@ function AuthGuard({ children }) {
   // Listen for auth-expired events dispatched by api.js (graceful 401 handling)
   useEffect(() => {
     const handler = () => {
-      clearAuthToken();
+      clearAuthToken("auth-expired-event");
       navigate("/login", { replace: true });
     };
     window.addEventListener("auth-expired", handler);
@@ -126,7 +126,7 @@ function AuthGuard({ children }) {
               });
             }
           } else if (token) {
-            clearAuthToken();
+            clearAuthToken("authcheck-not-authenticated");
             navigate("/login", { replace: true });
           } else {
             navigate("/login", { replace: true });

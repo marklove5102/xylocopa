@@ -292,7 +292,7 @@ async def hook_request_logger(request: Request, call_next):
     return response
 
 
-_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/api/health", "/api/hooks/")
+_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/api/health", "/api/hooks/", "/api/debug/auth-diag")
 
 
 @app.middleware("http")

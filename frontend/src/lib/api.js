@@ -5,16 +5,51 @@ import { calibrate } from "./serverTime";
 const BASE = "";
 const TOKEN_KEY = "cc-auth-token";
 
+// Timestamp of the most recent setAuthToken() call — used to protect the fresh
+// token from being nuked by stale callbacks during the first few seconds after
+// login (e.g. idle-lock visibilitychange handlers racing with React renders).
+let _lastLoginTs = 0;
+const _LOGIN_GRACE_MS = 3000; // 3-second grace window after login
+
 export function getAuthToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
 export function setAuthToken(token) {
+  _lastLoginTs = Date.now();
   localStorage.setItem(TOKEN_KEY, token);
 }
 
-export function clearAuthToken() {
+export function clearAuthToken(reason) {
+  // During the post-login grace window, refuse to clear the token.
+  // This prevents stale visibilitychange handlers, frozen timers, and
+  // in-flight 401 responses from racing with a fresh login.
+  const sinceLogin = Date.now() - _lastLoginTs;
+  if (_lastLoginTs && sinceLogin < _LOGIN_GRACE_MS) {
+    console.warn("[auth] clearAuthToken BLOCKED during login grace period (%dms since login, reason=%s)", sinceLogin, reason || "unknown");
+    _sendAuthDiag("clear_blocked", reason || "unknown", sinceLogin);
+    return;
+  }
+  console.warn("[auth] clearAuthToken called (reason=%s)", reason || "unknown");
+  _sendAuthDiag("clear", reason || "unknown", sinceLogin);
   localStorage.removeItem(TOKEN_KEY);
+}
+
+/** Fire-and-forget diagnostic event to the server for post-mortem debugging. */
+function _sendAuthDiag(action, reason, sinceLoginMs) {
+  try {
+    fetch("/api/debug/auth-diag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action, reason,
+        since_login_ms: sinceLoginMs,
+        path: window.location.pathname,
+        has_token: !!localStorage.getItem(TOKEN_KEY),
+        ts: Date.now(),
+      }),
+    }).catch(() => {});
+  } catch { /* best-effort */ }
 }
 
 /**
@@ -38,7 +73,7 @@ function handle401(requestToken) {
   if (currentToken && currentToken !== requestToken) {
     throw new Error("Not authenticated");
   }
-  clearAuthToken();
+  clearAuthToken("handle401");
   if (window.location.pathname !== "/login") {
     window.dispatchEvent(new Event("auth-expired"));
   }

@@ -104,6 +104,7 @@ async def auth_login(request: Request, db: Session = Depends(get_db)):
 
     jwt_secret = get_jwt_secret(db)
     token = create_token(jwt_secret)
+    logger.info("LOGIN_OK from %s (token=%s…)", ip, token[:16])
     return {"token": token, "expires_minutes": AUTH_TIMEOUT_MINUTES}
 
 

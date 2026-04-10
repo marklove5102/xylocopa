@@ -187,6 +187,27 @@ async def kb_debug_log(request: Request):
     return {"ok": True, "count": len(samples)}
 
 
+@router.post("/api/debug/auth-diag")
+async def auth_diag(request: Request):
+    """Receive auth lifecycle events from the frontend for debugging.
+
+    The frontend sends events whenever clearAuthToken is called (or blocked),
+    including which code path triggered it and how long since the last login.
+    This is invaluable for diagnosing iOS PWA resume race conditions.
+    """
+    body = await request.json()
+    action = body.get("action", "?")
+    reason = body.get("reason", "?")
+    since_ms = body.get("since_login_ms", "?")
+    path = body.get("path", "?")
+    has_token = body.get("has_token", "?")
+    logger.info(
+        "AUTH_DIAG: action=%s reason=%s since_login=%sms path=%s has_token=%s",
+        action, reason, since_ms, path, has_token,
+    )
+    return {"ok": True}
+
+
 @router.get("/api/system/stats")
 async def system_stats():
     """System resource usage — CPU, memory, disk, and optional GPU."""

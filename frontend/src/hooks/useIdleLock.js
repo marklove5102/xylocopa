@@ -29,7 +29,7 @@ function idleMs() {
  */
 export default function useIdleLock(navigate) {
   const lock = useCallback(() => {
-    clearAuthToken();
+    clearAuthToken("idle-lock");
     localStorage.removeItem(ACTIVITY_KEY);
     navigate("/login", { replace: true });
   }, [navigate]);
