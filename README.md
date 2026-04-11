@@ -155,8 +155,6 @@ nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
 
 Open `https://<machine-ip>:3000` in your browser. Set a password on first visit.
 
-> **Tip:** You can also run `claude` in the project directory and ask it to set things up for you :)
-
 ### First Time on iPhone
 
 1. Open `https://<machine-ip>:3000` in Safari — you'll see a certificate warning because AgentHive runs on your own machine with a self-signed certificate, not one issued by a public authority. This is expected for self-hosted software. Tap **"Advanced"** → **"Visit this website"** → **"Visit Website"**, then **refresh the page** manually.
