@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ToastProvider } from "../contexts/ToastContext";
+import { MonitorProvider } from "../contexts/MonitorContext";
 import GitPage from "./GitPage";
 
 // --- Mock navigate ---
@@ -20,6 +21,15 @@ vi.mock("../lib/api", () => ({
   fetchGitWorktrees: vi.fn(),
   checkoutBranch: vi.fn(),
   createAgent: vi.fn(),
+  launchTmuxAgent: vi.fn(),
+  // MonitorProvider deps (called on mount; resolved values are unused by GitPage tests)
+  fetchHealth: vi.fn().mockResolvedValue({}),
+  fetchAgents: vi.fn().mockResolvedValue([]),
+  fetchProcesses: vi.fn().mockResolvedValue([]),
+  fetchSystemStats: vi.fn().mockResolvedValue({}),
+  fetchStorageStats: vi.fn().mockResolvedValue({}),
+  fetchTokenUsage: vi.fn().mockResolvedValue({}),
+  fetchTaskCounts: vi.fn().mockResolvedValue({}),
 }));
 
 import {
@@ -30,15 +40,18 @@ import {
   fetchGitWorktrees,
   checkoutBranch,
   createAgent,
+  launchTmuxAgent,
 } from "../lib/api";
 
 // --- Helpers ---
 function renderGitPage() {
   return render(
     <MemoryRouter>
-      <ToastProvider>
-        <GitPage theme="dark" onToggleTheme={() => {}} />
-      </ToastProvider>
+      <MonitorProvider>
+        <ToastProvider>
+          <GitPage theme="dark" onToggleTheme={() => {}} />
+        </ToastProvider>
+      </MonitorProvider>
     </MemoryRouter>
   );
 }
@@ -76,6 +89,7 @@ function setupMocks({ worktrees = MOCK_WORKTREES_SINGLE } = {}) {
   fetchGitStatus.mockResolvedValue(MOCK_STATUS_CLEAN);
   fetchGitWorktrees.mockResolvedValue(worktrees);
   createAgent.mockResolvedValue({ id: "agent-123" });
+  launchTmuxAgent.mockResolvedValue({ id: "agent-123" });
 }
 
 beforeEach(() => {
@@ -160,7 +174,7 @@ describe("Merge All button visibility", () => {
 // Merge All button behavior
 // =============================================================================
 describe("Merge All button behavior", () => {
-  it("calls createAgent with correct params on click", async () => {
+  it("calls launchTmuxAgent with correct params on click", async () => {
     setupMocks({ worktrees: MOCK_WORKTREES_MULTI });
     renderGitPage();
 
@@ -171,10 +185,10 @@ describe("Merge All button behavior", () => {
     fireEvent.click(screen.getByText("Merge All"));
 
     await waitFor(() => {
-      expect(createAgent).toHaveBeenCalledTimes(1);
+      expect(launchTmuxAgent).toHaveBeenCalledTimes(1);
     });
 
-    const call = createAgent.mock.calls[0][0];
+    const call = launchTmuxAgent.mock.calls[0][0];
     expect(call.project).toBe("my-project");
     expect(call.mode).toBe("AUTO");
     expect(call.skip_permissions).toBe(true);
@@ -199,10 +213,10 @@ describe("Merge All button behavior", () => {
 
   it("shows Creating... text while agent is being created", async () => {
     let resolveCreate;
-    createAgent.mockReturnValue(new Promise((r) => { resolveCreate = r; }));
+    launchTmuxAgent.mockReturnValue(new Promise((r) => { resolveCreate = r; }));
     setupMocks({ worktrees: MOCK_WORKTREES_MULTI });
-    // Override the createAgent mock set by setupMocks
-    createAgent.mockReturnValue(new Promise((r) => { resolveCreate = r; }));
+    // Override the launchTmuxAgent mock set by setupMocks
+    launchTmuxAgent.mockReturnValue(new Promise((r) => { resolveCreate = r; }));
 
     renderGitPage();
 
@@ -227,9 +241,9 @@ describe("Merge All button behavior", () => {
     });
   });
 
-  it("shows error toast when createAgent fails", async () => {
+  it("shows error toast when launchTmuxAgent fails", async () => {
     setupMocks({ worktrees: MOCK_WORKTREES_MULTI });
-    createAgent.mockRejectedValue(new Error("Server error"));
+    launchTmuxAgent.mockRejectedValue(new Error("Server error"));
 
     renderGitPage();
 
@@ -258,10 +272,10 @@ describe("Merge All button behavior", () => {
     fireEvent.click(screen.getByText("Merge All"));
 
     await waitFor(() => {
-      expect(createAgent).toHaveBeenCalledTimes(1);
+      expect(launchTmuxAgent).toHaveBeenCalledTimes(1);
     });
 
-    const msg = createAgent.mock.calls[0][0].prompt;
+    const msg = launchTmuxAgent.mock.calls[0][0].prompt;
     // The branch list should be "feat-a, feat-b" — not include "main"
     expect(msg).toMatch(/branches to merge are: feat-a, feat-b/);
   });
@@ -329,10 +343,10 @@ describe("Branch merge", () => {
     fireEvent.click(menuItems[0]);
 
     await waitFor(() => {
-      expect(createAgent).toHaveBeenCalledTimes(1);
+      expect(launchTmuxAgent).toHaveBeenCalledTimes(1);
     });
 
-    const call = createAgent.mock.calls[0][0];
+    const call = launchTmuxAgent.mock.calls[0][0];
     expect(call.project).toBe("my-project");
     expect(call.mode).toBe("AUTO");
     expect(call.prompt).toContain("feature-x");
