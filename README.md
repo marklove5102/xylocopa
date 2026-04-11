@@ -66,7 +66,7 @@ Your conversations with agents are valuable. Don't lose them.
 - **Resume anytime** — pick up any agent conversation right where it left off, whether it finished yesterday or last month.
 - **Full-text search** — find any task, message, or agent session across your entire history.
 - **Progress tracking** — weekly completion stats show how much your agents are getting done. See the trend, not just the backlog.
-- **Project memory** — accumulated insights live in per-project PROGRESS.md files that survive across agents, sessions, and time. CLAUDE.md can be periodically refreshed to distill these lessons into concise project rules.
+- **Project memory** — accumulated insights live in per-project PROGRESS.md files that survive across agents, sessions, and time.
 
 ## Why AgentHive?
 
