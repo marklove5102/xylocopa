@@ -17,7 +17,6 @@ const HEALTH_COLORS = {
   unknown: "bg-gray-500",
 };
 
-const AGENT_STATUS_ORDER = ["EXECUTING", "IDLE", "IDLE", "STARTING", "ERROR", "STOPPED"];
 
 function formatResetTime(isoStr) {
   if (!isoStr) return "";
@@ -245,7 +244,7 @@ function TokenUsageSection({ tokenUsage, onRefresh }) {
 export default function MonitorPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const {
-    health, healthError, agents, agentCounts, processes, sysStats, tokenUsage, storageStats,
+    health, healthError, agents, processes, sysStats, tokenUsage, storageStats,
     refresh, refreshTokenUsage, activate, deactivate,
   } = useMonitor();
   const [refreshing, setRefreshing] = useState(false);
@@ -705,24 +704,6 @@ export default function MonitorPage({ theme, onToggleTheme }) {
             <div className="mt-1 flex items-baseline gap-1">
               <span className="text-2xl font-bold text-heading">{agents.length}</span>
               <span className="text-sm text-dim">total</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Agent Status Breakdown */}
-        <section>
-          <div className="rounded-xl bg-surface shadow-card p-4">
-            <p className="text-xs text-dim uppercase tracking-wider mb-2">Agents by Status</p>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {AGENT_STATUS_ORDER.map((st) =>
-                agentCounts[st] ? (
-                  <span key={st} className="text-xs whitespace-nowrap">
-                    <span className={AGENT_STATUS_TEXT_COLORS[st] || "text-label"}>{agentCounts[st]}</span>{" "}
-                    <span className="text-faint">{st.toLowerCase().replace("_", " ")}</span>
-                  </span>
-                ) : null
-              )}
-              {agents.length === 0 && <span className="text-xs text-faint">No agents</span>}
             </div>
           </div>
         </section>
