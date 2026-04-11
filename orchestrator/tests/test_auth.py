@@ -15,13 +15,11 @@ from auth import (
 
 # ---- Password hashing ----
 
-def test_hash_password_returns_salt_colon_hash():
-    """hash_password should return 'salt:hash' format."""
+def test_hash_password_returns_bcrypt_hash():
+    """hash_password should return a bcrypt hash string."""
     result = hash_password("secret123")
-    assert ":" in result
-    salt, h = result.split(":", 1)
-    assert len(salt) == 32  # 16 bytes hex
-    assert len(h) == 64     # SHA-256 hex
+    assert result.startswith("$2b$")
+    assert len(result) == 60  # standard bcrypt hash length
 
 
 def test_verify_password_correct():

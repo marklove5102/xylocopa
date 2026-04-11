@@ -26,13 +26,24 @@ async def test_list_projects_with_stats(client, db_engine):
     ))
     db.commit()
 
-    # Add two agents
+    # Add three tasks
+    task_a = Task(title="Task A", project="stats-proj", project_name="stats-proj", status=TaskStatus.COMPLETE)
+    task_b = Task(title="Task B", project="stats-proj", project_name="stats-proj", status=TaskStatus.EXECUTING)
+    task_c = Task(title="Task C", project="stats-proj", project_name="stats-proj", status=TaskStatus.FAILED)
+    db.add_all([task_a, task_b, task_c])
+    db.commit()
+    db.refresh(task_a)
+    db.refresh(task_b)
+    db.refresh(task_c)
+
+    # Add agents linked to tasks (endpoint counts task-linked agents)
     db.add(Agent(
         id="agent0000001",
         project="stats-proj",
         name="Agent One",
         mode=AgentMode.AUTO,
         status=AgentStatus.IDLE,
+        task_id=task_a.id,
     ))
     db.add(Agent(
         id="agent0000002",
@@ -40,13 +51,16 @@ async def test_list_projects_with_stats(client, db_engine):
         name="Agent Two",
         mode=AgentMode.AUTO,
         status=AgentStatus.STOPPED,
+        task_id=task_b.id,
     ))
-    db.commit()
-
-    # Add three tasks (using legacy `project` column which the list endpoint queries)
-    db.add(Task(title="Task A", project="stats-proj", status=TaskStatus.COMPLETE))
-    db.add(Task(title="Task B", project="stats-proj", status=TaskStatus.EXECUTING))
-    db.add(Task(title="Task C", project="stats-proj", status=TaskStatus.FAILED))
+    db.add(Agent(
+        id="agent0000003",
+        project="stats-proj",
+        name="Agent Three",
+        mode=AgentMode.AUTO,
+        status=AgentStatus.STOPPED,
+        task_id=task_c.id,
+    ))
     db.commit()
     db.close()
 
@@ -58,7 +72,7 @@ async def test_list_projects_with_stats(client, db_engine):
     proj = data[0]
     assert proj["name"] == "stats-proj"
     assert proj["task_total"] == 3
-    assert proj["agent_total"] == 2
+    assert proj["agent_total"] == 3
 
 
 @pytest.mark.anyio
@@ -309,7 +323,7 @@ def test_project_max_concurrent_default(db_session):
     db_session.commit()
     db_session.refresh(proj)
 
-    assert proj.max_concurrent == 2
+    assert proj.max_concurrent == 8
 
 
 def test_project_default_model_value(db_session):

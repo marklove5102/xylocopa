@@ -12,6 +12,8 @@ import pytest
 from agent_dispatcher import (
     _dedup_sig,
     _get_first_user_uuid,
+)
+from jsonl_parser import (
     _parse_agenthive_marker,
     _parse_session_turns,
     _strip_agent_preamble,
@@ -304,14 +306,14 @@ class TestParseSessionTurns:
         assert turns[0][0] == "user"
         assert turns[1][0] == "assistant"
 
-    def test_parse_turns_returns_4_tuples(self, tmp_path):
+    def test_parse_turns_returns_6_tuples(self, tmp_path):
         jsonl = tmp_path / "session.jsonl"
         _write_jsonl(jsonl, [
             {"type": "user", "uuid": "uuid-1", "message": {"role": "user", "content": "Hello"}, "sessionId": "s1"},
         ])
         turns = _parse_session_turns(str(jsonl))
         assert len(turns) == 1
-        role, content, meta, uuid = turns[0]
+        role, content, meta, uuid, kind, timestamp = turns[0]
         assert role == "user"
         assert content == "Hello"
         assert meta is None
@@ -338,7 +340,8 @@ class TestParseSessionTurns:
         assert len(asst_turns) == 1
         assert asst_turns[0][3] == "asst-uuid-1"
 
-    def test_parse_turns_queue_operation_no_uuid(self, tmp_path):
+    def test_parse_turns_queue_operation_skipped(self, tmp_path):
+        """queue-operation entries are no longer parsed by the JSONL parser."""
         jsonl = tmp_path / "session.jsonl"
         _write_jsonl(jsonl, [
             {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "Hi"}, "sessionId": "s1"},
@@ -347,8 +350,7 @@ class TestParseSessionTurns:
         ])
         turns = _parse_session_turns(str(jsonl))
         queue_turns = [t for t in turns if t[1] == "Follow up question"]
-        assert len(queue_turns) == 1
-        assert queue_turns[0][3] is None  # no uuid for queue-operation
+        assert len(queue_turns) == 0  # queue-operation is not parsed
 
     def test_parse_turns_skips_tool_result(self, tmp_path):
         jsonl = tmp_path / "session.jsonl"
@@ -403,11 +405,10 @@ class TestParseSessionTurns:
         ])
         turns = _parse_session_turns(str(jsonl))
         user_turns = [t for t in turns if t[0] == "user"]
-        # same-uuid deduped; different-uuid also deduped because content
-        # "Hello" was already seen — this cross-check catches queue-op +
-        # user-entry pairs where both have same content but different UUIDs.
-        assert len(user_turns) == 1
+        # same-uuid deduped; different-uuid kept (only UUID-based dedup now)
+        assert len(user_turns) == 2
         assert user_turns[0][3] == "same-uuid"
+        assert user_turns[1][3] == "different-uuid"
 
     def test_parse_turns_dedup_uuid_different_content(self, tmp_path):
         """Different UUIDs with different content are both kept."""
@@ -420,7 +421,8 @@ class TestParseSessionTurns:
         user_turns = [t for t in turns if t[0] == "user"]
         assert len(user_turns) == 2
 
-    def test_parse_turns_dedup_by_content_no_uuid(self, tmp_path):
+    def test_parse_turns_queue_operations_not_parsed(self, tmp_path):
+        """queue-operation entries are no longer parsed by the JSONL parser."""
         jsonl = tmp_path / "session.jsonl"
         _write_jsonl(jsonl, [
             {"type": "queue-operation", "operation": "enqueue", "content": "Duplicate msg", "sessionId": "s1"},
@@ -429,12 +431,11 @@ class TestParseSessionTurns:
         ])
         turns = _parse_session_turns(str(jsonl))
         user_turns = [t for t in turns if t[0] == "user"]
-        # queue-operation turns have no uuid; content-based dedup should remove the duplicate
-        assert len(user_turns) == 1
-        assert user_turns[0][1] == "Duplicate msg"
+        # queue-operation entries are skipped entirely
+        assert len(user_turns) == 0
 
-    def test_parse_turns_dedup_queue_op_then_user_entry(self, tmp_path):
-        """Queue-op + subsequent user entry with same content are deduped."""
+    def test_parse_turns_queue_op_skipped_user_entry_kept(self, tmp_path):
+        """Queue-op entries are skipped; the real user entry is kept."""
         jsonl = tmp_path / "session.jsonl"
         _write_jsonl(jsonl, [
             {"type": "queue-operation", "operation": "enqueue", "content": "My question", "sessionId": "s1"},
@@ -443,10 +444,10 @@ class TestParseSessionTurns:
         ])
         turns = _parse_session_turns(str(jsonl))
         user_turns = [t for t in turns if t[0] == "user"]
-        # Queue-op (no uuid) comes first, user entry (with uuid) is deduped
-        # because content "My question" already seen
+        # queue-operation is skipped; only the real user entry is parsed
         assert len(user_turns) == 1
         assert user_turns[0][1] == "My question"
+        assert user_turns[0][3] == "uuid-for-question"
 
 
 # ===========================================================================

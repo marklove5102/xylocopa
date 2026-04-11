@@ -5,7 +5,7 @@ Tests the building blocks used by _sync_agent_messages_impl reconciliation:
   - Content-based fallback (_dedup_sig)
   - Marker filtering and msg_id backfill
   - Content growth with UUID / prefix matching
-  - Import dedup via _import_turns_as_messages
+  - Import dedup via _import_turns_as_messages_deduped
 """
 
 import json
@@ -24,12 +24,14 @@ from models import (
 )
 from agent_dispatcher import (
     _dedup_sig,
-    _parse_agenthive_marker,
-    _AGENTHIVE_PROMPT_MARKER,
-    _is_wrapped_prompt,
     _write_session_owner,
     _read_session_owner,
     AgentDispatcher,
+)
+from jsonl_parser import (
+    _parse_agenthive_marker,
+    _AGENTHIVE_PROMPT_MARKER,
+    _is_wrapped_prompt,
 )
 
 
@@ -408,17 +410,17 @@ class TestContentGrowth:
 
 
 class TestImportDedup:
-    """Test _import_turns_as_messages and subsequent UUID-based dedup."""
+    """Test _import_turns_as_messages_deduped and subsequent UUID-based dedup."""
 
     def test_import_turns_stores_uuid(self, db_session, sample_agent, dispatcher):
-        """_import_turns_as_messages should store jsonl_uuid on each message."""
+        """_import_turns_as_messages_deduped should store jsonl_uuid on each message."""
         turns = [
             ("user", "First question", None, "uuid-imp-1"),
             ("assistant", "First answer", None, "uuid-imp-2"),
             ("user", "Second question", None, "uuid-imp-3"),
         ]
 
-        count = dispatcher._import_turns_as_messages(
+        count = dispatcher._import_turns_as_messages_deduped(
             db_session, sample_agent.id, turns
         )
         db_session.commit()
@@ -449,7 +451,7 @@ class TestImportDedup:
             ("assistant", "Answer B", None, "uuid-d"),
         ]
 
-        dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+        dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
         db_session.commit()
 
         # Build uuid set from DB (same as reconciliation)
@@ -487,7 +489,7 @@ class TestImportDedup:
             ("user", "Another without uuid", None, None),
         ]
 
-        dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+        dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
         db_session.commit()
 
         all_msgs = (
@@ -520,7 +522,7 @@ class TestImportDedup:
             ("system", "System msg", None, "uuid-r3"),
         ]
 
-        dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+        dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
         db_session.commit()
 
         msgs = (

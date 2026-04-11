@@ -336,9 +336,8 @@ def test_dispatch_skips_missing_project(db_session, dispatcher):
     assert t.status == TaskStatus.PENDING  # stays pending
 
 
-def test_dispatch_respects_project_concurrency(db_session, proj, dispatcher):
-    """Tasks should not be dispatched when project is at capacity."""
-    # Fill up capacity (max_concurrent=2)
+def test_dispatch_ignores_concurrency_limits(db_session, proj, dispatcher):
+    """Tasks dispatch even when existing agents are executing (no max_concurrent enforcement)."""
     for i in range(2):
         db_session.add(Agent(
             id=f"exec{i:010d}",
@@ -348,39 +347,17 @@ def test_dispatch_respects_project_concurrency(db_session, proj, dispatcher):
         ))
     db_session.commit()
 
-    t = Task(title="Blocked task", project_name=proj.name, status=TaskStatus.PENDING)
+    t = Task(title="Should dispatch", project_name=proj.name, status=TaskStatus.PENDING)
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux") as mock_tmux:
+    with patch("routers.tasks._dispatch_task_tmux", return_value="exec0000000099"):
+        db_session.add(Agent(id="exec0000000099", project=proj.name, name="New Agent", status=AgentStatus.IDLE))
+        db_session.commit()
         dispatcher._dispatch_pending_tasks(db_session)
-        mock_tmux.assert_not_called()
 
     db_session.refresh(t)
-    assert t.status == TaskStatus.PENDING
-
-
-def test_dispatch_starting_agents_count_toward_capacity(db_session, proj, dispatcher):
-    """STARTING agents should count toward project capacity."""
-    for i in range(2):
-        db_session.add(Agent(
-            id=f"start{i:09d}",
-            project=proj.name,
-            name=f"Starting Agent {i}",
-            status=AgentStatus.STARTING,
-        ))
-    db_session.commit()
-
-    t = Task(title="Blocked by starting", project_name=proj.name, status=TaskStatus.PENDING)
-    db_session.add(t)
-    db_session.commit()
-
-    with patch("routers.tasks._dispatch_task_tmux") as mock_tmux:
-        dispatcher._dispatch_pending_tasks(db_session)
-        mock_tmux.assert_not_called()
-
-    db_session.refresh(t)
-    assert t.status == TaskStatus.PENDING
+    assert t.status == TaskStatus.EXECUTING
 
 
 def test_dispatch_idle_agents_dont_count(db_session, proj, dispatcher):
@@ -401,17 +378,19 @@ def test_dispatch_idle_agents_dont_count(db_session, proj, dispatcher):
     assert t.status == TaskStatus.EXECUTING
 
 
-def test_dispatch_priority_ordering(db_session, proj, dispatcher):
-    """High priority tasks should be dispatched before normal priority."""
+def test_dispatch_ordering_by_created_at(db_session, proj, dispatcher):
+    """Tasks are dispatched in created_at order (FIFO)."""
     # Pre-create agents so FK constraint is satisfied
     db_session.add(Agent(id="agent_000001", project=proj.name, name="A1", status=AgentStatus.IDLE))
     db_session.add(Agent(id="agent_000002", project=proj.name, name="A2", status=AgentStatus.IDLE))
     db_session.commit()
 
-    t_normal = Task(title="Normal task", project_name=proj.name, status=TaskStatus.PENDING, priority=0)
-    t_high = Task(title="High priority task", project_name=proj.name, status=TaskStatus.PENDING, priority=1)
-    db_session.add(t_normal)
-    db_session.add(t_high)
+    t_first = Task(title="First task", project_name=proj.name, status=TaskStatus.PENDING, priority=0)
+    db_session.add(t_first)
+    db_session.commit()
+
+    t_second = Task(title="Second task", project_name=proj.name, status=TaskStatus.PENDING, priority=1)
+    db_session.add(t_second)
     db_session.commit()
 
     dispatched_order = []
@@ -424,8 +403,8 @@ def test_dispatch_priority_ordering(db_session, proj, dispatcher):
     with patch("routers.tasks._dispatch_task_tmux", side_effect=mock_tmux):
         dispatcher._dispatch_pending_tasks(db_session)
 
-    assert dispatched_order[0] == "High priority task"
-    assert dispatched_order[1] == "Normal task"
+    assert dispatched_order[0] == "First task"
+    assert dispatched_order[1] == "Second task"
 
 
 def test_dispatch_handles_tmux_failure(db_session, proj, dispatcher):
@@ -454,32 +433,30 @@ def test_dispatch_tmux_returns_none(db_session, proj, dispatcher):
     assert t.status == TaskStatus.PENDING
 
 
-def test_dispatch_cross_project_independence(db_session, proj, proj2, dispatcher):
-    """Projects should have independent concurrency limits."""
-    # Fill proj2 (max_concurrent=1)
+def test_dispatch_cross_project_all_dispatch(db_session, proj, proj2, dispatcher):
+    """All tasks dispatch regardless of project — no max_concurrent enforcement."""
     db_session.add(Agent(id="p2exec000001", project=proj2.name, name="P2 Agent", status=AgentStatus.EXECUTING))
-    # Pre-create agent for proj1 dispatch
     db_session.add(Agent(id="p1new0000001", project=proj.name, name="P1 New", status=AgentStatus.IDLE))
     db_session.commit()
 
-    # Tasks for both projects
     t1 = Task(title="Proj1 task", project_name=proj.name, status=TaskStatus.PENDING)
     t2 = Task(title="Proj2 task", project_name=proj2.name, status=TaskStatus.PENDING)
     db_session.add_all([t1, t2])
     db_session.commit()
 
     dispatched = []
+    agent_ids = iter(["p1new0000001", "p2exec000001"])
 
     def mock_tmux(db, task, proj_obj, ad):
         dispatched.append(task.title)
-        return "p1new0000001"
+        return next(agent_ids)
 
     with patch("routers.tasks._dispatch_task_tmux", side_effect=mock_tmux):
         dispatcher._dispatch_pending_tasks(db_session)
 
-    # proj1 should dispatch, proj2 should not (at capacity)
+    # Both projects dispatch (no concurrency limit enforcement)
     assert "Proj1 task" in dispatched
-    assert "Proj2 task" not in dispatched
+    assert "Proj2 task" in dispatched
 
 
 def test_dispatch_limit_5_per_tick(db_session, proj, dispatcher):

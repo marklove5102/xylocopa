@@ -1,4 +1,4 @@
-"""Tests for Message.jsonl_uuid field and _import_turns_as_messages()."""
+"""Tests for Message.jsonl_uuid field and _import_turns_as_messages_deduped()."""
 
 import json
 
@@ -86,7 +86,7 @@ def test_import_turns_creates_user_message(db_session, sample_agent):
     """User turn should produce Message with role=USER and source='cli'."""
     dispatcher = _make_dispatcher()
     turns = [("user", "hello from user")]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msgs = db_session.query(Message).filter(
@@ -102,7 +102,7 @@ def test_import_turns_creates_agent_message(db_session, sample_agent):
     """Assistant turn should map to role=AGENT."""
     dispatcher = _make_dispatcher()
     turns = [("assistant", "agent reply")]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msg = db_session.query(Message).filter(
@@ -117,7 +117,7 @@ def test_import_turns_creates_system_message(db_session, sample_agent):
     """System turn should map to role=SYSTEM."""
     dispatcher = _make_dispatcher()
     turns = [("system", "system note")]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msg = db_session.query(Message).filter(
@@ -132,7 +132,7 @@ def test_import_turns_stores_jsonl_uuid(db_session, sample_agent):
     """Turn with uuid should populate Message.jsonl_uuid."""
     dispatcher = _make_dispatcher()
     turns = [("user", "with uuid", None, "uuid-xyz")]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msg = db_session.query(Message).filter(
@@ -145,7 +145,7 @@ def test_import_turns_stores_none_uuid(db_session, sample_agent):
     """Turn without uuid (None) should leave jsonl_uuid as None."""
     dispatcher = _make_dispatcher()
     turns = [("user", "no uuid")]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msg = db_session.query(Message).filter(
@@ -159,7 +159,7 @@ def test_import_turns_stores_meta_json(db_session, sample_agent):
     dispatcher = _make_dispatcher()
     meta = {"tool": "bash", "exit_code": 0}
     turns = [("user", "with meta", meta)]
-    dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     msg = db_session.query(Message).filter(
@@ -177,7 +177,7 @@ def test_import_turns_returns_count(db_session, sample_agent):
         ("assistant", "two"),
         ("system", "three"),
     ]
-    count = dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    count = dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     assert count == 3
 
 
@@ -185,7 +185,7 @@ def test_import_turns_skips_unknown_role(db_session, sample_agent):
     """Unrecognised role should be silently skipped."""
     dispatcher = _make_dispatcher()
     turns = [("other", "ignored")]
-    count = dispatcher._import_turns_as_messages(db_session, sample_agent.id, turns)
+    count = dispatcher._import_turns_as_messages_deduped(db_session, sample_agent.id, turns)
     db_session.commit()
 
     assert count == 0
@@ -199,7 +199,7 @@ def test_import_turns_custom_source(db_session, sample_agent):
     """source=None should propagate to Message.source."""
     dispatcher = _make_dispatcher()
     turns = [("user", "null source")]
-    dispatcher._import_turns_as_messages(
+    dispatcher._import_turns_as_messages_deduped(
         db_session, sample_agent.id, turns, source=None,
     )
     db_session.commit()

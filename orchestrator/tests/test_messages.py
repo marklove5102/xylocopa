@@ -42,7 +42,7 @@ def test_message_role_enum_values():
 
 def test_message_status_enum_values():
     """MessageStatus should have all expected values."""
-    expected = {"PENDING", "EXECUTING", "COMPLETED", "FAILED", "TIMEOUT"}
+    expected = {"PENDING", "QUEUED", "EXECUTING", "COMPLETED", "FAILED", "TIMEOUT"}
     actual = {s.value for s in MessageStatus}
     assert actual == expected
 
@@ -289,6 +289,8 @@ async def test_send_message_idle_tmux_recover_pane_and_send_direct(
         lambda _sid, _path: "%222",
     )
     monkeypatch.setattr("agent_dispatcher.send_tmux_message", _send)
+    # display_writer.flush_agent uses its own SessionLocal (separate in-memory DB)
+    monkeypatch.setattr("display_writer.flush_agent", lambda _agent_id: None)
 
     resp = await client.post(
         "/api/agents/syncmsg22222/messages",
@@ -296,7 +298,7 @@ async def test_send_message_idle_tmux_recover_pane_and_send_direct(
     )
     assert resp.status_code == 201
     payload = resp.json()
-    assert payload["status"] == "COMPLETED"
+    assert payload["status"] == "QUEUED"
     assert sent == {"pane": "%222", "text": "recover and send"}
 
     db = Session()
@@ -304,5 +306,5 @@ async def test_send_message_idle_tmux_recover_pane_and_send_direct(
     assert agent.tmux_pane == "%222"
     msg = db.get(Message, payload["id"])
     assert msg is not None
-    assert msg.status == MessageStatus.COMPLETED
+    assert msg.status == MessageStatus.QUEUED
     db.close()

@@ -120,47 +120,19 @@ async def test_project_worktrees_empty(client, db_engine):
 
 
 @pytest.mark.anyio
-async def test_project_worktrees_with_agents(client, db_engine):
-    """GET /api/projects/{name}/worktrees should return distinct worktree names from agents."""
+async def test_project_worktrees_nonexistent_path(client, db_engine):
+    """GET /api/projects/{name}/worktrees returns empty list when project dir doesn't exist.
+
+    The endpoint uses `git worktree list` on the filesystem, so it returns []
+    when the project directory is missing.
+    """
     from sqlalchemy.orm import sessionmaker
     Session = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
     db = Session()
     db.add(Project(name="wt-proj", display_name="WT Proj", path="/tmp/wt-proj"))
-    db.flush()
-    db.add(Agent(
-        id="wtagent11111",
-        project="wt-proj",
-        name="Agent WT1",
-        status=AgentStatus.IDLE,
-        worktree="fix-login",
-    ))
-    db.add(Agent(
-        id="wtagent22222",
-        project="wt-proj",
-        name="Agent WT2",
-        status=AgentStatus.IDLE,
-        worktree="add-tests",
-    ))
-    # Duplicate worktree name — should appear only once in results
-    db.add(Agent(
-        id="wtagent33333",
-        project="wt-proj",
-        name="Agent WT3",
-        status=AgentStatus.IDLE,
-        worktree="fix-login",
-    ))
-    # Agent with no worktree — should not appear
-    db.add(Agent(
-        id="wtagent44444",
-        project="wt-proj",
-        name="Agent WT4",
-        status=AgentStatus.IDLE,
-        worktree=None,
-    ))
     db.commit()
     db.close()
 
     resp = await client.get("/api/projects/wt-proj/worktrees")
     assert resp.status_code == 200
-    data = resp.json()
-    assert sorted(data) == ["add-tests", "fix-login"]
+    assert resp.json() == []

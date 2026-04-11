@@ -742,22 +742,26 @@ def query_insights_ai(db, project: str, user_message: str, limit: int = 50) -> l
         f"Past insights:\n{numbered}"
     )
 
-    import openai
-    client = openai.OpenAI(timeout=5)
-    resp = client.chat.completions.create(
-        model=os.getenv("SUMMARY_MODEL", "gpt-4o-mini"),
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=100,
-        temperature=0,
-    )
-    raw = resp.choices[0].message.content.strip()
-    indices = json.loads(raw)
-    if not isinstance(indices, list):
-        raise ValueError(f"Expected list, got {type(indices)}")
-    # Bounds-check + dedup, preserve order
-    valid = [i for i in indices if isinstance(i, int) and 1 <= i <= len(candidates)]
-    selected = [candidates[i - 1] for i in dict.fromkeys(valid)]
-    return selected[:10]
+    try:
+        import openai
+        client = openai.OpenAI(timeout=5)
+        resp = client.chat.completions.create(
+            model=os.getenv("SUMMARY_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        indices = json.loads(raw)
+        if not isinstance(indices, list):
+            raise ValueError(f"Expected list, got {type(indices)}")
+        # Bounds-check + dedup, preserve order
+        valid = [i for i in indices if isinstance(i, int) and 1 <= i <= len(candidates)]
+        selected = [candidates[i - 1] for i in dict.fromkeys(valid)]
+        return selected[:10]
+    except Exception as e:
+        logger.warning("query_insights_ai: reranking failed (%s), falling back to FTS5", e)
+        return query_insights(db, project, user_message)
 
 
 _DAILY_SUMMARY_MAX_CONTEXT = 500_000  # chars — stay well within Claude context window

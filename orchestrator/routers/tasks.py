@@ -200,6 +200,7 @@ async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
         project_name=body.project_name,
         model=body.model,
         effort=body.effort,
+        priority=body.priority,
         skip_permissions=body.skip_permissions,
         sync_mode=body.sync_mode,
         use_worktree=body.use_worktree,
@@ -616,7 +617,7 @@ async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(g
             TaskStateMachine.transition(task, new_status)
         except (ValueError, InvalidTransitionError) as exc:
             raise HTTPException(409, str(exc))
-    for field in ("title", "project_name", "model", "effort"):
+    for field in ("title", "project_name", "model", "effort", "priority"):
         val = getattr(body, field, None)
         if val is not None:
             setattr(task, field, val)

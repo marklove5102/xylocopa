@@ -21,6 +21,7 @@ class TaskCreate(BaseModel):
     project_name: str | None = None
     model: str | None = None
     effort: Literal["low", "medium", "high", "max"] | None = None
+    priority: int = 0
     skip_permissions: bool = True
     sync_mode: bool = False
     use_worktree: bool = True
@@ -47,6 +48,7 @@ class TaskUpdate(BaseModel):
     model: str | None = None
     effort: str | None = None
     status: str | None = None
+    priority: int | None = None
     notify_at: datetime | None = None
     deferred_to: datetime | None = None
     skip_permissions: bool | None = None
@@ -74,6 +76,7 @@ class TaskOut(BaseModel):
     sync_mode: bool = False
     use_worktree: bool = True
     use_tmux: bool = True
+    priority: int = 0
     retry_context: str | None = None
     sort_order: int = 0
     notify_at: datetime | None = None
