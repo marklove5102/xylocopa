@@ -39,6 +39,7 @@ def _parse_jsonl_ts(ts: str | None) -> datetime | None:
         # Handle "2026-03-24T17:02:44.544Z" format
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
+        logger.debug("Failed to parse JSONL timestamp: %s", ts)
         return None
 
 logger = logging.getLogger("orchestrator.sync_engine")

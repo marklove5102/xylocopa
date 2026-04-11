@@ -158,6 +158,7 @@ def list_backups():
         try:
             ts = datetime.strptime(ts_str, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
         except ValueError:
+            logger.debug("Skipped backup with unparseable timestamp: %s", name)
             continue
 
         # Calculate size

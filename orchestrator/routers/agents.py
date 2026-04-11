@@ -89,6 +89,7 @@ def _discover_session_id_from_pane(tmux_pane: str, project_path: str) -> str:
                 if info.get("tmux_pane") == tmux_pane and info.get("session_id"):
                     return info["session_id"]
             except (OSError, json.JSONDecodeError):
+                logger.debug("Skipped pending session file: %s", fname)
                 continue
 
     # Strategy 2: scan process tree's open files
@@ -1348,6 +1349,7 @@ async def list_unlinked_sessions(db: Session = Depends(get_db)):
                 info["file"] = fname
                 sessions.append(info)
             except (OSError, json.JSONDecodeError):
+                logger.debug("Skipped unlinked session file: %s", fname)
                 continue
     except OSError:
         pass
@@ -2297,6 +2299,7 @@ def _apply_display_content(msg: Message) -> MessageOut:
         try:
             meta = json.loads(msg.meta_json)
         except (json.JSONDecodeError, ValueError):
+            logger.debug("Skipped unparseable meta_json for msg_id=%s", msg.id)
             pass
     role_val = msg.role.value if msg.role else None
     content, meta = transform_for_display(role_val, out.content, meta)
@@ -2376,10 +2379,12 @@ async def get_agent_display(
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            logger.debug("Skipped malformed JSON in display file for agent %s", agent_id)
             continue
         try:
             entry = DisplayEntry.model_validate(obj)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse display entry: %s", e)
             continue
         seen[entry.id] = entry
 
@@ -2743,6 +2748,7 @@ def _patch_interactive_answer(
         try:
             meta = json.loads(msg.meta_json)
         except (json.JSONDecodeError, TypeError):
+            logger.debug("Skipped unparseable meta_json in _patch_interactive_answer, msg_id=%s", msg.id)
             continue
         items = meta.get("interactive")
         if not items:
@@ -2824,6 +2830,7 @@ def _count_interactive_questions(db: Session, agent_id: str, tool_use_id: str) -
         try:
             meta = json.loads(msg.meta_json)
         except (json.JSONDecodeError, TypeError):
+            logger.debug("Skipped unparseable meta_json in _count_interactive_questions, msg_id=%s", msg.id)
             continue
         for item in meta.get("interactive", []):
             if item.get("tool_use_id") == tool_use_id:
@@ -2841,6 +2848,7 @@ def _build_answers_from_metadata(db: Session, agent_id: str, tool_use_id: str) -
         try:
             meta = json.loads(msg.meta_json or "{}")
         except (json.JSONDecodeError, TypeError):
+            logger.debug("Skipped unparseable meta_json in _build_answers_from_metadata, msg_id=%s", msg.id)
             continue
         for item in meta.get("interactive", []):
             if item.get("tool_use_id") != tool_use_id:
@@ -2868,6 +2876,7 @@ def _get_questions_from_metadata(db: Session, agent_id: str, tool_use_id: str) -
         try:
             meta = json.loads(msg.meta_json or "{}")
         except (json.JSONDecodeError, TypeError):
+            logger.debug("Skipped unparseable meta_json in _get_questions_from_metadata, msg_id=%s", msg.id)
             continue
         for item in meta.get("interactive", []):
             if item.get("tool_use_id") == tool_use_id:
@@ -2987,6 +2996,7 @@ async def answer_agent_interactive(
                             plan_text = item.get("plan", "")
                             break
                 except (json.JSONDecodeError, AttributeError):
+                    logger.debug("Failed to parse plan metadata for agent %s", agent_id)
                     pass
 
             # Patch metadata to record the approval

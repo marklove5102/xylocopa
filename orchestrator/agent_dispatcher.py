@@ -361,6 +361,7 @@ def _is_result_error(logs: str) -> bool:
                 found_result = True
                 return event.get("is_error", False)
         except json.JSONDecodeError:
+            logger.debug("Skipped malformed JSONL line in _is_result_error")
             continue
         except (KeyError, TypeError):
             logger.warning("_is_result_error: unexpected error parsing line: %s", line[:200], exc_info=True)
@@ -380,6 +381,7 @@ def _extract_session_id(logs: str) -> str | None:
             if event.get("type") == "result" and event.get("session_id"):
                 return event["session_id"]
         except json.JSONDecodeError:
+            logger.debug("Skipped malformed JSONL line in _extract_session_id")
             continue
     return None
 
@@ -403,6 +405,7 @@ def _extract_session_id_from_output(output_file: str) -> str | None:
                     if sid:
                         return sid
                 except json.JSONDecodeError:
+                    logger.debug("Skipped malformed JSONL line in _extract_session_id_from_output")
                     continue
     except OSError as e:
         logger.debug("_extract_session_id_from_output: failed to read %s: %s", output_file, e)
@@ -424,6 +427,7 @@ def _parse_session_model(jsonl_path: str) -> str | None:
                         if model:
                             return model
                 except json.JSONDecodeError:
+                    logger.debug("Skipped malformed JSONL line in _parse_session_model")
                     continue
     except OSError as e:
         logger.debug("_parse_session_model: failed to read %s: %s", jsonl_path, e)
@@ -1059,6 +1063,7 @@ def _get_session_slug(jsonl_path: str) -> str | None:
                 try:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    logger.debug("Skipped malformed JSONL line in _get_session_slug")
                     continue
                 slug = obj.get("slug")
                 if slug:
@@ -1081,6 +1086,7 @@ def _get_session_cwd(jsonl_path: str) -> str | None:
                 try:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    logger.debug("Skipped malformed JSONL line in _get_session_cwd")
                     continue
                 cwd = obj.get("cwd")
                 if cwd:
@@ -1135,6 +1141,7 @@ def _get_first_user_content(jsonl_path: str) -> str | None:
                 try:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    logger.debug("Skipped malformed JSONL line in _get_first_user_content")
                     continue
                 msg = obj.get("message", {})
                 if msg.get("role") != "user":
@@ -1165,6 +1172,7 @@ def _get_first_user_uuid(jsonl_path: str) -> str | None:
                 try:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    logger.debug("Skipped malformed JSONL line in _get_first_user_uuid")
                     continue
                 if obj.get("type") != "user":
                     continue
@@ -1414,6 +1422,7 @@ def _is_cli_session_alive(project_path: str, tmux_pane: str | None = None) -> bo
                     if _cwd_matches_project(cwd, real_project):
                         return True
                 except (OSError, ValueError):
+                    logger.debug("Skipped PID %s during alive check: parse/access error", pid_str)
                     continue
     except (_sp.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.debug("Non-tmux alive check failed for project %s: %s", project_path, e)
@@ -2189,7 +2198,8 @@ Here are the day's conversations (with timestamps):
                     db.add(msg)
                     db.flush()
                     imported += 1
-            except IntegrityError:
+            except IntegrityError as e:
+                logger.warning("Skipped duplicate message during import: %s", e)
                 continue
         return imported
 
@@ -3105,6 +3115,7 @@ Here are the day's conversations (with timestamps):
                                 try:
                                     cm_meta = json.loads(cm.meta_json)
                                 except (json.JSONDecodeError, TypeError):
+                                    logger.debug("Skipped card message with unparseable meta_json, msg_id=%s", cm.id)
                                     continue
                                 cm_items = cm_meta.get("interactive", [])
                                 if not cm_items:
@@ -4659,6 +4670,7 @@ Here are the day's conversations (with timestamps):
                 if event.get("type") == "result":
                     return True
             except (json.JSONDecodeError, KeyError, TypeError):
+                logger.debug("Skipped malformed JSONL line in _session_has_result")
                 continue
         return False
 

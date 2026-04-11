@@ -8,12 +8,15 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 
 import bcrypt
 
 from config import AUTH_TIMEOUT_MINUTES
+
+logger = logging.getLogger("orchestrator.auth")
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +120,8 @@ def verify_token(token: str, jwt_secret: str) -> bool:
             return False
 
         return True
-    except (ValueError, KeyError, json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+    except (ValueError, KeyError, json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError) as e:
+        logger.debug("Token validation failed: %s", type(e).__name__)
         return False
 
 

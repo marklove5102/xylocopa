@@ -196,6 +196,7 @@ def merge_interactive_meta(db_meta_json: str | None, new_meta: dict | None) -> s
     try:
         db_meta = json.loads(db_meta_json)
     except (json.JSONDecodeError, TypeError):
+        logger.debug("Failed to parse existing meta_json during merge")
         return json.dumps(new_meta)
 
     db_items = {
@@ -456,6 +457,7 @@ def parse_session_turns_from_lines(
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
+            logger.debug("Skipped malformed JSONL line in parse_jsonl_to_turns")
             continue
 
         entry_type = entry.get("type")

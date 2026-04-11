@@ -1428,6 +1428,7 @@ async def list_project_sessions(name: str, db: Session = Depends(get_db)):
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
+                logger.debug("Skipped malformed JSONL line in session history")
                 continue
             sid = entry.get("sessionId")
             if not sid:
