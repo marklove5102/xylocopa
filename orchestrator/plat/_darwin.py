@@ -40,7 +40,22 @@ class DarwinPlatform(PlatformBase):
     def get_child_pids(self, ppid: int) -> list[tuple[int, str]]:
         try:
             parent = psutil.Process(ppid)
-            return [(c.pid, c.name()) for c in parent.children(recursive=False)]
+            result = []
+            for c in parent.children(recursive=False):
+                # psutil.name() on macOS returns the binary name (e.g. "2.1.87"
+                # for Claude Code's versioned Node binary) instead of the
+                # symlink name "claude".  Fall back to cmdline[0] which is the
+                # actual argv[0] the user sees.
+                name = c.name()
+                try:
+                    cmdline = c.cmdline()
+                    if cmdline:
+                        import os
+                        name = os.path.basename(cmdline[0])
+                except (psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+                result.append((c.pid, name))
+            return result
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             return []
 

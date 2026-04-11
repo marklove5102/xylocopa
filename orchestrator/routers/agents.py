@@ -25,6 +25,7 @@ from models import (
     Message, MessageRole, MessageStatus, Project, Task, TaskStatus,
 )
 from agent_dispatcher import ACTIVE_STATUSES, ALIVE_STATUSES, TERMINAL_STATUSES
+from plat import platform as _platform
 from schemas import (
     AgentBrief, AgentCreate, AgentInsightSuggestionOut, AgentOut,
     DisplayEntry, DisplayResponse,
@@ -65,6 +66,68 @@ _generate_worktree_name_local = generate_worktree_name_local
 _enrich_agent_briefs = enrich_agent_briefs
 
 
+def _discover_session_id_from_pane(tmux_pane: str, project_path: str) -> str:
+    """Discover the active session_id for a tmux pane.
+
+    Strategy (in order):
+    1. Check /tmp/ahive-pending-sessions/ for an entry matching this pane
+    2. Scan open files for JSONL belonging to the pane's process tree
+    3. Read Claude Code's session_id from its tasks dir (latest lock file)
+    """
+    if not tmux_pane:
+        return ""
+
+    # Strategy 1: pending session files written by the SessionStart hook
+    pending_dir = "/tmp/ahive-pending-sessions"
+    if os.path.isdir(pending_dir):
+        for fname in os.listdir(pending_dir):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(pending_dir, fname)) as f:
+                    info = json.load(f)
+                if info.get("tmux_pane") == tmux_pane and info.get("session_id"):
+                    return info["session_id"]
+            except (OSError, json.JSONDecodeError):
+                continue
+
+    # Strategy 2: scan process tree's open files
+    from session_cache import session_source_dir
+    try:
+        r = subprocess.run(
+            ["tmux", "display-message", "-t", tmux_pane, "-p", "#{pane_pid}"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if r.returncode != 0:
+            return ""
+        pane_pid = int(r.stdout.strip())
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return ""
+
+    # Collect descendant PIDs via platform layer
+    desc_pids = {pane_pid}
+    for child_pid, _comm in _platform.get_child_pids(pane_pid):
+        desc_pids.add(child_pid)
+
+    sdir = session_source_dir(project_path)
+    if os.path.isdir(sdir):
+        for pid in desc_pids:
+            for fpath in _platform.get_open_files(pid):
+                if fpath.startswith(sdir) and fpath.endswith(".jsonl"):
+                    basename = os.path.basename(fpath)
+                    return basename.rsplit(".jsonl", 1)[0]
+
+    # Strategy 3: check Claude Code's tasks directory for the active session
+    for pid in desc_pids:
+        for fpath in _platform.get_open_files(pid):
+            if "/tasks/" in fpath:
+                parts = fpath.split("/tasks/")
+                if len(parts) > 1:
+                    sid_part = parts[1].split("/")[0]
+                    if len(sid_part) >= 32 and "-" in sid_part:
+                        return sid_part
+
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1325,13 +1388,28 @@ async def adopt_unlinked_session(
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
-    # session_id is populated by the SessionStart hook when creating the entry
+    # When the actual CWD differs from the registered project path,
+    # Claude CLI stores session files under a directory derived from
+    # the real CWD, not the registered path.  Prefer CWD for JSONL
+    # resolution so sync can find the file.
+    actual_cwd = info.get("cwd", "")
+    if actual_cwd and actual_cwd != proj.path:
+        cwd_sdir = session_source_dir(actual_cwd)
+        sync_path = actual_cwd if os.path.isdir(cwd_sdir) else proj.path
+    else:
+        sync_path = proj.path
+
+    # Resolve session_id — may be empty for poll-detected sessions.
+    # Discover from the most recent JSONL in the project's session dir.
     session_id = info.get("session_id", "")
     if not session_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Session ID not available. Is Claude Code running? Try restarting it.",
-        )
+        tmux_pane = info.get("tmux_pane", "")
+        session_id = _discover_session_id_from_pane(tmux_pane, sync_path)
+        if not session_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not determine session ID for this pane. Is Claude Code running?",
+            )
 
     # Check if session is already bound to an agent
     existing = db.query(Agent).filter(Agent.session_id == session_id).first()
@@ -1398,7 +1476,7 @@ async def adopt_unlinked_session(
     db.refresh(agent)
 
     # Write .owner, start sync, and immediately wake for first import
-    ad.start_session_sync(agent.id, session_id, proj.path)
+    ad.start_session_sync(agent.id, session_id, sync_path)
     ad.wake_sync(agent.id)
 
     # Remove the unlinked entry

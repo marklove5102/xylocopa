@@ -1,6 +1,7 @@
 """Linux implementation — uses /proc for maximum speed, no external deps."""
 import logging
 import os
+import re
 import subprocess
 
 from ._base import PlatformBase
@@ -54,7 +55,21 @@ class LinuxPlatform(PlatformBase):
             for line in result.stdout.strip().splitlines():
                 parts = line.strip().split(None, 1)
                 if len(parts) == 2:
-                    children.append((int(parts[0]), parts[1]))
+                    pid = int(parts[0])
+                    comm = parts[1]
+                    # comm may be a versioned binary name (e.g. "2.1.87")
+                    # instead of the actual command (e.g. "claude").  Fall
+                    # back to /proc/pid/cmdline argv[0] basename.
+                    if re.match(r'^[\d.]+$', comm):
+                        try:
+                            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                                raw = f.read()
+                            argv0 = raw.decode("utf-8", errors="replace").split("\0")[0]
+                            if argv0:
+                                comm = os.path.basename(argv0)
+                        except OSError:
+                            pass
+                    children.append((pid, comm))
             return children
         except (subprocess.TimeoutExpired, OSError, ValueError):
             return []

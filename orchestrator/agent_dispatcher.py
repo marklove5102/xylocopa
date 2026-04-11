@@ -1292,7 +1292,7 @@ def _detect_tmux_pane_for_session(session_id: str, project_path: str) -> str | N
                     if session_id in cmdline:
                         # Found the exact process — resolve TTY to pane
                         tty_r = _sp.run(
-                            ["ps", "-ho", "tty", "-p", str(pid)],
+                            ["ps", "-o", "tty=", "-p", str(pid)],
                             capture_output=True, text=True, timeout=5,
                         )
                         tty = tty_r.stdout.strip()
@@ -3734,6 +3734,15 @@ Here are the day's conversations (with timestamps):
                 Agent.status == AgentStatus.STOPPED,
             ).first()
             if not named_agent:
+                # ah-{prefix} doesn't match any stopped agent — treat as
+                # unlinked (user-created tmux session with ah- prefix).
+                _write_unlinked_entry(
+                    session_id="",
+                    cwd=cwd,
+                    tmux_pane=pane_id,
+                    tmux_session=session_name,
+                    project_name=proj.name,
+                )
                 continue
 
             agent_sid = named_agent.session_id
