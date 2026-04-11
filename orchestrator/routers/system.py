@@ -783,29 +783,23 @@ async def token_usage():
     import json as _json
     import urllib.request
     import urllib.error
-    from config import CLAUDE_CREDENTIALS_PATH
 
     now = time.monotonic()
     if _token_usage_cache["data"] is not None and now - _token_usage_cache["ts"] < _TOKEN_USAGE_TTL:
         return _token_usage_cache["data"]
 
-    if not CLAUDE_CREDENTIALS_PATH or not os.path.exists(CLAUDE_CREDENTIALS_PATH):
+    creds = _platform.get_claude_credentials()
+    if not creds:
         raise HTTPException(
             status_code=404,
-            detail="Claude credentials file not found. Set CLAUDE_CREDENTIALS_PATH in .env",
+            detail="Claude credentials not found (checked platform-specific storage)",
         )
-
-    try:
-        with open(CLAUDE_CREDENTIALS_PATH, "r") as f:
-            creds = _json.load(f)
-    except (OSError, _json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read credentials: {exc}")
 
     access_token = None
     oauth = creds.get("claudeAiOauth") or {}
     access_token = oauth.get("accessToken")
     if not access_token:
-        raise HTTPException(status_code=400, detail="No OAuth access token found in credentials file")
+        raise HTTPException(status_code=400, detail="No OAuth access token found in credentials")
 
     req = urllib.request.Request(
         "https://api.anthropic.com/api/oauth/usage",

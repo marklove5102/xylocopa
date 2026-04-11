@@ -175,3 +175,15 @@ class LinuxPlatform(PlatformBase):
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
             pass
         return "127.0.0.1"
+
+    # ── Credentials ─────────────────────────────────────────────────
+
+    def get_claude_credentials(self) -> dict | None:
+        """Read credentials from ~/.claude/.credentials.json (Linux file-based storage)."""
+        import json
+        creds_path = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+        try:
+            with open(creds_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None

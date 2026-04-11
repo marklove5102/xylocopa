@@ -151,3 +151,26 @@ class DarwinPlatform(PlatformBase):
             return ip
         except OSError:
             return "127.0.0.1"
+
+    # ── Credentials ─────────────────────────────────────────────────
+
+    def get_claude_credentials(self) -> dict | None:
+        """Read credentials from macOS Keychain (Claude Code 2.x storage)."""
+        import json
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, json.JSONDecodeError):
+            pass
+        # Fallback: file-based (older Claude Code versions)
+        import json
+        creds_path = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+        try:
+            with open(creds_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None

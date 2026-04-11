@@ -56,3 +56,9 @@ class PlatformBase(ABC):
     @abstractmethod
     def get_lan_ip(self) -> str:
         """Return the primary LAN IP address."""
+
+    # ── Credentials ─────────────────────────────────────────────────
+
+    @abstractmethod
+    def get_claude_credentials(self) -> dict | None:
+        """Return Claude OAuth credentials dict, or None if unavailable."""
