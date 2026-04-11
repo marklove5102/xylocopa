@@ -572,6 +572,23 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 ctx.agent_id[:8],
             )
             ad._stop_generating(ctx.agent_id)
+            # Claude Code shows a /rate-limit-options menu after rate limit.
+            # Send Enter after 1s to dismiss it so the CLI returns to the
+            # idle prompt and is ready for future messages.
+            _rl_pane = agent.tmux_pane
+            if _rl_pane:
+                _rl_aid = ctx.agent_id[:8]
+                async def _dismiss_rate_limit_menu(pane, aid_short):
+                    await asyncio.sleep(1.0)
+                    from agent_dispatcher import send_tmux_keys
+                    if send_tmux_keys(pane, ["Enter"]):
+                        logger.info(
+                            "sync: sent Enter to dismiss rate-limit menu "
+                            "for agent %s", aid_short,
+                        )
+                asyncio.ensure_future(
+                    _dismiss_rate_limit_menu(_rl_pane, _rl_aid)
+                )
 
         # Interrupt detected in JSONL: stop generating and dispatch PENDING
         # messages.  _stop_generating is called HERE (after db.commit) rather
