@@ -898,18 +898,36 @@ def _resolve_session_jsonl(
     session_id: str,
     project_path: str,
     worktree: str | None = None,
+    cwd: str | None = None,
 ) -> str:
-    """Resolve the path to a session JSONL, checking worktree dirs too.
+    """Resolve the path to a session JSONL, checking multiple locations.
 
-    Worktree agents store session files in a separate Claude projects
-    directory based on the worktree CWD, not the project root.
-    When *worktree* is None, scans all worktree directories as a fallback.
+    Search order:
+    1. Registered project path
+    2. Actual CWD (if provided and differs from project_path) — handles
+       cases where Claude CLI runs in a different dir than the registered path
+    3. Worktree directories
+
+    All paths are realpath-normalized before encoding to handle symlinks.
     """
+    real_project = os.path.realpath(project_path)
     jsonl_path = os.path.join(
-        session_source_dir(project_path), f"{session_id}.jsonl"
+        session_source_dir(real_project), f"{session_id}.jsonl"
     )
     if os.path.isfile(jsonl_path):
         return jsonl_path
+
+    # CWD fallback — Claude CLI encodes session dirs from its actual CWD,
+    # which may differ from the registered project path.
+    if cwd:
+        real_cwd = os.path.realpath(cwd)
+        if real_cwd != real_project:
+            cwd_jsonl = os.path.join(
+                session_source_dir(real_cwd), f"{session_id}.jsonl"
+            )
+            if os.path.isfile(cwd_jsonl):
+                return cwd_jsonl
+
     if worktree:
         wt_path = os.path.join(project_path, ".claude", "worktrees", worktree)
         wt_jsonl = os.path.join(
@@ -4021,17 +4039,17 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
-    def start_session_sync(self, agent_id: str, session_id: str, project_path: str):
+    def start_session_sync(self, agent_id: str, session_id: str, project_path: str, *, cwd: str | None = None):
         """Start a background task to live-sync a CLI session JSONL."""
 
         # Write ownership sidecar so _detect_successor_session can
         # determine which agent owns this session without parsing content.
-        _write_session_owner(
-            session_source_dir(project_path), session_id, agent_id,
-        )
+        jsonl_path = _resolve_session_jsonl(session_id, project_path, cwd=cwd)
+        owner_dir = os.path.dirname(jsonl_path) if os.path.isfile(jsonl_path) else session_source_dir(project_path)
+        _write_session_owner(owner_dir, session_id, agent_id)
         self._cancel_sync_task(agent_id)
         task = asyncio.ensure_future(
-            self._sync_session_loop(agent_id, session_id, project_path)
+            self._sync_session_loop(agent_id, session_id, project_path, cwd=cwd)
         )
         self._sync_tasks[agent_id] = task
         logger.info("Started sync task for agent %s (session %s)", agent_id, session_id)
@@ -4199,7 +4217,7 @@ Here are the day's conversations (with timestamps):
         return True
 
     async def _sync_session_loop(
-        self, agent_id: str, session_id: str, project_path: str
+        self, agent_id: str, session_id: str, project_path: str, *, cwd: str | None = None
     ):
         """Tail a CLI session JSONL and import new turns as they appear.
 
@@ -4208,7 +4226,7 @@ Here are the day's conversations (with timestamps):
         supersedes this one. Only then transitions to IDLE.
         """
         try:
-            await self._sync_session_loop_inner(agent_id, session_id, project_path)
+            await self._sync_session_loop_inner(agent_id, session_id, project_path, cwd=cwd)
         except asyncio.CancelledError:
             logger.info("Sync loop cancelled for agent %s", agent_id)
         except Exception:
@@ -4265,7 +4283,7 @@ Here are the day's conversations (with timestamps):
                     db_sub.close()
 
     async def _sync_session_loop_inner(
-        self, agent_id: str, session_id: str, project_path: str
+        self, agent_id: str, session_id: str, project_path: str, *, cwd: str | None = None
     ):
         """Inner sync loop — delegates to sync_engine for heavy lifting."""
         from sync_engine import (
@@ -4299,7 +4317,7 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
-        jsonl_path = _resolve_session_jsonl(session_id, project_path, _worktree)
+        jsonl_path = _resolve_session_jsonl(session_id, project_path, _worktree, cwd=cwd)
         if _worktree and ".claude/worktrees" in jsonl_path:
             logger.info(
                 "Agent %s using worktree session path: %s",

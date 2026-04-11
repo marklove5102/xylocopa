@@ -39,7 +39,10 @@ def encode_project_path(path: str) -> str:
     appended.  Use _resolve_session_dir_name() for actual lookups — it
     verifies against the filesystem and handles encoding differences.
     """
-    encoded = re.sub(r'[^a-zA-Z0-9]', '-', path)
+    # NFC-normalize to match Claude Code's .normalize('NFC') — macOS APFS
+    # returns NFD (decomposed) form which produces a different encoding.
+    import unicodedata
+    encoded = re.sub(r'[^a-zA-Z0-9]', '-', unicodedata.normalize('NFC', path))
     if len(encoded) <= 200:
         return encoded
     h = hashlib.md5(path.encode()).hexdigest()[:8]

@@ -1388,23 +1388,14 @@ async def adopt_unlinked_session(
     if not proj:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
-    # When the actual CWD differs from the registered project path,
-    # Claude CLI stores session files under a directory derived from
-    # the real CWD, not the registered path.  Prefer CWD for JSONL
-    # resolution so sync can find the file.
     actual_cwd = info.get("cwd", "")
-    if actual_cwd and actual_cwd != proj.path:
-        cwd_sdir = session_source_dir(actual_cwd)
-        sync_path = actual_cwd if os.path.isdir(cwd_sdir) else proj.path
-    else:
-        sync_path = proj.path
 
     # Resolve session_id — may be empty for poll-detected sessions.
     # Discover from the most recent JSONL in the project's session dir.
     session_id = info.get("session_id", "")
     if not session_id:
         tmux_pane = info.get("tmux_pane", "")
-        session_id = _discover_session_id_from_pane(tmux_pane, sync_path)
+        session_id = _discover_session_id_from_pane(tmux_pane, proj.path)
         if not session_id:
             raise HTTPException(
                 status_code=400,
@@ -1476,7 +1467,7 @@ async def adopt_unlinked_session(
     db.refresh(agent)
 
     # Write .owner, start sync, and immediately wake for first import
-    ad.start_session_sync(agent.id, session_id, sync_path)
+    ad.start_session_sync(agent.id, session_id, proj.path, cwd=actual_cwd)
     ad.wake_sync(agent.id)
 
     # Remove the unlinked entry
