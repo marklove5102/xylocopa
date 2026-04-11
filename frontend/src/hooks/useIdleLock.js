@@ -55,8 +55,9 @@ export default function useIdleLock(navigate) {
     touch();
 
     // User activity events — no 'scroll' (programmatic scrolls cause
-    // false resets via microScroll, auto-scroll, etc.)
-    const events = ["pointerdown", "keydown", "touchstart"];
+    // false resets via microScroll, auto-scroll, etc.).
+    // "wheel" captures real user scrolling without the false positives.
+    const events = ["pointerdown", "keydown", "wheel", "touchstart"];
     const onActivity = () => touch();
     for (const e of events) {
       window.addEventListener(e, onActivity, { passive: true });

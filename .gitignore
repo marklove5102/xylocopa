@@ -69,3 +69,4 @@ filter-callbacks.py
 :memory:
 research-*.txt
 .git.bak/
+frontend/dev-dist/

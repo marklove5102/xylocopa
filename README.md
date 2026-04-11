@@ -11,6 +11,7 @@
   <img src="docs/hero.png" alt="AgentHive — Orchestrate AI Agents from Anywhere" width="820">
 </p>
 
+
 **A web-based task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — capture tasks, dispatch them to AI agents, and iterate until they're right.**
 
 AgentHive is not a replacement for the Claude Code CLI. It's the layer that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. You keep using `claude` the way you always have — AgentHive adds the ability to capture ideas from your phone or by voice, dispatch to parallel agents on isolated worktrees, monitor progress in real time, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over, and project knowledge grows with every session.
@@ -126,7 +127,7 @@ AgentHive runs on your machine and launches Claude Code CLI instances inside tmu
 
 ### Prerequisites
 
-- **Linux** host (Ubuntu 22.04+ recommended). macOS support is in progress — see the `mac-compatibility` branch
+- **Linux** or **macOS** host (Ubuntu 22.04+ / macOS 13+ recommended)
 - **Node.js** 18+ and npm
 - **Python** 3.11+
 - **tmux** (usually pre-installed; `sudo apt install tmux` if not)
@@ -152,16 +153,39 @@ nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
 
 Open `https://<machine-ip>:3000` in your browser. Set a password on first visit.
 
-On iPhone: Safari > Share > **Add to Home Screen** for a native app experience.
+> **Tip:** You can also run `claude` in the project directory and ask it to set things up for you :)
+
+### First Time on iPhone
+
+1. Open `https://<machine-ip>:3000` in Safari — you'll see a certificate warning because AgentHive runs on your own machine with a self-signed certificate, not one issued by a public authority. This is expected for self-hosted software. Tap **"Advanced"** → **"Visit this website"** → **"Visit Website"**, then **refresh the page** manually.
+2. Tap **"Install CA certificate"** on the login page → follow the guide to install and trust the CA certificate (**Settings → General → VPN & Device Management → Install**, then **Settings → General → About → Certificate Trust Settings → enable trust**). This eliminates the certificate warning and enables voice input and file uploads.
+3. Once the CA certificate is trusted, tap **"Install AgentHive App"** on the same guide page — this installs a Web Clip profile with the correct app icon embedded (Safari's normal Add to Home Screen cannot fetch icons over self-signed HTTPS). Enter your server IP when prompted.
+4. Go to **Settings → General → VPN & Device Management → AgentHive → Install**
+5. The AgentHive icon appears on your Home Screen — tap it and set your password
+
+> **Important:** Install the CA certificate (step 2) **before** installing the Web Clip (step 3). The Web Clip opens in fullscreen without a browser address bar, so if the certificate isn't trusted first, you'll be stuck on a warning page with no way to refresh.
 
 <details>
 <summary><strong>Manual setup (without setup.sh)</strong></summary>
 
+**Linux:**
 ```bash
 # Install system deps
 sudo apt-get install -y python3 python3-pip python3-venv tmux
 npm install -g @anthropic-ai/claude-code
+npm install -g pm2
+```
 
+**macOS:**
+```bash
+# Install system deps (requires Homebrew)
+brew install python@3.12 tmux
+npm install -g @anthropic-ai/claude-code
+npm install -g pm2
+```
+
+**Then (both platforms):**
+```bash
 # Set up Python
 python3 -m venv .venv
 source .venv/bin/activate
@@ -170,20 +194,40 @@ pip install -r orchestrator/requirements.txt
 # Install frontend deps
 cd frontend && npm install && cd ..
 
-# Create projects directory
-mkdir -p ~/agenthive-projects
+# Create required directories
+mkdir -p data logs backups project-configs ~/ah-projects
 
 # Configure
 cp .env.example .env
-nano .env
+nano .env   # Set HOST_PROJECTS_DIR to your ah-projects path
 
-# Generate SSL certs (needed for mobile mic access)
+# Copy project registry
+cp project-configs/registry.yaml.example project-configs/registry.yaml
+
+# Generate SSL certs — required for:
+#   1. Voice input (microphone requires trusted HTTPS)
+#   2. PWA home screen icon (iOS fetches icons via a system process that rejects untrusted certs)
+#   3. File/image uploads and attachments
 mkdir -p certs
+# Linux:
 LAN_IP=$(hostname -I | awk '{print $1}')
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout certs/selfsigned.key -out certs/selfsigned.crt \
-  -subj "/CN=agenthive" \
-  -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
+# macOS:
+LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo 127.0.0.1)
+
+# Option A: mkcert (recommended — enables PWA home screen icons on iOS)
+#   brew install mkcert  # or: apt install mkcert
+mkcert -install
+mkcert -cert-file certs/selfsigned.crt -key-file certs/selfsigned.key \
+  localhost 127.0.0.1 ${LAN_IP} agenthive
+# Then install the CA root cert on your phone for full trust:
+#   macOS:  open "$(mkcert -CAROOT)/rootCA.pem"  → AirDrop to iPhone
+#   Or visit https://<ip>:3000 and tap "Install CA certificate" on the login page
+
+# Option B: openssl (basic — browser will show a security warning)
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout certs/selfsigned.key -out certs/selfsigned.crt \
+#   -subj "/CN=agenthive" \
+#   -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
 
 # Start
 ./run.sh start
