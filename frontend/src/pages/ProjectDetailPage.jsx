@@ -1524,6 +1524,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               />
             )}
           </div>
+          <div />
           <label className="flex items-center gap-1.5 cursor-pointer">
             <div
               role="switch"
