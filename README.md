@@ -299,6 +299,10 @@ sudo update-ca-certificates
 
 After installing, restart your browser.
 
+## Troubleshooting
+
+- **Conversation appears stuck or not updating?** — Try clicking the **refresh button** at the top of the chat view. This manually re-syncs the agent's session data from the CLI and often resolves display issues without restarting the agent.
+
 ## Roadmap
 
 - **macOS support** — in progress on the `mac-compatibility` branch. Currently Linux-only.
