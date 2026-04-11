@@ -155,20 +155,18 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
               const showSummary = !isLast && sel === total - 2 && task.agent_summary;
 
               return (
-                <div className="rounded-lg bg-input p-3 space-y-2">
-                  <p className="text-xs font-semibold text-dim">
-                    {total === 1 ? "Agent" : `Agents (${total} trials)`}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-1.5">
+                <div className="rounded-lg bg-orange-500/10 border border-orange-500/20 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold text-orange-500 dark:text-orange-400">Attempts</span>
                     {task.attempt_agents.map((a, i) => (
                       <button
                         key={a.agent_id}
                         type="button"
                         onClick={() => setSelectedPill(i)}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${
                           i === sel
                             ? "bg-orange-500 text-white"
-                            : "bg-orange-500/15 text-orange-500 dark:text-orange-400 hover:bg-orange-500/25"
+                            : "bg-transparent border border-orange-500/40 text-orange-500 dark:text-orange-400 hover:bg-orange-500/15"
                         }`}
                       >
                         #{i + 1}
@@ -178,16 +176,16 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
 
                   {/* Previous Attempt Context — first, for the current/last attempt */}
                   {showPrevContext && (
-                    <div className="border-t border-edge/30 pt-2 space-y-1">
-                      <p className="text-[10px] font-semibold text-amber-400">Previous Attempt Context</p>
+                    <div className="pt-1 space-y-1">
+                      <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">Previous Attempt Context</p>
                       <p className="text-xs text-body whitespace-pre-wrap">{task.retry_context}</p>
                     </div>
                   )}
 
                   {/* Agent Summary — second, for the previous attempt */}
                   {showSummary && (
-                    <div className="border-t border-edge/30 pt-2 space-y-1">
-                      <p className="text-[10px] font-semibold text-dim">Agent Summary</p>
+                    <div className="pt-1 space-y-1">
+                      <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">Agent Summary</p>
                       {task.agent_summary === ":::generating:::" ? (
                         <p className="text-xs text-dim/50 italic">Generating summary...</p>
                       ) : (
