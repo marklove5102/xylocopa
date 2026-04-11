@@ -12,9 +12,10 @@
 </p>
 
 
-**A web-based task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — capture tasks, dispatch them to AI agents, and iterate until they're right.**
+**Manage your AI worker bees easily — all in one, all at once.**
+**Could possibly be your handy workspace for the AI agent era ;-)**
 
-AgentHive is not a replacement for the Claude Code CLI. It's the layer that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. You keep using `claude` the way you always have — AgentHive adds the ability to capture ideas from your phone or by voice, dispatch to parallel agents on isolated worktrees, monitor progress in real time, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over, and project knowledge grows with every session.
+AgentHive is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. Capture ideas from your phone or by voice, dispatch to parallel agents on isolated worktrees, monitor progress in real time, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over, and project knowledge grows with every session.
 
 ## The Loop
 
@@ -83,13 +84,13 @@ AgentHive hooks into Claude Code's native event system — not polling, not heur
 
 | Category | What you get |
 |---|---|
+| **Smart Notifications** | Hook-based notification system with dual-channel in-use detection — automatically notifies when you're away and stays quiet when you're present. Web Push (VAPID) and Telegram. Per-agent mute, global toggles. |
 | **Task Management** | Inbox with drag-to-reorder. Voice input. Lightning capture. Draft persistence. Per-project organization. Retry with auto-summarization. |
 | **Agent Control** | Start, stop, resume agents. Per-agent model selection (Opus/Sonnet/Haiku). Configurable timeouts and permission modes. AI batch dispatch. RAG-powered context from past sessions. |
 | **Chat Interface** | Rich markdown rendering (code blocks, tables, images). Inline media preview. Plan mode with approve/reject. Interactive tool confirmation cards. |
 | **Monitoring** | Split screen (up to 4 panes). Real-time WebSocket streaming. System monitor (disk, memory, GPU, tokens). Weekly progress stats. |
 | **Mobile PWA** | Add to Home Screen on iOS/Android. Full functionality — voice input, push notifications, task management. |
 | **CLI Session Sync** | Dual-directional: CLI sessions in the web app, web app sessions resumable from CLI. |
-| **Push Notifications** | Web Push (VAPID) and Telegram. Per-agent mute, global toggles. Dual-channel in-use detection for smart suppression. |
 | **Git Integration** | Commit history, diffs, branch status per project. Agents work in isolated worktrees. One-click cleanup and push. |
 | **Session History** | Every conversation persisted and searchable. Star sessions. Resume any agent anytime. Full-text search. |
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
