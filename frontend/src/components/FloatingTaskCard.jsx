@@ -158,8 +158,8 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                         onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`); }}
                         className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
                           isCurrent
-                            ? "bg-cyan-500 text-white"
-                            : "bg-cyan-500/15 text-cyan-400 hover:bg-cyan-500/25"
+                            ? "bg-orange-500 text-white"
+                            : "bg-orange-500/15 text-orange-500 dark:text-orange-400 hover:bg-orange-500/25"
                         }`}
                       >
                         #{i + 1}{a.status ? ` · ${a.status.toLowerCase()}` : ""}
