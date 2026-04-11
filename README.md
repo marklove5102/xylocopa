@@ -348,6 +348,11 @@ sudo update-ca-certificates
 
 After installing, restart your browser.
 
+## Tips
+
+- **Double-tap an agent's session ID** to quickly copy it to the clipboard.
+- **Double-tap a message** in the chat view to quickly copy its content.
+
 ## Troubleshooting
 
 - **Conversation appears stuck or not updating?** — Try clicking the **refresh button** at the top of the chat view. This manually re-syncs the agent's session data from the CLI and often resolves display issues without restarting the agent.
