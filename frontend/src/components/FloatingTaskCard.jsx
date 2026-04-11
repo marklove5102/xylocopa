@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2 } from "../lib/api";
 import useDraft from "../hooks/useDraft";
 
@@ -13,6 +14,7 @@ const STATUS_COLORS = {
 };
 
 export default function FloatingTaskCard({ taskId, onClose, onAction }) {
+  const navigate = useNavigate();
   const [task, setTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -150,41 +152,37 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
               const isFirst = sel === 0;
               const isLast = sel === total - 1;
 
-              // agent_summary describes attempt (total-2); retry_context bridges (total-2) → (total-1)
-              const showPrevContext = !isFirst && isLast && task.retry_context;
+              // agent_summary describes attempt (total-2); retry_context is feedback about (total-2)
               const showSummary = !isLast && sel === total - 2 && task.agent_summary;
-              // User feedback about the previous attempt (same data as retry_context, shown in prev attempt's view)
               const showUserFeedback = !isLast && sel === total - 2 && task.retry_context;
 
               return (
                 <div className="rounded-lg bg-orange-500/10 border border-orange-500/20 p-3 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-semibold text-orange-500 dark:text-orange-400">Attempts</span>
-                    {task.attempt_agents.map((a, i) => (
-                      <button
-                        key={a.agent_id}
-                        type="button"
-                        onClick={() => setSelectedPill(i)}
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${
-                          i === sel
-                            ? "bg-orange-500 text-white"
-                            : "bg-transparent border border-orange-500/40 text-orange-500 dark:text-orange-400 hover:bg-orange-500/15"
-                        }`}
-                      >
-                        #{i + 1}
-                      </button>
-                    ))}
+                    {task.attempt_agents.map((a, i) => {
+                      const isLastPill = i === total - 1;
+                      return (
+                        <button
+                          key={a.agent_id}
+                          type="button"
+                          onClick={() => {
+                            if (isLastPill) { onClose(); navigate(`/agents/${a.agent_id}`); }
+                            else setSelectedPill(i);
+                          }}
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${
+                            i === sel
+                              ? "bg-orange-500 text-white"
+                              : "bg-transparent border border-orange-500/40 text-orange-500 dark:text-orange-400 hover:bg-orange-500/15"
+                          }`}
+                        >
+                          #{i + 1}
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  {/* Previous Attempt Context — first, for the current/last attempt */}
-                  {showPrevContext && (
-                    <div className="pt-1 space-y-1">
-                      <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">Previous Attempt Context</p>
-                      <p className="text-xs text-body whitespace-pre-wrap">{task.retry_context}</p>
-                    </div>
-                  )}
-
-                  {/* Agent Summary — for the previous attempt */}
+                  {/* Agent Summary — what this attempt did */}
                   {showSummary && (
                     <div className="pt-1 space-y-1">
                       <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">Agent Summary</p>
