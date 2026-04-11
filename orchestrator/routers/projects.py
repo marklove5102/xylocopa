@@ -1098,7 +1098,7 @@ async def create_project(body: ProjectCreate, request: Request, db: Session = De
         if os.path.isdir(proj.path) and not os.path.isdir(os.path.join(proj.path, ".git")):
             import subprocess
             subprocess.run(["git", "init"], cwd=proj.path, check=True, capture_output=True)
-            subprocess.run(["git", "add", "-A"], cwd=proj.path, capture_output=True)
+            subprocess.run(["git", "add", "-A"], cwd=proj.path, check=True, capture_output=True)
             subprocess.run(["git", "commit", "--allow-empty", "-m", "Initial commit"], cwd=proj.path, capture_output=True)
             logger.info("Auto-initialized git repo for %s", body.name)
 

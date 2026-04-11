@@ -91,6 +91,8 @@ async def download_webclip(request: Request):
             host = urlparse(origin).hostname
     if not host:
         host = request.url.hostname
+    import html
+    host = html.escape(host)
     url = f"https://{host}:{port}/"
 
     payload_uuid = str(uuid.uuid4()).upper()
