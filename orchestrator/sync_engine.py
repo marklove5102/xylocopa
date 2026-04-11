@@ -461,7 +461,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 ).order_by(Message.created_at.desc()).first()
                 if (last_agent_msg
                         and len(last_agent_msg.content or "") < len(prev_content)):
-                    logger.error(
+                    logger.warning(
                         "Agent %s: previous turn content grew between syncs "
                         "(db_len=%d, jsonl_len=%d, msg_id=%s, jsonl_uuid=%s). "
                         "DB message may have stale content.",
