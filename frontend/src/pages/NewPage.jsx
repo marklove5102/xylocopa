@@ -439,7 +439,7 @@ function NewAgentForm({ showToast, navigate }) {
     const fullPrompt = buildPromptText(prompt.trim(), uploaded);
     setSubmitting(true);
     try {
-      let taskId = undefined;
+      let agentId;
       if (linkTask) {
         const taskTitle = (prompt.trim() || "Agent task").slice(0, 120);
         const task = await createTaskV2({
@@ -453,12 +453,15 @@ function NewAgentForm({ showToast, navigate }) {
           use_tmux: true,
           auto_dispatch: false,
         });
-        taskId = task.id;
+        const dispatched = await dispatchTask(task.id);
+        agentId = dispatched.agent_id;
+      } else {
+        const agent = await launchTmuxAgent({ project, prompt: fullPrompt, model, effort, worktree, skip_permissions: skipPermissions });
+        agentId = agent.id;
       }
-      const agent = await launchTmuxAgent({ project, prompt: fullPrompt, model, effort, worktree, skip_permissions: skipPermissions, task_id: taskId });
       clearAllDrafts();
       clearAttachments();
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agentId}`);
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
