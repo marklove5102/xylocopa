@@ -4620,7 +4620,7 @@ Here are the day's conversations (with timestamps):
             if agent and agent.status == AgentStatus.IDLE:
                 self.stop_agent_cleanup(
                     db, agent, "",
-                    kill_tmux=False, add_message=False,
+                    kill_tmux=True, add_message=False,
                     emit=False, cancel_tasks=False,
                 )
                 sys_msg = self._add_system_message(db, agent_id, "CLI session ended — sync stopped")

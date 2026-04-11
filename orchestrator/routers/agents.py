@@ -1962,16 +1962,16 @@ async def permanently_delete_agent(agent_id: str, request: Request, db: Session 
     if agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
         raise HTTPException(status_code=400, detail="Agent must be stopped before deleting")
 
-    # 0. Kill tmux session if still alive
-    if agent.tmux_pane:
-        import subprocess as _sp
-        sess_name = f"ah-{agent.id[:8]}"
-        try:
-            _sp.run(["tmux", "kill-session", "-t", sess_name],
-                    capture_output=True, timeout=5)
-            logger.info("Killed tmux session %s for permanent delete of agent %s", sess_name, agent.id)
-        except (OSError, _sp.TimeoutExpired):
-            logger.warning("Failed to kill tmux session %s for agent %s", sess_name, agent.id)
+    # 0. Kill tmux session if still alive (always try by name —
+    #    tmux_pane is cleared to None during stop, but session may linger)
+    import subprocess as _sp
+    sess_name = f"ah-{agent.id[:8]}"
+    try:
+        _sp.run(["tmux", "kill-session", "-t", sess_name],
+                capture_output=True, timeout=5)
+        logger.info("Killed tmux session %s for permanent delete of agent %s", sess_name, agent.id)
+    except (OSError, _sp.TimeoutExpired):
+        logger.debug("tmux kill-session %s failed (may already be dead) for agent %s", sess_name, agent.id)
 
     # Cancel dispatcher tasks
     ad = getattr(request.app.state, "agent_dispatcher", None)

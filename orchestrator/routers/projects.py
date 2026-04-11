@@ -1337,10 +1337,19 @@ async def delete_project(name: str, request: Request, db: Session = Depends(get_
     if proj:
         _check_no_active_agents(name, db)
 
+        # Kill any lingering tmux sessions before deleting DB records
+        import subprocess as _sp_del
+        agents_to_delete = db.query(Agent).filter(Agent.project == name).all()
+        for agent in agents_to_delete:
+            try:
+                _sp_del.run(["tmux", "kill-session", "-t", f"ah-{agent.id[:8]}"],
+                            capture_output=True, timeout=5)
+            except (OSError, _sp_del.TimeoutExpired):
+                pass
+
         # Clean up session files for all agents being deleted
         from session_cache import cleanup_source_session, evict_session
         import glob as globmod
-        agents_to_delete = db.query(Agent).filter(Agent.project == name).all()
         for agent in agents_to_delete:
             if agent.session_id:
                 cleanup_source_session(agent.session_id, proj.path, agent.worktree)
