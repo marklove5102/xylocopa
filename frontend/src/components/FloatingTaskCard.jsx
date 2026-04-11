@@ -150,9 +150,11 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
               const isFirst = sel === 0;
               const isLast = sel === total - 1;
 
-              // agent_summary describes attempt (total-2); retry_context describes attempt (total-1)
+              // agent_summary describes attempt (total-2); retry_context bridges (total-2) → (total-1)
               const showPrevContext = !isFirst && isLast && task.retry_context;
               const showSummary = !isLast && sel === total - 2 && task.agent_summary;
+              // User feedback about the previous attempt (same data as retry_context, shown in prev attempt's view)
+              const showUserFeedback = !isLast && sel === total - 2 && task.retry_context;
 
               return (
                 <div className="rounded-lg bg-orange-500/10 border border-orange-500/20 p-3 space-y-2">
@@ -182,7 +184,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                     </div>
                   )}
 
-                  {/* Agent Summary — second, for the previous attempt */}
+                  {/* Agent Summary — for the previous attempt */}
                   {showSummary && (
                     <div className="pt-1 space-y-1">
                       <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">Agent Summary</p>
@@ -191,6 +193,14 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                       ) : (
                         <p className="text-xs text-body whitespace-pre-wrap">{task.agent_summary}</p>
                       )}
+                    </div>
+                  )}
+
+                  {/* User Feedback — why this attempt was retried */}
+                  {showUserFeedback && (
+                    <div className="pt-1 space-y-1">
+                      <p className="text-[11px] font-semibold text-orange-500 dark:text-orange-400">User Feedback</p>
+                      <p className="text-xs text-body whitespace-pre-wrap">{task.retry_context}</p>
                     </div>
                   )}
                 </div>
