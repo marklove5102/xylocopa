@@ -3661,7 +3661,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               const showSummary = sel < total - 1 && sel === total - 2 && taskData.agent_summary;
               const showUserFeedback = sel < total - 1 && sel === total - 2 && taskData.retry_context;
               return (
-                <div className="mx-auto max-w-[min(85%,30rem)] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
+                <div className="mx-auto w-[85%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
                   {/* Attempt pills + Enter Chat */}
                   <div className="flex items-center gap-1.5 mb-2">
                     <span className="text-[10px] font-semibold text-orange-500 dark:text-orange-400 mr-1">Attempts</span>
