@@ -336,7 +336,7 @@ export default function SplitScreenPage() {
   }), []);
 
   return (
-    <div className="flex flex-col h-dvh bg-surface">
+    <div className="flex flex-col h-screen bg-surface">
       {/* Top toolbar — desktop only */}
       {isWide && (
         <div className="shrink-0 flex items-center gap-2 px-3 py-1 bg-surface/80 border-b border-divider">
