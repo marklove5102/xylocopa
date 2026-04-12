@@ -351,6 +351,7 @@ After installing, restart your browser.
 
 ## Gestures & Shortcuts
 
+- **Short-press the + button** to quickly add a task. **Long-press** it to choose between adding a project, agent, or task.
 - **Double-tap an agent's session ID** to quickly copy it to the clipboard.
 - **Double-tap a message** in the chat view to quickly copy its content.
 
