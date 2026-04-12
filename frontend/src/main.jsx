@@ -3,32 +3,31 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import "./index.css";
 import App from "./App.jsx";
+import { registerSW } from "virtual:pwa-register";
 
-// Proactively unregister any stale precaching service workers from prior
-// production builds.  In dev mode only push-handler.js should be registered
-// (which has no fetch handler and doesn't cache).  VitePWA's generated SW
-// from a prior `vite build` can serve stale assets indefinitely.
+// Register VitePWA service worker with autoUpdate.
+// Precaches all static assets (JS/CSS/HTML with content hashes).
+// Periodic check every hour ensures long-lived tabs pick up new deploys.
 if ("serviceWorker" in navigator) {
+  // Unregister standalone push-handler.js — VitePWA's generated SW
+  // already includes it via importScripts, so it's redundant.
   navigator.serviceWorker.getRegistrations().then((regs) => {
     for (const reg of regs) {
-      // Keep push-handler.js (lightweight, no fetch caching)
-      if (reg.active?.scriptURL?.endsWith("/push-handler.js")) continue;
-      reg.unregister().then(() => {
-        console.debug("[sw] unregistered stale SW:", reg.active?.scriptURL);
-      });
+      if (reg.active?.scriptURL?.endsWith("/push-handler.js")) {
+        reg.unregister().then(() => {
+          console.debug("[sw] migrated standalone push-handler.js → VitePWA SW");
+        });
+      }
     }
   }).catch(() => {});
-  // Also clear any Workbox caches left behind
-  if ("caches" in window) {
-    caches.keys().then((keys) => {
-      for (const k of keys) {
-        if (k.startsWith("workbox-") || k.startsWith("vite-")) {
-          caches.delete(k);
-          console.debug("[sw] cleared stale cache:", k);
-        }
-      }
-    }).catch(() => {});
-  }
+
+  registerSW({
+    onRegisteredSW(swUrl, registration) {
+      if (!registration) return;
+      // Check for SW updates every hour
+      setInterval(() => { registration.update(); }, 60 * 60 * 1000);
+    },
+  });
 }
 
 // Global error handlers — catch async/event-handler errors that React

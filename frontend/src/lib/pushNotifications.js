@@ -34,14 +34,14 @@ export async function setupPushNotifications() {
       return false;
     }
 
-    // In dev mode, vite-plugin-pwa doesn't register a SW, so we manually
-    // register the lightweight push-handler.js as a standalone service worker.
-    if (import.meta.env.DEV) {
-      const existing = await navigator.serviceWorker.getRegistration();
-      if (!existing) {
-        console.debug("[push] dev mode: registering push-handler.js as standalone SW");
-        await navigator.serviceWorker.register("/push-handler.js");
-      }
+    // Fallback: if no SW is registered yet (e.g. first load before VitePWA
+    // SW installs), register push-handler.js as a temporary standalone SW.
+    // Once VitePWA's SW activates (includes push-handler.js via importScripts),
+    // this standalone registration gets replaced automatically.
+    const existing = await navigator.serviceWorker.getRegistration();
+    if (!existing) {
+      console.debug("[push] no SW yet, registering push-handler.js as fallback");
+      await navigator.serviceWorker.register("/push-handler.js");
     }
 
     const reg = await navigator.serviceWorker.ready;

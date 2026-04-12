@@ -49,14 +49,11 @@ export default defineConfig({
             urlPattern: /\/api\/(?:files|uploads)\//,
             handler: 'NetworkOnly',
           },
+          // Polling endpoints refresh every 3-10s — caching adds SW
+          // overhead with zero benefit.  NetworkOnly bypasses cache entirely.
           {
             urlPattern: /^.*\/api\/.*/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: { maxEntries: 50, maxAgeSeconds: 30 },
-              networkTimeoutSeconds: 3,
-            },
+            handler: 'NetworkOnly',
           },
         ],
       },
