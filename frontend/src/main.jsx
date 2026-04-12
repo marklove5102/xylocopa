@@ -9,25 +9,27 @@ import { registerSW } from "virtual:pwa-register";
 // Precaches all static assets (JS/CSS/HTML with content hashes).
 // Periodic check every hour ensures long-lived tabs pick up new deploys.
 if ("serviceWorker" in navigator) {
-  // Unregister standalone push-handler.js — VitePWA's generated SW
-  // already includes it via importScripts, so it's redundant.
-  navigator.serviceWorker.getRegistrations().then((regs) => {
-    for (const reg of regs) {
-      if (reg.active?.scriptURL?.endsWith("/push-handler.js")) {
-        reg.unregister().then(() => {
-          console.debug("[sw] migrated standalone push-handler.js → VitePWA SW");
-        });
-      }
-    }
-  }).catch(() => {});
-
-  registerSW({
-    onRegisteredSW(swUrl, registration) {
-      if (!registration) return;
-      // Check for SW updates every hour
-      setInterval(() => { registration.update(); }, 60 * 60 * 1000);
-    },
-  });
+  // One-time cache purge: unregister all SWs, clear caches, reload.
+  // Bump this version string whenever a forced cache-bust is needed.
+  const CACHE_VERSION = "v2";
+  const cacheFlag = `ah-cache-${CACHE_VERSION}`;
+  if (!localStorage.getItem(cacheFlag)) {
+    navigator.serviceWorker.getRegistrations().then(async (regs) => {
+      for (const reg of regs) await reg.unregister();
+      const names = await caches.keys();
+      for (const n of names) await caches.delete(n);
+      localStorage.setItem(cacheFlag, "1");
+      window.location.reload();
+    }).catch(() => {});
+  } else {
+    registerSW({
+      onRegisteredSW(swUrl, registration) {
+        if (!registration) return;
+        // Check for SW updates every 30 minutes
+        setInterval(() => { registration.update(); }, 30 * 60 * 1000);
+      },
+    });
+  }
 }
 
 // Global error handlers — catch async/event-handler errors that React
