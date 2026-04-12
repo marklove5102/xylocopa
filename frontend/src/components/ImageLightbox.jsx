@@ -646,7 +646,7 @@ export default function ImageLightbox({ media, initialIndex = 0, onClose }) {
       {media.length > 1 && (
         <div
           className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
-          style={{ marginBottom: "env(safe-area-inset-bottom, 0px)" }}
+          style={{}}
         >
           {media.map((_, i) => (
             <div

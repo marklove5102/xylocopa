@@ -633,7 +633,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
       </div>
 
       {/* Action bar */}
-      <div className="shrink-0 border-t border-divider bg-page px-4 py-3 safe-area-pb flex flex-wrap gap-2 justify-center">
+      <div className="shrink-0 border-t border-divider bg-page px-4 py-3 flex flex-wrap gap-2 justify-center">
         {/* INBOX → Dispatch + Delete */}
         {task.status === "INBOX" && (
           <>
