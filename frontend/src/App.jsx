@@ -180,7 +180,7 @@ function AuthGuard({ children }) {
 
   if (!checked) {
     return (
-      <div className="flex items-center justify-center h-dvh bg-page">
+      <div className="flex items-center justify-center h-full bg-page">
         <div className="animate-pulse text-dim">Loading...</div>
       </div>
     );
@@ -188,7 +188,7 @@ function AuthGuard({ children }) {
 
   if (serverDown) {
     return (
-      <div className="flex flex-col items-center justify-center h-dvh bg-page gap-4">
+      <div className="flex flex-col items-center justify-center h-full bg-page gap-4">
         {retrying ? (
           <p className="text-label text-sm animate-pulse">Reconnecting to server...</p>
         ) : (
@@ -363,7 +363,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <ToastProvider>
-    <div className="flex flex-col h-dvh bg-page text-heading min-w-[320px] overflow-hidden">
+    <div className="fixed inset-0 flex flex-col bg-page text-heading min-w-[320px] overflow-hidden">
       {/* Main content area */}
       <main className="flex-1 min-h-0 overflow-hidden">
         <Routes>
@@ -376,7 +376,7 @@ export default function App() {
                 <WebSocketProvider>
                 <MonitorProvider>
                 <ErrorBoundary>
-                  <Suspense fallback={<div className="flex items-center justify-center h-dvh bg-page"><div className="animate-pulse text-dim text-sm">Loading...</div></div>}>
+                  <Suspense fallback={<div className="flex items-center justify-center h-full bg-page"><div className="animate-pulse text-dim text-sm">Loading...</div></div>}>
                   <AppRoutes themeProps={themeProps} />
                   </Suspense>
                 </ErrorBoundary>
