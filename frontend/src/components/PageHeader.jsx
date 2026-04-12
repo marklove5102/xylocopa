@@ -260,12 +260,16 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
   const wTimeout = taskStats?.weekly_timeout ?? 0;
   const wCancelled = taskStats?.weekly_cancelled ?? 0;
   const wRejected = taskStats?.weekly_rejected ?? 0;
+  const wRetries = taskStats?.weekly_retries ?? 0;
+  const wFirstAttempt = taskStats?.weekly_first_attempt ?? 0;
+  const wFirstAttemptPct = taskStats?.weekly_first_attempt_pct ?? 0;
   const wPct = taskStats?.weekly_success_pct ?? 0;
 
   const ringColor = wTotal === 0 ? "#9ca3af" : wPct >= 80 ? "#22c55e" : wPct >= 50 ? "#eab308" : "#f87171";
 
   const rows = [
     { label: "Completed", count: wCompleted, color: "#22c55e" },
+    { label: "Retries",   count: wRetries,   color: "#fb923c" },
     { label: "Failed",    count: wFailed,    color: "#f87171" },
     { label: "Timeout",   count: wTimeout,   color: "#f59e0b" },
     { label: "Cancelled", count: wCancelled, color: "#9ca3af" },
@@ -296,7 +300,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           </svg>
           <div>
             <div className="text-heading text-sm font-semibold">Weekly Success Rate</div>
-            <div className="text-dim text-xs mt-0.5">{wTotal} tasks this week</div>
+            <div className="text-dim text-xs mt-0.5">{wTotal} tasks{wRetries > 0 ? ` · ${wRetries} retries` : ""}</div>
           </div>
         </div>
 
@@ -318,15 +322,29 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           ))}
         </div>
 
-        {/* Progress bar */}
-        {wTotal > 0 && (
-          <div className="px-4 pb-3">
-            <div className="h-1.5 rounded-full overflow-hidden flex" style={{ backgroundColor: "var(--color-input)" }}>
-              {wCompleted > 0 && <div style={{ width: `${(wCompleted / wTotal) * 100}%`, backgroundColor: "#22c55e" }} />}
-              {wFailed > 0 && <div style={{ width: `${(wFailed / wTotal) * 100}%`, backgroundColor: "#f87171" }} />}
-              {wTimeout > 0 && <div style={{ width: `${(wTimeout / wTotal) * 100}%`, backgroundColor: "#f59e0b" }} />}
-              {wCancelled > 0 && <div style={{ width: `${(wCancelled / wTotal) * 100}%`, backgroundColor: "#9ca3af" }} />}
-              {wRejected > 0 && <div style={{ width: `${(wRejected / wTotal) * 100}%`, backgroundColor: "#a78bfa" }} />}
+        {/* Progress bar (adjusted for retries) */}
+        {wTotal > 0 && (() => {
+          const adjTotal = wTotal + wRetries;
+          return (
+            <div className="px-4 pb-3">
+              <div className="h-1.5 rounded-full overflow-hidden flex" style={{ backgroundColor: "var(--color-input)" }}>
+                {wCompleted > 0 && <div style={{ width: `${(wCompleted / adjTotal) * 100}%`, backgroundColor: "#22c55e" }} />}
+                {wRetries > 0 && <div style={{ width: `${(wRetries / adjTotal) * 100}%`, backgroundColor: "#fb923c" }} />}
+                {wFailed > 0 && <div style={{ width: `${(wFailed / adjTotal) * 100}%`, backgroundColor: "#f87171" }} />}
+                {wTimeout > 0 && <div style={{ width: `${(wTimeout / adjTotal) * 100}%`, backgroundColor: "#f59e0b" }} />}
+                {wCancelled > 0 && <div style={{ width: `${(wCancelled / adjTotal) * 100}%`, backgroundColor: "#9ca3af" }} />}
+                {wRejected > 0 && <div style={{ width: `${(wRejected / adjTotal) * 100}%`, backgroundColor: "#a78bfa" }} />}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* First-attempt success rate */}
+        {wCompleted > 0 && (
+          <div className="border-t border-divider px-4 py-2.5 flex items-center justify-between">
+            <div className="text-xs text-dim">First-attempt success</div>
+            <div className="text-xs font-medium tabular-nums" style={{ color: wFirstAttemptPct >= 80 ? "#22c55e" : wFirstAttemptPct >= 50 ? "#eab308" : "#f87171" }}>
+              {wFirstAttempt}/{wCompleted} ({wFirstAttemptPct}%)
             </div>
           </div>
         )}

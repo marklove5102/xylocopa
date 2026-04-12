@@ -261,7 +261,24 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
     weekly_by = {s.value: c for s, c in weekly_q}
     weekly_total = sum(weekly_by.values())
     weekly_completed = weekly_by.get("COMPLETE", 0)
-    weekly_pct = round(weekly_completed / weekly_total * 100) if weekly_total else 0
+
+    # Retry-adjusted success rate: each retry counts as a failure attempt
+    weekly_retries_row = _pf(db.query(
+        func.coalesce(func.sum(Task.attempt_number - 1), 0)
+    )).filter(
+        Task.status.in_(terminal),
+        Task.completed_at >= week_ago,
+    ).scalar()
+    weekly_retries = int(weekly_retries_row or 0)
+    adjusted_total = weekly_total + weekly_retries
+    weekly_pct = round(weekly_completed / adjusted_total * 100) if adjusted_total else 0
+
+    # First-attempt success: completed on first try (attempt_number == 1)
+    weekly_first_attempt = _pf(db.query(func.count(Task.id))).filter(
+        Task.status == TaskStatus.COMPLETE,
+        Task.attempt_number == 1,
+        Task.completed_at >= week_ago,
+    ).scalar() or 0
 
     # Daily breakdown for the last 7 days (for sparkline chart)
     daily_rows = _pf(db.query(
@@ -299,6 +316,9 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
         "weekly_timeout": weekly_by.get("TIMEOUT", 0),
         "weekly_cancelled": weekly_by.get("CANCELLED", 0),
         "weekly_rejected": weekly_by.get("REJECTED", 0),
+        "weekly_retries": weekly_retries,
+        "weekly_first_attempt": weekly_first_attempt,
+        "weekly_first_attempt_pct": round(weekly_first_attempt / weekly_completed * 100) if weekly_completed else 0,
         "daily": daily,
     }
 
