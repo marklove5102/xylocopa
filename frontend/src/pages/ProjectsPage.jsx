@@ -52,9 +52,9 @@ function SortableFolderCard(props) {
   );
 }
 
-function TaskRing({ total, completed, size = 22 }) {
-  if (!total) return null;
-  const pct = Math.round(completed / total * 100);
+function TaskRing({ total, completed, pct: pctOverride, size = 22 }) {
+  if (!total && pctOverride == null) return null;
+  const pct = pctOverride != null ? pctOverride : Math.round(completed / total * 100);
   const r = (size - 4) / 2, c = 2 * Math.PI * r;
   const offset = c * (1 - pct / 100);
   const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#f87171";
@@ -112,7 +112,7 @@ const FolderCard = memo(function FolderCard({ folder, onClick, onActivate, onArc
             )}
             {(folder.weekly_total || 0) > 0 && (
               <span className="ml-auto">
-                <TaskRing total={folder.weekly_total} completed={folder.weekly_completed || 0} />
+                <TaskRing total={folder.weekly_total} completed={folder.weekly_completed || 0} pct={folder.weekly_success_pct} />
               </span>
             )}
           </div>

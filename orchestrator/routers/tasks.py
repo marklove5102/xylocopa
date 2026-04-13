@@ -262,7 +262,7 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
     weekly_total = sum(weekly_by.values())
     weekly_completed = weekly_by.get("COMPLETE", 0)
 
-    # Retry-adjusted success rate: each retry counts as a failure attempt
+    # Retry count (for display + daily formula)
     weekly_retries_row = _pf(db.query(
         func.coalesce(func.sum(Task.attempt_number - 1), 0)
     )).filter(
@@ -270,8 +270,6 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
         Task.completed_at >= week_ago,
     ).scalar()
     weekly_retries = int(weekly_retries_row or 0)
-    adjusted_total = weekly_total + weekly_retries
-    weekly_pct = round(weekly_completed / adjusted_total * 100) if adjusted_total else 0
 
     # First-attempt success: completed on first try (attempt_number == 1)
     weekly_first_attempt = _pf(db.query(func.count(Task.id))).filter(
@@ -319,6 +317,10 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
         entry["retries"] = day_retries
         entry["success_pct"] = round(entry["completed"] / adj_total * 100) if adj_total else None
         daily.append(entry)
+
+    # Weekly success pct = average of non-null daily success_pct values
+    valid_pcts = [d["success_pct"] for d in daily if d["success_pct"] is not None]
+    weekly_pct = round(sum(valid_pcts) / len(valid_pcts)) if valid_pcts else 0
 
     return {
         **counts,

@@ -910,11 +910,49 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
             _w_by = {s.value: c for s, c in _w_rows}
             _w_total = sum(_w_by.values())
             _w_completed = _w_by.get("COMPLETE", 0)
+
+            # Daily success rates for weekly average (same formula as /api/v2/tasks/counts)
+            _d_rows = (
+                db.query(func.date(Task.completed_at).label("day"),
+                         Task.status, func.count(Task.id))
+                .filter(Task.project_name == dirname, Task.status.in_(_w_terminal),
+                        Task.completed_at >= _week_ago)
+                .group_by("day", Task.status).all()
+            )
+            _d_retry_rows = (
+                db.query(func.date(Task.completed_at).label("day"),
+                         func.coalesce(func.sum(Task.attempt_number - 1), 0))
+                .filter(Task.project_name == dirname, Task.status.in_(_w_terminal),
+                        Task.completed_at >= _week_ago)
+                .group_by("day").all()
+            )
+            _dr_map = {str(d): int(r) for d, r in _d_retry_rows}
+            _dm: dict[str, dict] = {}
+            for _dv, _st, _cnt in _d_rows:
+                _dk = str(_dv)
+                if _dk not in _dm:
+                    _dm[_dk] = {"total": 0, "completed": 0}
+                _dm[_dk]["total"] += _cnt
+                if _st == TaskStatus.COMPLETE:
+                    _dm[_dk]["completed"] += _cnt
+            # Average daily success rates over same 7-day grid as /api/v2/tasks/counts
+            _now = datetime.now(timezone.utc)
+            _valid_pcts = []
+            for _i in range(7):
+                _dk = (_now - _td(days=6 - _i)).strftime("%Y-%m-%d")
+                _de = _dm.get(_dk)
+                if _de:
+                    _adj = _de["total"] + _dr_map.get(_dk, 0)
+                    if _adj:
+                        _valid_pcts.append(round(_de["completed"] / _adj * 100))
+            _w_pct = round(sum(_valid_pcts) / len(_valid_pcts)) if _valid_pcts else 0
+
             entry["agent_active"] = agent_active_count
             entry["task_total"] = task_agent_total
             entry["task_completed"] = task_agent_completed
             entry["weekly_total"] = _w_total
             entry["weekly_completed"] = _w_completed
+            entry["weekly_success_pct"] = _w_pct
 
         results.append(entry)
 

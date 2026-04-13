@@ -54,9 +54,9 @@ const AGENT_TABS = [
   { key: "sessions", label: "Sessions" },
 ];
 
-function TaskRing({ total, completed, size = 22 }) {
-  if (!total) return null;
-  const pct = Math.round(completed / total * 100);
+function TaskRing({ total, completed, pct: pctOverride, size = 22 }) {
+  if (!total && pctOverride == null) return null;
+  const pct = pctOverride != null ? pctOverride : Math.round(completed / total * 100);
   const r = (size - 4) / 2, c = 2 * Math.PI * r;
   const offset = c * (1 - pct / 100);
   const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#f87171";
@@ -90,11 +90,13 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
   const wTimeout = stats?.weekly_timeout ?? 0;
   const wCancelled = stats?.weekly_cancelled ?? 0;
   const wRejected = stats?.weekly_rejected ?? 0;
+  const wRetries = stats?.weekly_retries ?? 0;
   const wPct = stats?.weekly_success_pct ?? 0;
   const ringColor = wTotal === 0 ? "#9ca3af" : wPct >= 80 ? "#22c55e" : wPct >= 50 ? "#eab308" : "#f87171";
 
   const rows = [
     { label: "Completed", count: wCompleted, color: "#22c55e" },
+    { label: "Retries",   count: wRetries,   color: "#fb923c" },
     { label: "Failed",    count: wFailed,    color: "#f87171" },
     { label: "Timeout",   count: wTimeout,   color: "#f59e0b" },
     { label: "Cancelled", count: wCancelled, color: "#9ca3af" },
@@ -121,7 +123,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
           </svg>
           <div>
             <div className="text-heading text-sm font-semibold">Weekly Success Rate</div>
-            <div className="text-dim text-xs mt-0.5">{wTotal} tasks this week</div>
+            <div className="text-dim text-xs mt-0.5">{wTotal} tasks{wRetries > 0 ? ` · ${wRetries} retries` : ""}</div>
           </div>
         </div>
 
@@ -142,18 +144,22 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
           ))}
         </div>
 
-        {/* Progress bar */}
-        {wTotal > 0 && (
-          <div className="px-4 pb-3">
-            <div className="h-1.5 rounded-full overflow-hidden flex" style={{ backgroundColor: "var(--color-input)" }}>
-              {wCompleted > 0 && <div style={{ width: `${(wCompleted / wTotal) * 100}%`, backgroundColor: "#22c55e" }} />}
-              {wFailed > 0 && <div style={{ width: `${(wFailed / wTotal) * 100}%`, backgroundColor: "#f87171" }} />}
-              {wTimeout > 0 && <div style={{ width: `${(wTimeout / wTotal) * 100}%`, backgroundColor: "#f59e0b" }} />}
-              {wCancelled > 0 && <div style={{ width: `${(wCancelled / wTotal) * 100}%`, backgroundColor: "#9ca3af" }} />}
-              {wRejected > 0 && <div style={{ width: `${(wRejected / wTotal) * 100}%`, backgroundColor: "#a78bfa" }} />}
+        {/* Progress bar (adjusted for retries) */}
+        {wTotal > 0 && (() => {
+          const adjTotal = wTotal + wRetries;
+          return (
+            <div className="px-4 pb-3">
+              <div className="h-1.5 rounded-full overflow-hidden flex" style={{ backgroundColor: "var(--color-input)" }}>
+                {wCompleted > 0 && <div style={{ width: `${(wCompleted / adjTotal) * 100}%`, backgroundColor: "#22c55e" }} />}
+                {wRetries > 0 && <div style={{ width: `${(wRetries / adjTotal) * 100}%`, backgroundColor: "#fb923c" }} />}
+                {wFailed > 0 && <div style={{ width: `${(wFailed / adjTotal) * 100}%`, backgroundColor: "#f87171" }} />}
+                {wTimeout > 0 && <div style={{ width: `${(wTimeout / adjTotal) * 100}%`, backgroundColor: "#f59e0b" }} />}
+                {wCancelled > 0 && <div style={{ width: `${(wCancelled / adjTotal) * 100}%`, backgroundColor: "#9ca3af" }} />}
+                {wRejected > 0 && <div style={{ width: `${(wRejected / adjTotal) * 100}%`, backgroundColor: "#a78bfa" }} />}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Daily sparkline */}
         {hasDaily && (() => {
@@ -1252,7 +1258,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                         title={`Weekly: ${projectStats?.weekly_completed ?? (project.task_completed || 0)}/${projectStats?.weekly_total ?? project.task_total} tasks completed`}
                         className="shrink-0 flex items-center justify-center rounded-md hover:bg-white/5 transition-colors p-0.5"
                       >
-                        <TaskRing total={projectStats?.weekly_total ?? project.task_total} completed={projectStats?.weekly_completed ?? (project.task_completed || 0)} size={24} />
+                        <TaskRing total={projectStats?.weekly_total ?? project.task_total} completed={projectStats?.weekly_completed ?? (project.task_completed || 0)} pct={projectStats?.weekly_success_pct} size={24} />
                       </button>
                       {showStats && projectStats && (
                         <ProjectStatsPopover stats={projectStats} onClose={() => setShowStats(false)} containerRef={statsRingRef} />
