@@ -51,6 +51,14 @@ certs/
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Cache / thumbnails
+.thumbcache/
+*.thumb.jpg
+*.thumb.png
+.cache/
+*.cache
 
 # IDE
 .vscode/
