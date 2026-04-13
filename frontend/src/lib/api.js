@@ -152,7 +152,8 @@ const e = encodeURIComponent;
 export const fetchProjects = () => request("/api/projects");
 export const createProject = (data) =>
   request("/api/projects", { method: "POST", body: JSON.stringify(data) });
-export const fetchAllFolders = () => request("/api/projects/folders");
+export const fetchAllFolders = () =>
+  request(`/api/projects/folders?tz_offset=${new Date().getTimezoneOffset()}`);
 export const scanProjects = () =>
   request("/api/projects/scan", { method: "POST" });
 export const renameProject = (name, newName, displayName) =>
@@ -210,8 +211,12 @@ export const rebuildInsights = (project) =>
 // --- Tasks ---
 export const fetchTasksV2 = (params = "") =>
   request(`/api/v2/tasks${params ? `?${params}` : ""}`);
-export const fetchTaskCounts = (project) =>
-  request(`/api/v2/tasks/counts${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+export const fetchTaskCounts = (project) => {
+  const tz = new Date().getTimezoneOffset();
+  const params = new URLSearchParams({ tz_offset: tz });
+  if (project) params.set("project", project);
+  return request(`/api/v2/tasks/counts?${params}`);
+};
 export const fetchTaskV2 = (id) => request(`/api/v2/tasks/${id}`);
 export const createTaskV2 = (data) =>
   request("/api/v2/tasks", { method: "POST", body: JSON.stringify(data) });

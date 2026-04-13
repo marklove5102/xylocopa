@@ -812,7 +812,11 @@ async def list_projects(db: Session = Depends(get_db)):
 
 
 @router.get("/api/projects/folders")
-async def list_all_folders(request: Request, db: Session = Depends(get_db)):
+async def list_all_folders(
+    request: Request,
+    tz_offset: int = Query(default=0, description="Client timezone offset in minutes"),
+    db: Session = Depends(get_db),
+):
     """List ALL folders in projects dir with activation status and stats."""
     from config import PROJECTS_DIR
     projects_dir = PROJECTS_DIR or "/projects"
@@ -896,9 +900,12 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
                 )
                 .scalar()
             )
-            # Weekly stats for task ring
+            # Weekly stats for task ring (timezone-aware)
             from datetime import timedelta as _td
-            _week_ago = datetime.now(timezone.utc) - _td(days=7)
+            _tz_hours = -tz_offset / 60
+            _tz_mod = f"{'+' if _tz_hours >= 0 else ''}{int(_tz_hours)} hours"
+            _now_local = datetime.now(timezone.utc) + _td(hours=_tz_hours)
+            _week_ago = _now_local - _td(days=7)
             _w_terminal = [TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.TIMEOUT,
                            TaskStatus.REJECTED, TaskStatus.CANCELLED]
             _w_rows = (
@@ -912,15 +919,16 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
             _w_completed = _w_by.get("COMPLETE", 0)
 
             # Daily success rates for weekly average (same formula as /api/v2/tasks/counts)
+            _local_date = func.date(Task.completed_at, _tz_mod)
             _d_rows = (
-                db.query(func.date(Task.completed_at).label("day"),
+                db.query(_local_date.label("day"),
                          Task.status, func.count(Task.id))
                 .filter(Task.project_name == dirname, Task.status.in_(_w_terminal),
                         Task.completed_at >= _week_ago)
                 .group_by("day", Task.status).all()
             )
             _d_retry_rows = (
-                db.query(func.date(Task.completed_at).label("day"),
+                db.query(_local_date.label("day"),
                          func.coalesce(func.sum(Task.attempt_number - 1), 0))
                 .filter(Task.project_name == dirname, Task.status.in_(_w_terminal),
                         Task.completed_at >= _week_ago)
@@ -936,10 +944,9 @@ async def list_all_folders(request: Request, db: Session = Depends(get_db)):
                 if _st == TaskStatus.COMPLETE:
                     _dm[_dk]["completed"] += _cnt
             # Average daily success rates over same 7-day grid as /api/v2/tasks/counts
-            _now = datetime.now(timezone.utc)
             _valid_pcts = []
             for _i in range(7):
-                _dk = (_now - _td(days=6 - _i)).strftime("%Y-%m-%d")
+                _dk = (_now_local - _td(days=6 - _i)).strftime("%Y-%m-%d")
                 _de = _dm.get(_dk)
                 if _de:
                     _adj = _de["total"] + _dr_map.get(_dk, 0)

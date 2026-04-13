@@ -219,10 +219,15 @@ async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/api/v2/tasks/counts")
-async def task_counts(project: str | None = None, db: Session = Depends(get_db)):
+async def task_counts(
+    project: str | None = None,
+    tz_offset: int = Query(default=0, description="Client timezone offset in minutes (JS getTimezoneOffset)"),
+    db: Session = Depends(get_db),
+):
     """Return perspective counts + weekly success stats.
 
     Optional ``project`` query param filters to a single project.
+    ``tz_offset`` shifts date grouping to client local time.
     """
     from datetime import timedelta
 
@@ -247,8 +252,12 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
     }
 
     # Weekly stats — tasks that reached a terminal state this week
-    now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
+    # Shift dates to client local time (tz_offset is JS getTimezoneOffset: -480 for UTC+8)
+    tz_hours = -tz_offset / 60  # e.g. -(-480)/60 = +8
+    tz_mod = f"{'+' if tz_hours >= 0 else ''}{int(tz_hours)} hours"
+    now_local = datetime.now(timezone.utc) + timedelta(hours=tz_hours)
+    week_ago = now_local - timedelta(days=7)
+
     terminal = [TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.TIMEOUT,
                 TaskStatus.REJECTED, TaskStatus.CANCELLED]
     weekly_q = _pf(db.query(
@@ -279,8 +288,10 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
     ).scalar() or 0
 
     # Daily breakdown for the last 7 days (for sparkline chart)
+    # Use SQLite date() with tz modifier to group by local date
+    local_date = func.date(Task.completed_at, tz_mod)
     daily_rows = _pf(db.query(
-        func.date(Task.completed_at).label("day"),
+        local_date.label("day"),
         Task.status,
         func.count(Task.id),
     )).filter(
@@ -290,7 +301,7 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
 
     # Daily retries (sum of attempt_number - 1 per day)
     daily_retry_rows = _pf(db.query(
-        func.date(Task.completed_at).label("day"),
+        local_date.label("day"),
         func.coalesce(func.sum(Task.attempt_number - 1), 0),
     )).filter(
         Task.status.in_(terminal),
@@ -310,7 +321,7 @@ async def task_counts(project: str | None = None, db: Session = Depends(get_db))
     # Fill missing days and compute retry-adjusted success_pct
     daily = []
     for i in range(7):
-        d = (now - timedelta(days=6 - i)).strftime("%Y-%m-%d")
+        d = (now_local - timedelta(days=6 - i)).strftime("%Y-%m-%d")
         entry = daily_map.get(d, {"date": d, "total": 0, "completed": 0})
         day_retries = daily_retries_map.get(d, 0)
         adj_total = entry["total"] + day_retries
