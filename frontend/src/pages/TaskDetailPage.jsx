@@ -351,7 +351,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 dur: durationDisplay(task.created_at, task.started_at) });
             }
             if (task.completed_at) {
-              const termLabel = task.status === "COMPLETE" ? "Completed" : task.status === "FAILED" ? "Failed" : task.status === "TIMEOUT" ? "Timed Out" : task.status === "CANCELLED" ? "Cancelled" : task.status === "REJECTED" ? "Rejected" : "Ended";
+              const termLabel = task.status === "COMPLETE" ? "Completed" : task.status === "FAILED" ? "Failed" : task.status === "TIMEOUT" ? "Timed Out" : task.status === "CANCELLED" ? "Dropped" : task.status === "REJECTED" ? "Rejected" : "Ended";
               const termColor = task.status === "COMPLETE" ? "text-green-400" : task.status === "CANCELLED" ? "text-gray-400" : "text-red-400";
               const termBg = task.status === "COMPLETE" ? "bg-green-500" : task.status === "CANCELLED" ? "bg-gray-500" : "bg-red-500";
               steps.push({ label: termLabel, ts: task.completed_at, icon: "end", color: termColor, bg: termBg,

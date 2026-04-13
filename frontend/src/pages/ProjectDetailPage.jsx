@@ -99,7 +99,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
     { label: "Retries",   count: wRetries,   color: "#fb923c" },
     { label: "Failed",    count: wFailed,    color: "#f87171" },
     { label: "Timeout",   count: wTimeout,   color: "#f59e0b" },
-    { label: "Cancelled", count: wCancelled, color: "#9ca3af" },
+    { label: "Dropped",   count: wCancelled, color: "#9ca3af" },
     { label: "Rejected",  count: wRejected,  color: "#a78bfa" },
   ].filter(r => r.count > 0);
 
