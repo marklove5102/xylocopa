@@ -364,9 +364,9 @@ After installing, restart your browser.
 
 ## Roadmap
 
-- **macOS support** — basic compatibility merged (cross-platform process detection, path normalization, iOS cert/Web Clip setup). Some edge cases may remain — please report issues.
-- **Backup & restore** — automatic backups run on schedule, but the restore flow has not been fully validated. Use with caution.
-- **UI & icon refresh** — improve visuals, iconography, and layout polish across the web interface.
+- [x] **macOS support** — basic compatibility merged (cross-platform process detection, path normalization, iOS cert/Web Clip setup). Some edge cases may remain — please report issues.
+- [ ] **Backup & restore** — automatic backups run on schedule, but the restore flow has not been fully validated. Use with caution.
+- [ ] **UI & icon refresh** — improve visuals, iconography, and layout polish across the web interface.
 
 ## Contributing
 
