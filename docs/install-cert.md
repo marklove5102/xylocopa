@@ -1,10 +1,12 @@
 # Installing the CA Certificate on Other Devices
 
-Copy `certs/selfsigned.crt` from the server to your device, then follow the instructions for your platform.
+These instructions are run on the **client device** (the machine or phone you browse from), not the server. First, copy the certificate from the server to your device:
 
 ```bash
 scp user@server-ip:~/agenthive/certs/selfsigned.crt ~/agenthive.crt
 ```
+
+> **Tip:** If you're unsure how to install certificates on your OS, paste the relevant section below into Claude or another AI assistant — it can walk you through the steps interactively.
 
 ## Android
 

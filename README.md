@@ -321,6 +321,7 @@ AgentHive uses a self-signed SSL certificate. Your server trusts it after setup,
 - [x] **macOS support** — basic compatibility merged (cross-platform process detection, path normalization, iOS cert/Web Clip setup). Some edge cases may remain — please report issues.
 - [ ] **Backup & restore** — automatic backups run on schedule, but the restore flow has not been fully validated. Use with caution.
 - [ ] **UI & icon refresh** — improve visuals, iconography, and layout polish across the web interface.
+- [ ] **Better HTTPS certificates** — replace the self-signed certificate with a more seamless solution (e.g. Let's Encrypt, Tailscale HTTPS, or mDNS) to eliminate manual cert installation on client devices.
 
 ## Contributing
 
