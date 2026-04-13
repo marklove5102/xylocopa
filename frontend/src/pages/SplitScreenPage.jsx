@@ -126,8 +126,8 @@ function PaneShell({ theme, onToggleTheme, onPathChange, navigateRef }) {
     location.pathname.match(/^\/tasks\/[^/]+$/);
 
   return (
-    <div className="flex flex-col h-full bg-page text-heading overflow-hidden">
-      <main className="flex-1 min-h-0 overflow-hidden relative">
+    <div className="relative h-full bg-page text-heading overflow-hidden">
+      <main className="h-full overflow-hidden">
         <Suspense fallback={<div className="flex items-center justify-center h-full text-dim text-sm animate-pulse">Loading...</div>}>
           <Routes location={bgLocation || location}>
             <Route path="/" element={<Navigate to="/agents" replace />} />
@@ -151,9 +151,9 @@ function PaneShell({ theme, onToggleTheme, onPathChange, navigateRef }) {
         </Suspense>
       </main>
 
-      {/* Pane bottom nav — reuses shared BottomNavBar component */}
+      {/* Pane bottom nav — floating overlay, same as single-screen */}
       {!hideNav && (
-        <BottomNavBar className="shrink-0 flex justify-center px-3 pb-1.5 -mt-1 relative z-20" />
+        <BottomNavBar className="absolute bottom-[13px] left-0 right-0 z-40 flex justify-center px-4" />
       )}
     </div>
   );
