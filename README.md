@@ -302,7 +302,7 @@ No port forwarding, no public exposure. Tailscale creates a secure WireGuard tun
 AgentHive uses a self-signed SSL certificate. Your server trusts it after setup, but other devices will show a browser warning until you install the cert.
 
 - **iPhone / iPad** — open the login page and tap **"Install CA certificate"**, then follow the on-screen guide.
-- **Other devices** — copy `certs/selfsigned.crt` to the device (`scp`, AirDrop, etc.) and install it as a trusted CA using your OS certificate manager. Restart the browser after installing.
+- **Other devices** — see [detailed instructions](docs/install-cert.md) for Android, macOS, Windows, and Linux.
 
 ## Gestures & Shortcuts
 
