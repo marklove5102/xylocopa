@@ -5,7 +5,7 @@
 [![React 19](https://img.shields.io/badge/react-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
 
-> [**Getting Started**](#getting-started) · [**The Loop**](#the-loop) · [**Features**](#features) · [**Roadmap**](#roadmap) · [**Contributing**](CONTRIBUTING.md)
+> [**Getting Started**](#getting-started) · [**The Loop**](#the-loop) · [**Features**](#features) · [**Roadmap**](#roadmap) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
 
 <p align="center">
   <img src="docs/hero.png" alt="AgentHive — Orchestrate AI Agents from Anywhere" width="820">
@@ -130,6 +130,8 @@ nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
 ./run.sh start
 ```
 
+Verify by opening `https://<machine-ip>:3000` on the host.
+
 > **Tip:** You can also run `claude` in the project directory and tell it to set up AgentHive for you :)
 
 > **Tip:** Symlink the agenthive repo into `~/ah-projects/` to personalize your experience — let agents improve the tool while you use it.
@@ -204,10 +206,9 @@ If you want the full app experience on iPhone (home screen icon, fullscreen, pus
 
 #### Installing the CA Certificate
 
-AgentHive uses a self-signed SSL certificate. The host trusts it after setup, but other devices will show a browser warning until you install the cert.
+AgentHive uses a self-signed SSL certificate. The host trusts it after setup, but other client devices will show a browser warning until you install the cert. iPhone/iPad users can skip this — the [iPhone PWA](#iphone-pwa) guide above already covers it.
 
-- **iPhone / iPad** — open the login page and tap **"Install CA certificate"**, then follow the on-screen guide.
-- **Other devices** — see [detailed instructions](docs/install-cert.md) for Android, macOS, Windows, and Linux.
+For Android, macOS, Windows, and Linux — see [detailed instructions](docs/install-cert.md).
 
 ## Gestures & Shortcuts
 
