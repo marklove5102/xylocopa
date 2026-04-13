@@ -100,34 +100,6 @@ AgentHive hooks into Claude Code's native event system — not polling, not heur
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
 | **Backups** | Automatic database backups. Session JSONL caching. Crash recovery with partial output salvage. |
 
-## How It Works
-
-```
-Your Phone / Browser
-    |
-    +-- AgentHive Frontend (React PWA, HTTPS)
-    |     +-- WebSocket  <-- real-time agent output, status, permissions
-    |     +-- REST API   <-- agent control, tasks, file uploads
-    |
-    +-- AgentHive Backend (FastAPI + Uvicorn)
-          |
-          +-- Agent Dispatcher
-          |     +-- tmux sessions (one per agent)
-          |     |     +-- claude CLI (the same CLI you use in your terminal)
-          |     +-- Isolated git worktrees per agent
-          |     +-- Permission manager (tool approve/deny)
-          |     +-- Timeout & crash recovery
-          |
-          +-- Sync Engine (tails CLI JSONL files, read-only)
-          |     +-- Hook integration (SessionStart/End, tool events)
-          |
-          +-- Push Notifications (Web Push / VAPID + Telegram)
-          |
-          +-- SQLite Database + Automatic Backups
-```
-
-AgentHive runs on your machine and launches Claude Code CLI instances inside tmux sessions. It streams their output to the web UI via WebSocket and manages their lifecycle. You interact through the browser — from the same machine, from your laptop, or from your phone over Tailscale.
-
 ## Getting Started
 
 ### Prerequisites
