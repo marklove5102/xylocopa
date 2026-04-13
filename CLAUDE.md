@@ -27,6 +27,7 @@
 ## Release Conventions
 - Tag format: `v<major>.<minor>.<patch>`
 - Release notes: overview paragraph + categorized changelists with context
+- Tone: factual changelog style — describe what changed, no adjectives or selling language
 - Use `gh release create` with `--notes` — include `Full Changelog` compare link at the bottom
 - Only create releases when explicitly asked by the user
 
