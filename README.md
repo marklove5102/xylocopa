@@ -102,7 +102,9 @@ AgentHive hooks into Claude Code's native event system — not polling, not heur
 
 ## Getting Started
 
-### Prerequisites
+### Host Setup
+
+#### Prerequisites
 
 - **Linux** or **macOS** host (Ubuntu 22.04+ / macOS 13+ recommended)
 - **Node.js** 18+ and npm
@@ -112,7 +114,7 @@ AgentHive hooks into Claude Code's native event system — not polling, not heur
 - **Claude subscription** — Claude Max or Pro (uses your existing subscription, no separate API billing)
 - **OpenAI API key** _(optional, for voice input)_
 
-### Quick Start (on host)
+#### Quick Start
 
 ```bash
 # 1. Clone
@@ -128,20 +130,9 @@ nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
 ./run.sh start
 ```
 
-Open `https://<machine-ip>:3000` in your browser. Set a password on first visit.
-
 > **Tip:** You can also run `claude` in the project directory and tell it to set up AgentHive for you :)
 
 > **Tip:** Symlink the agenthive repo into `~/ah-projects/` to personalize your experience — let agents improve the tool while you use it.
-
-### Setting Up iPhone (on client)
-
-After setting up the host, you can visit `https://<machine-ip>:3000` from any device with network access — no extra setup required. However, if you want the full PWA app experience on iPhone (home screen icon, fullscreen, push notifications), follow the steps below.
-
-1. Open `https://<machine-ip>:3000` in Safari (bypass the certificate warning via **Advanced → Visit Website**, then refresh).
-2. Follow the on-screen guide on the login page to install the CA certificate and the AgentHive app.
-
-> **Important:** Install the CA certificate **before** installing the App. The App opens in fullscreen without a browser address bar — if the certificate isn't trusted first, you'll be stuck on a warning page with no way to navigate.
 
 <details>
 <summary><strong>Manual setup (without setup.sh)</strong></summary>
@@ -213,7 +204,7 @@ mkcert -cert-file certs/selfsigned.crt -key-file certs/selfsigned.key \
 
 </details>
 
-## Auto-Start on Reboot (PM2)
+#### Auto-Start on Reboot (PM2)
 
 AgentHive uses PM2 to manage its processes. By default, PM2 does **not** auto-start after a system reboot. To enable it:
 
@@ -236,17 +227,7 @@ To disable auto-start later:
 pm2 unstartup systemd
 ```
 
-## Remote Access
-
-AgentHive works with any tunneling or VPN solution that gives your devices a shared private network — [Tailscale](https://tailscale.com), [ZeroTier](https://www.zerotier.com), [WireGuard](https://www.wireguard.com), [frp](https://github.com/fatedier/frp), Cloudflare Tunnel, etc. The author uses Tailscale:
-
-1. Install [Tailscale](https://tailscale.com) on your server and phone
-2. `tailscale up` on both devices
-3. Access AgentHive at `https://<tailscale-ip>:3000`
-
-No port forwarding, no public exposure — traffic stays in an encrypted tunnel between your devices.
-
-## Folder Layout
+#### Folder Layout
 
 ```
 ~/
@@ -268,9 +249,32 @@ No port forwarding, no public exposure — traffic stays in an encrypted tunnel 
     └── ...
 ```
 
-## Installing the CA Certificate
+### Client Setup
 
-AgentHive uses a self-signed SSL certificate. Your server trusts it after setup, but other devices will show a browser warning until you install the cert.
+After setting up the host, visit `https://<machine-ip>:3000` from any device with network access — that's it. Set a password on first visit.
+
+#### Remote Access
+
+For access outside your LAN, AgentHive works with any tunneling or VPN solution — [Tailscale](https://tailscale.com), [ZeroTier](https://www.zerotier.com), [WireGuard](https://www.wireguard.com), [frp](https://github.com/fatedier/frp), Cloudflare Tunnel, etc. The author uses Tailscale:
+
+1. Install [Tailscale](https://tailscale.com) on your server and phone
+2. `tailscale up` on both devices
+3. Access AgentHive at `https://<tailscale-ip>:3000`
+
+No port forwarding, no public exposure — traffic stays in an encrypted tunnel between your devices.
+
+#### iPhone PWA
+
+If you want the full app experience on iPhone (home screen icon, fullscreen, push notifications):
+
+1. Open `https://<machine-ip>:3000` in Safari (bypass the certificate warning via **Advanced → Visit Website**, then refresh).
+2. Follow the on-screen guide on the login page to install the CA certificate and the AgentHive app.
+
+> **Important:** Install the CA certificate **before** installing the App. The App opens in fullscreen without a browser address bar — if the certificate isn't trusted first, you'll be stuck on a warning page with no way to navigate.
+
+#### Installing the CA Certificate
+
+AgentHive uses a self-signed SSL certificate. The host trusts it after setup, but other devices will show a browser warning until you install the cert.
 
 - **iPhone / iPad** — open the login page and tap **"Install CA certificate"**, then follow the on-screen guide.
 - **Other devices** — see [detailed instructions](docs/install-cert.md) for Android, macOS, Windows, and Linux.
