@@ -4,6 +4,7 @@
 /* ── Theme Color Tokens ── */
 :root {
   color-scheme: light;
+  --sat: env(safe-area-inset-top, 0px);
   --color-page:       #ffffff;
   --color-surface:    #f6f7f8;
   --color-input:      #ebedf0;
@@ -139,6 +140,7 @@ body::after {
   height: 1px;
 }
 @media all and (display-mode: standalone), all and (display-mode: fullscreen) {
+  :root { --sat: max(env(safe-area-inset-top, 0px), 20px); }
   body::after { display: none; }
 }
 
@@ -206,10 +208,10 @@ body::after {
   padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - 20px));
 }
 .safe-area-pt {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--sat);
 }
 .safe-area-toast {
-  top: max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem));
+  top: max(1rem, calc(var(--sat) + 0.5rem));
 }
 
 /* ── Split-pane: tighter padding for embedded pages ── */
@@ -220,7 +222,7 @@ body::after {
 .split-pane .safe-area-pt { padding-top: 0 !important; }
 .split-pane .safe-area-pb { padding-bottom: 0 !important; }
 .split-pane .safe-area-pb-tight { padding-bottom: 0 !important; }
-.split-pane [style*="safe-area-inset-top"] { padding-top: 0.25rem !important; }
+.split-pane [style*="--sat"] { padding-top: 0.25rem !important; }
 
 /* ── Selection highlight ── */
 ::selection {

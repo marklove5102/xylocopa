@@ -551,7 +551,7 @@ export default function ImageLightbox({ media, initialIndex = 0, onClose }) {
               .catch(() => toast.error(`Failed to download ${fn}`));
           }}
           className="absolute top-4 right-18 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 transition-colors"
-          style={{ marginTop: "env(safe-area-inset-top, 0px)" }}
+          style={{ marginTop: "var(--sat, 0px)" }}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -567,7 +567,7 @@ export default function ImageLightbox({ media, initialIndex = 0, onClose }) {
           handleDismiss();
         }}
         className="absolute top-4 right-4 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 transition-colors"
-        style={{ marginTop: "env(safe-area-inset-top, 0px)" }}
+        style={{ marginTop: "var(--sat, 0px)" }}
       >
         <svg
           className="w-6 h-6"
@@ -588,7 +588,7 @@ export default function ImageLightbox({ media, initialIndex = 0, onClose }) {
       {media.length > 1 && (
         <div
           className="absolute top-4 left-1/2 -translate-x-1/2 z-10 px-3 py-1 rounded-full bg-black/50 text-white/80 text-xs font-medium"
-          style={{ marginTop: "env(safe-area-inset-top, 0px)" }}
+          style={{ marginTop: "var(--sat, 0px)" }}
         >
           {currentIndex + 1} / {media.length}
         </div>
