@@ -8,13 +8,17 @@ import { registerSW } from "virtual:pwa-register";
 
 // Register VitePWA service worker with autoUpdate.
 // Precaches all static assets (JS/CSS/HTML with content hashes).
-// Periodic check every hour ensures long-lived tabs pick up new deploys.
 if ("serviceWorker" in navigator) {
   registerSW({
     onRegisteredSW(swUrl, registration) {
       if (!registration) return;
-      // Check for SW updates every 30 minutes
+      // Check for SW updates every 30 minutes (background)
       setInterval(() => { registration.update(); }, 30 * 60 * 1000);
+      // Also check on every tab/app focus — catches rebuilds immediately
+      // when user switches back to the app (mobile PWA, iPad, etc.)
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") registration.update();
+      });
     },
   });
 }
