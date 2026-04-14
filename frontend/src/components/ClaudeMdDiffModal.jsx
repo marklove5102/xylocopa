@@ -178,7 +178,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
   // ── No changes needed ──
   if (message && hunks.length === 0 && !is_new) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "var(--sat, 44px)" }}>
+      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "env(safe-area-inset-top, 44px)" }}>
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-divider">
           <h2 className="text-base font-bold text-heading">Proposed CLAUDE.md Updates</h2>
           <button onClick={onClose} className="text-dim hover:text-heading text-xl leading-none">&times;</button>
@@ -198,7 +198,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
   // ── New file — show full preview ──
   if (is_new) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "var(--sat, 44px)" }}>
+      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "env(safe-area-inset-top, 44px)" }}>
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-divider">
           <h2 className="text-base font-bold text-heading">New CLAUDE.md</h2>
           <button onClick={onClose} className="text-dim hover:text-heading text-xl leading-none">&times;</button>
@@ -227,7 +227,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
   if (reviewText !== null) {
     const lineCount = reviewText.split("\n").length;
     return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "var(--sat, 44px)" }}>
+      <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "env(safe-area-inset-top, 44px)" }}>
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-divider">
           <h2 className="text-base font-bold text-heading">Edit Final CLAUDE.md</h2>
           <button onClick={() => setReviewText(null)} className="text-dim hover:text-heading text-xl leading-none">&times;</button>
@@ -264,7 +264,7 @@ export default function ClaudeMdDiffModal({ data, project, onClose, onApplied })
 
   // ── Diff review with per-line controls ──
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "var(--sat, 44px)" }}>
+    <div className="fixed inset-0 z-50 flex flex-col bg-page" style={{ paddingTop: "env(safe-area-inset-top, 44px)" }}>
       {/* Title bar */}
       <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-divider">
         <h2 className="text-base font-bold text-heading">Proposed CLAUDE.md Updates</h2>
