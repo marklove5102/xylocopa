@@ -4117,6 +4117,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       {showBrowser && agent && (
         <ProjectBrowserModal
           project={agent.project}
+          agentId={id}
           onClose={() => setShowBrowser(false)}
         />
       )}

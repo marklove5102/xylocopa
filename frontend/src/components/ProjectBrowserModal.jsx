@@ -134,7 +134,10 @@ function FileViewer({ project, node }) {
 
 /* ---- main modal ---- */
 
-export default function ProjectBrowserModal({ project, onClose }) {
+export default function ProjectBrowserModal({ project, agentId, onClose }) {
+  // Cache key prefix: scope per-agent when agentId is provided (split-screen),
+  // otherwise fall back to project-level caching (ProjectDetailPage).
+  const cachePrefix = agentId ? `filebrowser:${project}:${agentId}` : `filebrowser:${project}`;
   const [tree, setTree] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -192,9 +195,9 @@ export default function ProjectBrowserModal({ project, onClose }) {
       // restore cached state or auto-expand root dirs
       let restored = false;
       try {
-        const savedExp = localStorage.getItem(`filebrowser:${project}:expanded`);
+        const savedExp = localStorage.getItem(`${cachePrefix}:expanded`);
         if (savedExp) { setExpandedDirs(new Set(JSON.parse(savedExp))); restored = true; }
-        const savedView = localStorage.getItem(`filebrowser:${project}:viewing`);
+        const savedView = localStorage.getItem(`${cachePrefix}:viewing`);
         if (savedView) setViewingFile(JSON.parse(savedView));
       } catch { /* ignore */ }
       if (!restored) {
@@ -260,25 +263,25 @@ export default function ProjectBrowserModal({ project, onClose }) {
     const el = scrollRef.current;
     if (el) {
       clearTimeout(scrollSaveTimer.current);
-      try { localStorage.setItem(`filebrowser:${project}:scroll`, String(el.scrollTop)); } catch { /* ignore */ }
+      try { localStorage.setItem(`${cachePrefix}:scroll`, String(el.scrollTop)); } catch { /* ignore */ }
     }
     setViewingFile(node);
-  }, [project]);
+  }, [cachePrefix]);
 
   // Persist expandedDirs
   useEffect(() => {
     if (loading) return;
-    try { localStorage.setItem(`filebrowser:${project}:expanded`, JSON.stringify([...expandedDirs])); } catch { /* ignore */ }
-  }, [expandedDirs, project, loading]);
+    try { localStorage.setItem(`${cachePrefix}:expanded`, JSON.stringify([...expandedDirs])); } catch { /* ignore */ }
+  }, [expandedDirs, cachePrefix, loading]);
 
   // Persist viewingFile
   useEffect(() => {
     if (loading) return;
     try {
-      if (viewingFile) localStorage.setItem(`filebrowser:${project}:viewing`, JSON.stringify({ path: viewingFile.path, name: viewingFile.name, type: viewingFile.type }));
-      else localStorage.removeItem(`filebrowser:${project}:viewing`);
+      if (viewingFile) localStorage.setItem(`${cachePrefix}:viewing`, JSON.stringify({ path: viewingFile.path, name: viewingFile.name, type: viewingFile.type }));
+      else localStorage.removeItem(`${cachePrefix}:viewing`);
     } catch { /* ignore */ }
-  }, [viewingFile, project, loading]);
+  }, [viewingFile, cachePrefix, loading]);
 
   // Debounced scroll save for tree view
   const handleTreeScroll = useCallback(() => {
@@ -287,21 +290,21 @@ export default function ProjectBrowserModal({ project, onClose }) {
     if (!el) return;
     clearTimeout(scrollSaveTimer.current);
     scrollSaveTimer.current = setTimeout(() => {
-      try { localStorage.setItem(`filebrowser:${project}:scroll`, String(el.scrollTop)); } catch { /* ignore */ }
+      try { localStorage.setItem(`${cachePrefix}:scroll`, String(el.scrollTop)); } catch { /* ignore */ }
     }, SCROLL_SAVE_DEBOUNCE);
-  }, [project, viewingFile]);
+  }, [cachePrefix, viewingFile]);
 
   // Restore tree scroll after render
   useLayoutEffect(() => {
     if (loading || viewingFile) return;
     try {
-      const saved = localStorage.getItem(`filebrowser:${project}:scroll`);
+      const saved = localStorage.getItem(`${cachePrefix}:scroll`);
       if (saved) {
         const el = scrollRef.current;
         if (el) el.scrollTop = Number(saved);
       }
     } catch { /* ignore */ }
-  }, [loading, viewingFile, project]);
+  }, [loading, viewingFile, cachePrefix]);
 
   // Swipe-down gesture — ref-based DOM updates, zero re-renders during drag
   const handleDragStart = (e) => {
