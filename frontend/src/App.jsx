@@ -370,7 +370,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <ToastProvider>
-    <div className="flex flex-col h-screen bg-page text-heading min-w-[320px] overflow-x-hidden">
+    <div className="flex flex-col h-screen bg-page text-heading min-w-[320px] overflow-hidden">
       {/* Main content area */}
       <main className="flex-1 min-h-0 overflow-hidden">
         <Routes>
