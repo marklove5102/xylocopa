@@ -99,7 +99,11 @@ server = FastMCP(
     "agenthive",
     instructions=(
         "AgentHive orchestrator tools. Use list_sessions to discover "
-        "previous conversations, read_session to read one."
+        "previous conversations, read_session to read one.\n\n"
+        "File handling: when generating or referencing media files "
+        "(images, videos, plots), save them inside the project directory "
+        "so the web UI can display them. Files in /tmp/ or other external "
+        "paths cannot be previewed."
     ),
 )
 
