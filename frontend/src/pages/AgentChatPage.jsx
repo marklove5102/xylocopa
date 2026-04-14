@@ -1088,7 +1088,7 @@ function AgentTextSegment({ text, project }) {
   );
 }
 
-function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride }) {
+function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries }) {
   if (message.kind === "tool_activity") {
     return null;
   }
@@ -1229,10 +1229,17 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     setEditContent(message.content);
   };
 
-  const attachments = useMemo(
-    () => extractFileAttachments(message.content, project, message.role, message.metadata),
-    [message.content, project, message.role, message.metadata],
-  );
+  const attachments = useMemo(() => {
+    const base = extractFileAttachments(message.content, project, message.role, message.metadata);
+    if (!toolEntries?.length) return base;
+    // Extract media paths from preceding tool entry summaries (Read/Edit/Write paths)
+    const toolText = toolEntries.map(e => e.summary || "").join("\n");
+    if (!toolText) return base;
+    const toolFiles = extractFileAttachments(toolText, project, "AGENT", null);
+    if (!toolFiles.length) return base;
+    const seen = new Set(base.map(a => a.path));
+    return [...base, ...toolFiles.filter(f => !seen.has(f.path))];
+  }, [message.content, project, message.role, message.metadata, toolEntries]);
 
   // Display content: use contentOverride for interleaved mode, otherwise
   // use message.content directly (backend handles attachment stripping).
@@ -3774,6 +3781,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 }
               }
               if (toolGroups.size > 0) console.log('[render] tool groups:', toolGroups.size, 'groups,', [...toolGroups.values()].map(g => g.length + ' entries'));
+              // Map each text message to preceding tool entries for media extraction
+              const toolEntriesForText = new Map();
+              {
+                let acc = [];
+                for (const m of visible) {
+                  const isToolMsg = (m.role === "AGENT" && m.kind === "tool_use") || m.kind === "tool_activity";
+                  if (isToolMsg) {
+                    const ge = toolGroups.get(m.id);
+                    if (ge) acc.push(...ge);
+                  } else if (m.role === "AGENT" && m.kind === "text") {
+                    if (acc.length > 0) { toolEntriesForText.set(m.id, acc); acc = []; }
+                  } else {
+                    acc = [];
+                  }
+                }
+              }
               return visible.map((msg) => {
                 // Grouped tool entries (tool_use + tool_activity) — handled before role checks
                 if (msg.kind === "tool_use" || msg.kind === "tool_activity") {
@@ -3789,7 +3812,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
