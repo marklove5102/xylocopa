@@ -206,8 +206,7 @@ For Android, macOS, Windows, and Linux — see [detailed instructions](docs/inst
 
 ## Known Issues
 
-- **iPad layout** — Apple returns `safe-area-inset-top: 0` on iPad (no notch), so the status bar overlaps content in PWA standalone mode. Functional but visually misaligned.
-- **Mobile browser (non-PWA)** — layout is optimized for PWA (Add to Home Screen) mode. Running in a regular mobile browser may have minor visual differences due to the address bar and different viewport behavior.
+- **iPad & mobile browser layout** — layout needs further optimization for iPad and non-PWA mobile browsers. There are minor visual quirks on iPad standalone mode. Tested and working correctly on iPhone (Add to Home Screen) and desktop browsers.
 
 ## Roadmap
 
