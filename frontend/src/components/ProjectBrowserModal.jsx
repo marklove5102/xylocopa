@@ -4,6 +4,20 @@ import { renderMarkdown } from "../lib/formatters";
 import { fileUrl } from "../lib/urls";
 import { SCROLL_SAVE_DEBOUNCE } from "../lib/constants";
 
+/* ---- one-time cleanup of old project-scoped filebrowser cache ---- */
+const FB_MIGRATED_KEY = "filebrowser:v2-migrated";
+if (!localStorage.getItem(FB_MIGRATED_KEY)) {
+  const stale = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    // Old format: filebrowser:PROJECT:expanded|viewing|scroll  (3 segments)
+    // New format: filebrowser:PROJECT:AGENTID:expanded|...     (4 segments)
+    if (k && /^filebrowser:[^:]+:(expanded|viewing|scroll)$/.test(k)) stale.push(k);
+  }
+  stale.forEach((k) => localStorage.removeItem(k));
+  localStorage.setItem(FB_MIGRATED_KEY, "1");
+}
+
 /* ---- tiny helpers ---- */
 
 function extFromName(name) {
