@@ -98,6 +98,7 @@ class Task(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # V1 legacy columns — kept because SQLite NOT NULL without DEFAULT.
     # Not used by any code; safe to drop once a migration rewrites the table.
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")

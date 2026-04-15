@@ -654,7 +654,12 @@ async def update_task_v2(task_id: str, body: TaskUpdate, db: Session = Depends(g
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(404, "Task not found")
-    if task.status not in (TaskStatus.INBOX, TaskStatus.PLANNING):
+    # Note is editable regardless of status
+    if "note" in body.model_fields_set:
+        task.note = body.note
+    # All other fields require INBOX/PLANNING
+    non_note_fields = body.model_fields_set - {"note"}
+    if non_note_fields and task.status not in (TaskStatus.INBOX, TaskStatus.PLANNING):
         raise HTTPException(400, f"Cannot edit task in {task.status.value} status")
     # Support status transitions (e.g. PLANNING → INBOX)
     if hasattr(body, "status") and body.status is not None:

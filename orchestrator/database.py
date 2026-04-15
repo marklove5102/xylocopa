@@ -669,6 +669,12 @@ def init_db():
             """))
             conn.commit()
 
+        # --- Add note column to tasks if missing ---
+        task_cols_note = _table_columns(conn, "tasks")
+        if "note" not in task_cols_note:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN note TEXT"))
+            conn.commit()
+
         # --- Migrate SYNCING → IDLE agent status (tmux-only agents) ---
         _syncing_count = conn.execute(text(
             "SELECT COUNT(*) FROM agents WHERE status = 'SYNCING'"

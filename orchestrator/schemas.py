@@ -56,6 +56,7 @@ class TaskUpdate(BaseModel):
     use_tmux: bool | None = None
     worktree_name: str | None = Field(None, max_length=200)
     sort_order: int | None = None
+    note: str | None = None
 
 
 class TaskOut(BaseModel):
@@ -78,6 +79,7 @@ class TaskOut(BaseModel):
     use_tmux: bool = True
     priority: int = 0
     retry_context: str | None = None
+    note: str | None = None
     sort_order: int = 0
     notify_at: datetime | None = None
     deferred_to: datetime | None = None

@@ -20,8 +20,10 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [selectedPill, setSelectedPill] = useState(null);
+  const [editingNote, setEditingNote] = useState(false);
   const [titleDraft, setTitleDraft, clearTitleDraft] = useDraft(taskId ? `task-edit:${taskId}:title` : null);
   const [descDraft, setDescDraft, clearDescDraft] = useDraft(taskId ? `task-edit:${taskId}:desc` : null);
+  const [noteDraft, setNoteDraft, clearNoteDraft] = useDraft(taskId ? `task-edit:${taskId}:note` : null);
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -35,6 +37,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
         // Only initialize from server if no draft exists (preserve crash recovery drafts)
         if (localStorage.getItem(`draft:task-edit:${taskId}:title`) === null) setTitleDraft(t.title || "");
         if (localStorage.getItem(`draft:task-edit:${taskId}:desc`) === null) setDescDraft(t.description || "");
+        if (localStorage.getItem(`draft:task-edit:${taskId}:note`) === null) setNoteDraft(t.note || "");
       })
       .catch((e) => console.warn("Task fetch failed:", e))
       .finally(() => setLoading(false));
@@ -67,6 +70,16 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
       clearDescDraft();
     } catch (e) { console.warn("Task update failed:", e); }
     setEditingDesc(false);
+  };
+
+  const saveNote = async () => {
+    if (!task || noteDraft.trim() === (task.note || "")) { setEditingNote(false); return; }
+    try {
+      const updated = await updateTaskV2(task.id, { note: noteDraft.trim() || null });
+      setTask(updated);
+      clearNoteDraft();
+    } catch (e) { console.warn("Note update failed:", e); }
+    setEditingNote(false);
   };
 
   if (!taskId) return null;
@@ -207,6 +220,32 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                 </div>
               );
             })()}
+
+            {/* Note */}
+            <div className="rounded-lg bg-inset border border-edge p-3 space-y-1.5">
+              <span className="text-[11px] font-semibold text-dim">Note</span>
+              {editingNote ? (
+                <textarea
+                  autoFocus
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  onBlur={saveNote}
+                  onKeyDown={(e) => { if (e.key === "Escape") { setNoteDraft(task.note || ""); setEditingNote(false); } }}
+                  rows={3}
+                  className="w-full text-sm text-body bg-input rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500/40"
+                  placeholder="Write a note..."
+                />
+              ) : (
+                <p
+                  onClick={() => { setNoteDraft(task.note || ""); setEditingNote(true); }}
+                  className={`text-sm whitespace-pre-wrap cursor-pointer rounded-lg transition-colors ${
+                    task.note ? "text-body" : "text-dim/50 italic"
+                  }`}
+                >
+                  {task.note || "Add note..."}
+                </p>
+              )}
+            </div>
 
             {/* Actions */}
             {task.status === "executing" && onAction && (
