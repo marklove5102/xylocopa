@@ -158,21 +158,12 @@ export function renderMarkdown(text, project) {
       continue;
     }
 
-    // Image reference
+    // Image reference — skip rendering inline; images are shown
+    // uniformly via FileAttachments below the bubble.
     const imgMatch = line.trim().match(/^!\[.*?\]\((.+?)\)$/);
     const plainImgMatch =
       !imgMatch && line.trim().match(/^(\S+\.(png|jpg|jpeg|gif|svg|webp))$/i);
     if (imgMatch || plainImgMatch) {
-      const src = imgMatch ? imgMatch[1] : plainImgMatch[1];
-      const resolvedSrc = resolveFileUrl(src, project);
-      elements.push(
-        <img
-          key={elements.length}
-          src={resolvedSrc}
-          alt=""
-          className="my-2 max-w-full rounded-lg border border-divider cursor-pointer"
-        />
-      );
       i++;
       continue;
     }
@@ -536,27 +527,12 @@ export function extractFileAttachments(text, project, role, metadata) {
 
   // --- AGENT messages: detect file paths in text ---
 
-  // Collect paths already rendered inline by renderMarkdown.
-  // Skip lines inside fenced code blocks — renderMarkdown renders those as
-  // code text, not as inline <img>, so they must NOT be marked as "already rendered".
-  const inlineRendered = new Set();
-  let inCodeBlock = false;
-  for (const line of text.split("\n")) {
-    if (line.startsWith("```")) { inCodeBlock = !inCodeBlock; continue; }
-    if (inCodeBlock) continue;
-    const trimmed = line.trim();
-    const mdFull = trimmed.match(/^!\[.*?\]\((.+?)\)$/);
-    if (mdFull) inlineRendered.add(mdFull[1]);
-    const bareFull = trimmed.match(/^(\S+\.(?:png|jpg|jpeg|gif|svg|webp))$/i);
-    if (bareFull) inlineRendered.add(bareFull[1]);
-  }
-
   const addPath = (rawPath) => {
     if (!rawPath || !AGENT_EXTS.test(rawPath)) return;
     if (IGNORE_EXTS.test(rawPath)) return;
     if (rawPath.endsWith(".thumb.jpg")) return;
     let path = cleanProjectPath(rawPath, project);
-    if (seen.has(path) || inlineRendered.has(rawPath)) return;
+    if (seen.has(path)) return;
     seen.add(path);
 
     const resolvedUrl = resolveFileUrl(rawPath, project);

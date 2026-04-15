@@ -153,13 +153,13 @@ describe("extractFileAttachments", () => {
     expect(result).toHaveLength(1);
   });
 
-  // --- Skip inline-rendered images ---
+  // --- Inline images now extracted as attachments (no longer rendered inline) ---
 
-  it("skips full-line markdown images (already rendered by renderMarkdown)", () => {
-    // A full-line ![...](path) is rendered inline by renderMarkdown
+  it("extracts full-line markdown images as attachments", () => {
     const text = "![screenshot](output/result.png)";
     const result = extractFileAttachments(text, PROJECT);
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("output/result.png");
   });
 
   it("skips bare filename on its own line (already rendered by renderMarkdown)", () => {
