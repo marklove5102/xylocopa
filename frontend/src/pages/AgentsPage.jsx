@@ -67,15 +67,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
         selecting && selected ? "ring-1 ring-cyan-500" : ""
       }`}
     >
-      <div className="flex items-stretch">
-        {/* Left color strip */}
-        <div className={`w-1.5 shrink-0 ${
-          agent.status === "EXECUTING" ? "bg-cyan-400 animate-breathe"
-            : agent.status === "IDLE" ? "bg-emerald-400"
-            : agent.status === "ERROR" ? "bg-red-400"
-            : "bg-zinc-600"
-        }`} />
-        <div className="flex-1 min-w-0 flex items-start gap-3 px-5 py-[18px]">
+      <div className="flex items-start gap-3 px-5 py-[18px]">
       {/* Drag handle */}
       {dragHandleProps && (
         <button
@@ -177,8 +169,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           )}
         </div>
       </div>
-        </div>{/* end padded content */}
-      </div>{/* end flex items-stretch */}
+      </div>
     </button>
   );
 });
