@@ -354,6 +354,15 @@ export default function AgentsPage({ theme, onToggleTheme }) {
           : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
+  // DnD state — must be before filtered memo
+  const [optimisticIds, setOptimisticIds] = useState(null);
+  const prevAgentsRef = useRef(agents);
+  if (agents !== prevAgentsRef.current) {
+    prevAgentsRef.current = agents;
+    if (optimisticIds) setOptimisticIds(null);
+  }
+  const [activeDragId, setActiveDragId] = useState(null);
+
   const filtered = useMemo(() => {
     let list = search.trim()
       ? statusFiltered.filter((a) => {
@@ -366,7 +375,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
           );
         })
       : statusFiltered;
-    // Sort by sort_order, then newest
     list = [...list].sort((a, b) => {
       if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
       return new Date(b.created_at) - new Date(a.created_at);
@@ -377,15 +385,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     }
     return list;
   }, [statusFiltered, search, optimisticIds]);
-
-  // DnD state
-  const [optimisticIds, setOptimisticIds] = useState(null);
-  const prevAgentsRef = useRef(agents);
-  if (agents !== prevAgentsRef.current) {
-    prevAgentsRef.current = agents;
-    if (optimisticIds) setOptimisticIds(null);
-  }
-  const [activeDragId, setActiveDragId] = useState(null);
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 350, tolerance: 10 } }),
