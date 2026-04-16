@@ -202,7 +202,7 @@ def test_concurrent_dispatch_single_agent():
                     name=f"Task: Agent race",
                     mode=AgentMode.AUTO,
                     status=AgentStatus.IDLE,
-                    model="claude-opus-4-6",
+                    model="claude-opus-4-7",
                     task_id=task_id,
                 )
                 db.add(agent)

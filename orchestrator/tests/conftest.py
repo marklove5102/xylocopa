@@ -79,7 +79,7 @@ def sample_project(db_session):
         display_name="Test Project",
         path="/tmp/test-project",
         max_concurrent=2,
-        default_model="claude-opus-4-6",
+        default_model="claude-opus-4-7",
     )
     db_session.add(proj)
     db_session.commit()
@@ -96,7 +96,7 @@ def sample_agent(db_session, sample_project):
         name="Test agent prompt...",
         mode=AgentMode.AUTO,
         status=AgentStatus.IDLE,
-        model="claude-opus-4-6",
+        model="claude-opus-4-7",
     )
     db_session.add(agent)
     db_session.commit()

@@ -35,7 +35,7 @@ def _seed_agent(db, *, agent_id, project_name="test-proj", status=AgentStatus.ID
         name=f"Agent {agent_id[:6]}",
         mode=AgentMode.AUTO,
         status=status,
-        model="claude-opus-4-6",
+        model="claude-opus-4-7",
     ))
     db.commit()
     return agent_id

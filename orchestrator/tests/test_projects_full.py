@@ -276,7 +276,7 @@ def test_project_model_with_all_fields(db_session):
         git_remote="https://github.com/example/full-proj.git",
         description="A project with every field populated.",
         max_concurrent=5,
-        default_model="claude-opus-4-6",
+        default_model="claude-opus-4-7",
         archived=True,
         auto_progress_summary=True,
     )
@@ -290,7 +290,7 @@ def test_project_model_with_all_fields(db_session):
     assert proj.git_remote == "https://github.com/example/full-proj.git"
     assert proj.description == "A project with every field populated."
     assert proj.max_concurrent == 5
-    assert proj.default_model == "claude-opus-4-6"
+    assert proj.default_model == "claude-opus-4-7"
     assert proj.archived is True
     assert proj.auto_progress_summary is True
 
@@ -327,7 +327,7 @@ def test_project_max_concurrent_default(db_session):
 
 
 def test_project_default_model_value(db_session):
-    """Default model should be claude-opus-4-6."""
+    """Default model should be claude-opus-4-7."""
     proj = Project(
         name="default-model",
         display_name="Defaults Model",
@@ -337,7 +337,7 @@ def test_project_default_model_value(db_session):
     db_session.commit()
     db_session.refresh(proj)
 
-    assert proj.default_model == "claude-opus-4-6"
+    assert proj.default_model == "claude-opus-4-7"
 
 
 def test_project_create_schema_valid_names():

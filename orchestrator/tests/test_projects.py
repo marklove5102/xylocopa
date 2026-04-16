@@ -79,7 +79,7 @@ def test_project_model_defaults(db_session):
     db_session.refresh(proj)
 
     assert proj.max_concurrent == 8
-    assert proj.default_model == "claude-opus-4-6"
+    assert proj.default_model == "claude-opus-4-7"
     assert proj.archived is False
     assert proj.git_remote is None
     assert proj.description is None
