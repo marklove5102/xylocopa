@@ -1,38 +1,36 @@
+import beeLogo from "../assets/xylocopa-bee.svg";
+
 /**
- * Robot SVG icon with state-based coloring.
+ * Xylocopa bee logo inside a liquid-glass badge (reuses .glass-bar).
  * state: "idle" | "running" | "error" | "planning" | "completed"
+ *
+ * The bee art is a fixed-color pixel SVG; `state` drives the surrounding
+ * glow so status is still readable at a glance.
  */
-const STATE_COLORS = {
-  idle: "text-dim",
-  running: "text-cyan-400",
-  error: "text-red-400",
-  planning: "text-amber-400",
-  completed: "text-green-400",
+const STATE_GLOW = {
+  idle: "",
+  running:
+    "shadow-[0_0_16px_rgba(6,182,212,0.55),inset_0_0.5px_0_var(--color-glass-edge)] animate-glow",
+  error:
+    "shadow-[0_0_14px_rgba(248,113,113,0.5),inset_0_0.5px_0_var(--color-glass-edge)]",
+  planning:
+    "shadow-[0_0_14px_rgba(251,191,36,0.5),inset_0_0.5px_0_var(--color-glass-edge)]",
+  completed:
+    "shadow-[0_0_10px_rgba(52,211,153,0.35),inset_0_0.5px_0_var(--color-glass-edge)]",
 };
 
-export default function BotIcon({ state = "idle", className = "w-8 h-8" }) {
-  const color = STATE_COLORS[state] || STATE_COLORS.idle;
+export default function BotIcon({ state = "idle", className = "w-9 h-9" }) {
+  const glow = STATE_GLOW[state] || "";
   return (
-    <svg
-      className={`${className} ${color}`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <div
+      className={`${className} glass-bar relative shrink-0 inline-flex items-center justify-center rounded-full overflow-hidden ${glow}`}
     >
-      {/* Head */}
-      <rect x="4" y="6" width="16" height="12" rx="2" />
-      {/* Eyes */}
-      <circle cx="9" cy="12" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="15" cy="12" r="1.5" fill="currentColor" stroke="none" />
-      {/* Antenna */}
-      <line x1="12" y1="6" x2="12" y2="3" />
-      <circle cx="12" cy="2.5" r="1" fill="currentColor" stroke="none" />
-      {/* Legs */}
-      <line x1="8" y1="18" x2="8" y2="21" />
-      <line x1="16" y1="18" x2="16" y2="21" />
-    </svg>
+      <img
+        src={beeLogo}
+        alt="Xylocopa"
+        className="relative z-10 w-[78%] h-[78%] object-contain select-none"
+        draggable={false}
+      />
+    </div>
   );
 }

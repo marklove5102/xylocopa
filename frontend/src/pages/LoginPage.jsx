@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { authCheck, authLogin, authSetPassword, setAuthToken } from "../lib/api";
+import beeLogo from "../assets/xylocopa-bee.svg";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -89,25 +90,18 @@ export default function LoginPage() {
       <div
         className={`relative z-10 w-full max-w-xs mx-4 ${shake ? "animate-shake" : ""}`}
       >
-        {/* Lock icon */}
+        {/* Xylocopa bee — liquid glass badge */}
         <div className="flex justify-center mb-6">
           <div className="relative">
-            {/* Glow ring */}
-            <div className="absolute inset-0 rounded-full bg-cyan-500/20 blur-xl scale-150" />
-            <div className="relative w-20 h-20 rounded-full bg-surface/80 border border-divider backdrop-blur-sm flex items-center justify-center shadow-lg">
-              <svg
-                className="w-9 h-9 text-cyan-400"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-                />
-              </svg>
+            {/* Ambient cyan glow */}
+            <div className="absolute inset-0 rounded-full bg-cyan-500/20 blur-2xl scale-150" />
+            <div className="glass-bar relative w-24 h-24 rounded-full flex items-center justify-center overflow-hidden">
+              <img
+                src={beeLogo}
+                alt="Xylocopa"
+                className="relative z-10 w-[78%] h-[78%] object-contain select-none"
+                draggable={false}
+              />
             </div>
           </div>
         </div>
