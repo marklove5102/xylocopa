@@ -47,7 +47,7 @@
 - Follow existing patterns in the codebase — don't introduce new conventions
 - Match the indentation, naming, and structure of surrounding code
 
-## Project: cc-orchestrator (AgentHive)
+## Project: cc-orchestrator (Xylocopa, formerly AgentHive)
 - Tech Stack: Python 3.11+ (FastAPI), React (Vite), SQLite
 - Top Dirs: certs/, frontend/, orchestrator/, project-configs/, projects/
 - Config: .env
@@ -61,7 +61,7 @@
 ## Project-Specific Rules
 See README.md for detailed project documentation.
 - Worktree sessions: always use `_resolve_session_jsonl()`, never bare `session_source_dir()`
-- tmux pane matching: `ah-{agent_id[:8]}` session name is authoritative
+- tmux pane matching: `xy-{agent_id[:8]}` (legacy `ah-{agent_id[:8]}` still recognized) session name is authoritative
 - CWD matching: use `startswith(proj + "/")` not `==` (worktree subdirs)
 - SQLAlchemy: `metadata` is reserved — use alt attr name with explicit column
 - When fixing a helper, grep ALL call sites — don't assume you found them all

@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug to help us improve AgentHive
+about: Report a bug to help us improve Xylocopa
 title: "[Bug] "
 labels: bug
 assignees: ''

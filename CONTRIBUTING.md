@@ -1,6 +1,6 @@
-# Contributing to AgentHive
+# Contributing to Xylocopa
 
-Thanks for your interest in contributing to AgentHive! Whether you're reporting a bug, suggesting a feature, or submitting code, your help is welcome.
+Thanks for your interest in contributing to Xylocopa! Whether you're reporting a bug, suggesting a feature, or submitting code, your help is welcome.
 
 ## Reporting Bugs
 
@@ -30,8 +30,8 @@ Open a [GitHub issue](https://github.com/jyao97/AgentHive/issues) and label it a
 
 ```bash
 # Clone the repo
-git clone https://github.com/jyao97/AgentHive.git
-cd AgentHive
+git clone https://github.com/jyao97/AgentHive.git xylocopa
+cd xylocopa
 
 # Set up Python
 python3 -m venv venv
@@ -50,8 +50,8 @@ mkdir -p certs
 LAN_IP=$(hostname -I | awk '{print $1}')
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout certs/selfsigned.key -out certs/selfsigned.crt \
-  -subj "/CN=agenthive" \
-  -addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
+  -subj "/CN=xylocopa" \
+  -addext "subjectAltName=DNS:xylocopa,DNS:localhost,IP:127.0.0.1,IP:${LAN_IP}"
 
 # Start the application
 ./run.sh start
@@ -87,4 +87,4 @@ cd frontend && npx vitest run
 
 ## License
 
-By contributing to AgentHive, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+By contributing to Xylocopa, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
