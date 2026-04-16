@@ -5,7 +5,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } 
 import { CSS } from "@dnd-kit/utilities";
 import { fetchAllFolders, fetchTrashFolders, createProject, archiveProject, scanProjects, fetchClaudeMdPending } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import FolderIcon from "../components/FolderIcon";
+// FolderIcon removed — cards now use a left-edge color strip
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
@@ -82,17 +82,22 @@ const FolderCard = memo(function FolderCard({ folder, onClick, onActivate, onArc
       onClick={onClick}
       data-project-name={folder.name}
       data-claudemd-pending={hasPendingClaudeMd ? "1" : undefined}
-      className="relative w-full text-left rounded-xl bg-surface shadow-card p-5 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
+      className="relative w-full text-left rounded-xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
     >
       {hasPendingClaudeMd && (
-        <span className="absolute top-2.5 right-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white shadow">
+        <span className="absolute top-2.5 right-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white shadow z-10">
           <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-50 animate-ping" />
           <span className="relative">!</span>
         </span>
       )}
+      <div className="flex items-stretch">
+        {/* Left color strip */}
+        <div className={`w-[3px] shrink-0 ${
+          state === "running" ? "bg-cyan-400 animate-breathe" : state === "completed" ? "bg-emerald-400" : "bg-zinc-600"
+        }`} />
+        <div className="flex-1 min-w-0 p-5">
       <div className="flex items-start gap-4">
         {dragHandleProps && <DragHandle {...dragHandleProps} />}
-        <FolderIcon state={state} className="w-10 h-10 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-base font-semibold text-heading truncate">
@@ -166,6 +171,8 @@ const FolderCard = memo(function FolderCard({ folder, onClick, onActivate, onArc
           )}
         </span>
       </div>
+        </div>{/* end padded content */}
+      </div>{/* end flex items-stretch */}
     </button>
   );
 });

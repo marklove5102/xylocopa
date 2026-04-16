@@ -3,8 +3,8 @@ import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName, agentBotState } from "../lib/constants";
-import BotIcon from "../components/BotIcon";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName } from "../lib/constants";
+// BotIcon removed — cards now use a left-edge color strip
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
@@ -21,18 +21,8 @@ const FILTER_TABS = [
 
 const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle }) {
   const navigate = useNavigate();
-  const state = agentBotState(agent.status);
   const statusDotColor = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
   const statusTextColor = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyId = (e) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(agent.id).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }).catch(() => console.warn("Clipboard write failed"));
-  };
 
   const handleClick = () => {
     if (selecting) {
@@ -48,10 +38,19 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
       data-agent-id={agent.id}
       data-unread={agent.unread_count > 0 ? "1" : undefined}
       onClick={handleClick}
-      className={`w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
+      className={`w-full text-left rounded-xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
         selecting && selected ? "ring-1 ring-cyan-500" : ""
       }`}
     >
+      <div className="flex items-stretch">
+        {/* Left color strip */}
+        <div className={`w-[3px] shrink-0 ${
+          agent.status === "EXECUTING" ? "bg-cyan-400 animate-breathe"
+            : agent.status === "IDLE" ? "bg-emerald-400"
+            : agent.status === "ERROR" ? "bg-red-400"
+            : "bg-zinc-600"
+        }`} />
+        <div className="flex-1 min-w-0 p-4 flex items-center gap-3">
       {/* Selection checkbox */}
       {selecting && (
         <div className="shrink-0 flex items-center justify-center w-6 h-6">
@@ -71,14 +70,6 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
         </div>
       )}
 
-      <div className="relative shrink-0" onClick={selecting ? undefined : handleCopyId} title={selecting ? undefined : `Copy ID: ${agent.id}`}>
-        <BotIcon state={state} className="w-10 h-10 cursor-pointer hover:opacity-70 transition-opacity" />
-        {copied && (
-          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
-            Copied!
-          </span>
-        )}
-      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-heading truncate flex-1">
@@ -132,6 +123,8 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           >{agent.project}</span>
         </div>
       </div>
+        </div>{/* end padded content */}
+      </div>{/* end flex items-stretch */}
     </button>
   );
 });
