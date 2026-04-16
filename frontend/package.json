@@ -1,8 +1,8 @@
 {
-  "name": "agenthive-frontend",
+  "name": "xylocopa-frontend",
   "private": true,
   "version": "0.1.0",
-  "description": "AgentHive frontend — multi-agent orchestration dashboard",
+  "description": "Xylocopa frontend — multi-agent orchestration dashboard",
   "type": "module",
   "scripts": {
     "dev": "vite",

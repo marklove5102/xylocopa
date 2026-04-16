@@ -60,8 +60,8 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'AgentHive',
-        short_name: 'AgentHive',
+        name: 'Xylocopa',
+        short_name: 'Xylocopa',
         description: 'Multi-agent Claude Code dashboard',
         theme_color: '#06b6d4',
         background_color: '#0a0a0a',

@@ -1,6 +1,22 @@
-const MUTED_KEY = "agenthive-muted-agents";
-const AGENTS_NOTIF_KEY = "agenthive-agents-notifications-enabled";
-const TASKS_NOTIF_KEY = "agenthive-tasks-notifications-enabled";
+const MUTED_KEY = "xylocopa-muted-agents";
+const AGENTS_NOTIF_KEY = "xylocopa-agents-notifications-enabled";
+const TASKS_NOTIF_KEY = "xylocopa-tasks-notifications-enabled";
+
+// One-time migration of legacy "agenthive-*" localStorage keys
+try {
+  const pairs = [
+    ["agenthive-muted-agents", MUTED_KEY],
+    ["agenthive-agents-notifications-enabled", AGENTS_NOTIF_KEY],
+    ["agenthive-tasks-notifications-enabled", TASKS_NOTIF_KEY],
+  ];
+  for (const [oldK, newK] of pairs) {
+    const legacy = localStorage.getItem(oldK);
+    if (legacy !== null) {
+      if (localStorage.getItem(newK) === null) localStorage.setItem(newK, legacy);
+      localStorage.removeItem(oldK);
+    }
+  }
+} catch {}
 
 /** Get the set of muted agent IDs from localStorage. */
 function getMutedAgents() {

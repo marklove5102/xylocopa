@@ -15,7 +15,7 @@ const certSteps = [
   {
     num: 3,
     title: "Enable trust",
-    desc: "Settings \u2192 General \u2192 About \u2192 Certificate Trust Settings \u2192 toggle on \"mkcert\" or \"agenthive\".",
+    desc: "Settings \u2192 General \u2192 About \u2192 Certificate Trust Settings \u2192 toggle on \"mkcert\" or \"xylocopa\".",
   },
 ];
 
@@ -23,17 +23,17 @@ const webClipSteps = [
   {
     num: 1,
     title: "Enter server IP",
-    desc: "Type the IP address you use to access AgentHive (shown in your browser's address bar).",
+    desc: "Type the IP address you use to access Xylocopa (shown in your browser's address bar).",
   },
   {
     num: 2,
     title: "Install profile",
-    desc: "Tap the button below \u2192 Allow \u2192 Settings \u2192 General \u2192 VPN & Device Management \u2192 tap \"AgentHive\" \u2192 Install.",
+    desc: "Tap the button below \u2192 Allow \u2192 Settings \u2192 General \u2192 VPN & Device Management \u2192 tap \"Xylocopa\" \u2192 Install.",
   },
   {
     num: 3,
     title: "Done!",
-    desc: "The AgentHive icon appears on your Home Screen. Tap it and set your password.",
+    desc: "The Xylocopa icon appears on your Home Screen. Tap it and set your password.",
   },
 ];
 
@@ -111,7 +111,7 @@ export default function CertGuidePage() {
             onClick={(e) => { if (!host) e.preventDefault(); }}
             className={`mt-3 w-full py-3 rounded-xl font-medium transition-all text-white text-center block ${host ? "bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98]" : "bg-cyan-600/40 cursor-not-allowed"}`}
           >
-            Install AgentHive App
+            Install Xylocopa App
           </a>
         </div>
 

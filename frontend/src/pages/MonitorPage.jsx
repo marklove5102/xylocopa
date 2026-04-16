@@ -453,13 +453,16 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                     detail={`${sysStats.disk.used_gb} / ${sysStats.disk.total_gb} GB`}
                   />
                 )}
-                {sysStats.agenthive && (
-                  <UsageBar
-                    label="AgentHive"
-                    pct={sysStats.memory ? Math.min(Math.round(sysStats.agenthive.mem_mb / (sysStats.memory.total_gb * 1024) * 100), 100) : 0}
-                    detail={`${sysStats.agenthive.mem_mb} MB / ${sysStats.agenthive.cpu_pct}% CPU`}
-                  />
-                )}
+                {(sysStats.xylocopa || sysStats.agenthive) && (() => {
+                  const proc = sysStats.xylocopa || sysStats.agenthive;
+                  return (
+                    <UsageBar
+                      label="Xylocopa"
+                      pct={sysStats.memory ? Math.min(Math.round(proc.mem_mb / (sysStats.memory.total_gb * 1024) * 100), 100) : 0}
+                      detail={`${proc.mem_mb} MB / ${proc.cpu_pct}% CPU`}
+                    />
+                  );
+                })()}
               </div>
 
               {/* GPUs */}

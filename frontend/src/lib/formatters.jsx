@@ -403,7 +403,7 @@ function cleanProjectPath(raw, project) {
  * Resolve a raw file path to an API URL.
  *
  * Handles cross-project references: if the path contains an absolute path
- * like `/home/.../agenthive-projects/<other-project>/rest`, we extract the
+ * like `/home/.../xylocopa-projects/<other-project>/rest`, we extract the
  * true project from the path instead of using the agent's project.
  * Also handles paths that are already `/api/files/...` URLs.
  */
@@ -418,13 +418,13 @@ function resolveFileUrl(rawPath, defaultProject) {
     return fileUrl(proj, rest);
   }
 
-  // User-uploaded file path (.agenthive/uploads/) — route to /api/uploads/
+  // User-uploaded file path (.xylocopa/uploads/ or legacy .agenthive/uploads/) — route to /api/uploads/
   const uploadMatch = rawPath.match(RE_UPLOADS_PATH);
   if (uploadMatch) {
     return uploadUrl(uploadMatch[1]);
   }
 
-  // Absolute path with agenthive-projects — extract true project
+  // Absolute path with xylocopa-projects (or legacy agenthive-projects) — extract true project
   const absMatch = rawPath.match(RE_PROJECTS_PATH);
   if (absMatch) {
     const proj = absMatch[1];

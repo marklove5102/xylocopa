@@ -539,10 +539,10 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
         {/* Agent Queue button removed — no concurrency cap */}
         <button
           type="button"
-          title="Restart AgentHive"
+          title="Restart Xylocopa"
           disabled={restarting}
           onClick={async () => {
-            if (!confirm("Restart AgentHive server?")) return;
+            if (!confirm("Restart Xylocopa server?")) return;
             setRestarting(true);
             if (pollRef.current) clearInterval(pollRef.current);
             if (abortRef.current) abortRef.current.abort();

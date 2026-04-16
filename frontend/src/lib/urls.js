@@ -58,11 +58,14 @@ export function fileUrlToThumbUrl(url) {
 // Backend path patterns (for recognizing backend filesystem paths)
 // ---------------------------------------------------------------------------
 
-/** Matches `.agenthive/uploads/<filename>`. Capture group 1 = filename. */
-export const RE_UPLOADS_PATH = /\.agenthive\/uploads\/([^/]+)$/;
+/** Matches `.xylocopa/uploads/` (or legacy `.agenthive/uploads/`)`<filename>`. Group 1 = filename. */
+export const RE_UPLOADS_PATH = /\.(?:xylocopa|agenthive)\/uploads\/([^/]+)$/;
 
-/** Matches `agenthive-projects/<project>/<rest>`. Groups: 1=project, 2=rest. */
-export const RE_PROJECTS_PATH = /agenthive-projects\/([^/]+)\/(.+)/;
+/** Matches `xylocopa-projects/` (or legacy `agenthive-projects/`)`<project>/<rest>`. Groups: 1=project, 2=rest. */
+export const RE_PROJECTS_PATH = /(?:xylocopa|agenthive)-projects\/([^/]+)\/(.+)/;
 
-/** Segment string for checking if a path references agenthive-projects. */
-export const PROJECTS_DIR_SEGMENT = "agenthive-projects/";
+/** Segment string for checking if a path references xylocopa-projects (preferred). */
+export const PROJECTS_DIR_SEGMENT = "xylocopa-projects/";
+
+/** Legacy segment retained so paths that still reference agenthive-projects are recognized. */
+export const LEGACY_PROJECTS_DIR_SEGMENT = "agenthive-projects/";

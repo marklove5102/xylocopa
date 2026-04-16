@@ -1,8 +1,17 @@
-/** Web Push notification helpers for AgentHive. */
+/** Web Push notification helpers for Xylocopa. */
 
 import { authedFetch } from "./api";
 
-const STORAGE_KEY = "agenthive-push-enabled";
+const STORAGE_KEY = "xylocopa-push-enabled";
+
+// One-time migration of legacy key
+try {
+  const legacy = localStorage.getItem("agenthive-push-enabled");
+  if (legacy !== null) {
+    if (localStorage.getItem(STORAGE_KEY) === null) localStorage.setItem(STORAGE_KEY, legacy);
+    localStorage.removeItem("agenthive-push-enabled");
+  }
+} catch {}
 
 export function isPushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window;

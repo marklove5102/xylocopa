@@ -1,6 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 
-const STORAGE_KEY = "agenthive-theme";
+const STORAGE_KEY = "xylocopa-theme";
+const LEGACY_STORAGE_KEY = "agenthive-theme";
+
+// One-time migration of legacy key
+try {
+  const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (legacy !== null && localStorage.getItem(STORAGE_KEY) === null) {
+    localStorage.setItem(STORAGE_KEY, legacy);
+  }
+  if (legacy !== null) localStorage.removeItem(LEGACY_STORAGE_KEY);
+} catch {}
 
 function getSystemTheme() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";

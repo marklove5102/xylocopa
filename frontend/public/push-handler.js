@@ -1,4 +1,4 @@
-/* AgentHive Service Worker — Web Push notifications */
+/* Xylocopa Service Worker — Web Push notifications */
 
 function sendAck(nid, shown) {
   if (!nid) return Promise.resolve();
@@ -22,7 +22,7 @@ function sendAck(nid, shown) {
 }
 
 self.addEventListener("push", (event) => {
-  let data = { title: "AgentHive", body: "An agent finished.", url: "/" };
+  let data = { title: "Xylocopa", body: "An agent finished.", url: "/" };
   try {
     data = Object.assign(data, event.data.json());
   } catch {

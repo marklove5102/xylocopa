@@ -6,10 +6,10 @@
     <meta name="theme-color" content="#06b6d4" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="AgentHive" />
+    <meta name="apple-mobile-web-app-title" content="Xylocopa" />
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <title>AgentHive</title>
+    <title>Xylocopa</title>
     <script>
       (function(){
         // Force-clear stale PWA caches — bump version to trigger
@@ -26,8 +26,8 @@
           }).catch(function(){});
           return; // stop further init until reload
         }
-        // Theme init
-        var s=localStorage.getItem("agenthive-theme");
+        // Theme init — read new key, fall back to legacy "agenthive-theme"
+        var s=localStorage.getItem("xylocopa-theme")||localStorage.getItem("agenthive-theme");
         var d=window.matchMedia("(prefers-color-scheme:dark)").matches;
         if(s==="dark"||(s!=="light"&&d)){
           document.documentElement.classList.add("dark");
