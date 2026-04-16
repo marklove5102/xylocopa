@@ -148,11 +148,6 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
               {agent.effort.charAt(0).toUpperCase() + agent.effort.slice(1)}
             </span>
           )}
-          {agent.has_pending_suggestions && (
-            <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-              insights
-            </span>
-          )}
           {agent.insight_status === "failed" && !agent.has_pending_suggestions && (
             <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
               failed
@@ -165,6 +160,12 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           )}
         </div>
       </div>
+      {agent.has_pending_suggestions && (
+        <span
+          className="shrink-0 self-center w-2.5 h-2.5 rounded-full bg-amber-500"
+          title="Insights ready"
+        />
+      )}
       {agent.unread_count > 0 && (
         <span className="shrink-0 self-center inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
           {agent.unread_count}
