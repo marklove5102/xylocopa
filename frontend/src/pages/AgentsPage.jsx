@@ -77,7 +77,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           className="touch-none -ml-1 mr-0 rounded-full cursor-grab active:cursor-grabbing self-center"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className={`w-2 h-2 rounded-full ${
+          <div className={`w-2.5 h-2.5 rounded-full ${
             agent.status === "EXECUTING" ? "bg-cyan-400 animate-breathe"
               : agent.status === "IDLE" ? "bg-emerald-400"
               : agent.status === "ERROR" ? "bg-red-400"
