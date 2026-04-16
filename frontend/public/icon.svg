@@ -1,5 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#121c34"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#152040"/>
+      <stop offset="100%" stop-color="#0a1228"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4488cc" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#4488cc" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5599dd" stop-opacity="0.25"/>
+      <stop offset="50%" stop-color="#5599dd" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#5599dd" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <ellipse cx="256" cy="0" rx="260" ry="160" fill="url(#glass)"/>
+  <rect x="0.5" y="0.5" width="511" height="511" fill="none" stroke="url(#edge)" stroke-width="1"/>
   <svg x="56.32" y="125.22" width="399.36" height="261.57" viewBox="0 0 171 112" preserveAspectRatio="xMidYMid meet">
 <g transform="matrix(1,0,0,1,-52.156,-152.359)">
         <g transform="matrix(0.496635,0,0,0.496635,28.3714,152.359)">
