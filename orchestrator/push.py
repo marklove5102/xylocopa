@@ -83,6 +83,10 @@ def _send_webpush(title: str, body: str, url: str = "/") -> None:
                     vapid_private_key=VAPID_PRIVATE_KEY,
                     vapid_claims=vapid_claims,
                 )
+                logger.info(
+                    "push send: nid=%s sub=%s host=%s ok",
+                    nid, sub.id, parsed.netloc,
+                )
             except WebPushException as e:
                 if hasattr(e, "response") and e.response is not None:
                     if e.response.status_code == 410:

@@ -2,17 +2,23 @@
 
 function sendAck(nid, shown) {
   if (!nid) return Promise.resolve();
-  return fetch("/api/push/ack", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      nid,
-      shown,
-      ts: Date.now(),
-      ua: (self.navigator && self.navigator.userAgent) || "",
-    }),
-    keepalive: true,
-  }).catch(() => {});
+  const endpointPromise = self.registration.pushManager
+    .getSubscription()
+    .then((sub) => (sub && sub.endpoint) || "", () => "");
+  return endpointPromise.then((endpoint) =>
+    fetch("/api/push/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nid,
+        shown,
+        ts: Date.now(),
+        ua: (self.navigator && self.navigator.userAgent) || "",
+        endpoint,
+      }),
+      keepalive: true,
+    }).catch(() => {}),
+  );
 }
 
 self.addEventListener("push", (event) => {

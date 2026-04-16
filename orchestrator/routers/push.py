@@ -73,12 +73,16 @@ async def push_unsubscribe(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/ack")
-async def push_ack(request: Request):
+async def push_ack(request: Request, db: Session = Depends(get_db)):
     """Diagnostic: SW posts here from its push handler so we can tell
     'push reached device' apart from 'push never arrived'.
 
-    Body: {nid, shown, ts, ua?}
+    Body: {nid, shown, ts, ua?, endpoint?}
     """
+    from urllib.parse import urlparse
+
+    from models import PushSubscription
+
     try:
         body = await request.json()
     except Exception:
@@ -87,8 +91,19 @@ async def push_ack(request: Request):
     shown = body.get("shown")
     ts = body.get("ts")
     ua = (body.get("ua") or "")[:120]
+    endpoint = body.get("endpoint", "") or ""
+
+    sub_id = ""
+    host = ""
+    if endpoint:
+        host = urlparse(endpoint).netloc
+        sub = db.query(PushSubscription).filter(
+            PushSubscription.endpoint == endpoint
+        ).first()
+        if sub:
+            sub_id = sub.id
     logger.info(
-        "push ack: nid=%s shown=%s ts=%s ua=%s",
-        nid, shown, ts, ua,
+        "push ack: nid=%s sub=%s host=%s shown=%s ts=%s ua=%s",
+        nid, sub_id, host, shown, ts, ua,
     )
     return {"status": "ok"}
