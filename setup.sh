@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# AgentHive — one-line installer (Linux + macOS)
+# Xylocopa — one-line installer (Linux + macOS)
 #
 # Usage (after cloning):
 #   ./setup.sh
@@ -10,7 +10,8 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/jyao97/AgentHive/main/setup.sh | bash
 
 REPO="https://github.com/jyao97/AgentHive.git"
-INSTALL_DIR="${AGENTHIVE_DIR:-$HOME/agenthive-main}"
+# XYLOCOPA_DIR is the canonical override; AGENTHIVE_DIR is accepted as a legacy alias.
+INSTALL_DIR="${XYLOCOPA_DIR:-${AGENTHIVE_DIR:-$HOME/xylocopa-main}}"
 
 # ── Ensure Node.js exists ────────────────────────────────────────────
 if ! command -v node >/dev/null 2>&1; then
@@ -34,10 +35,10 @@ fi
 # ── Clone if running via curl (not already inside the repo) ──────────
 if [ ! -f "$(pwd)/install.js" ]; then
     if [ -d "$INSTALL_DIR" ]; then
-        echo "[+] AgentHive directory exists: $INSTALL_DIR"
+        echo "[+] Xylocopa directory exists: $INSTALL_DIR"
         cd "$INSTALL_DIR"
     else
-        echo "[+] Cloning AgentHive to $INSTALL_DIR..."
+        echo "[+] Cloning Xylocopa to $INSTALL_DIR..."
         git clone "$REPO" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
     fi

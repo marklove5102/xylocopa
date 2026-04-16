@@ -1,0 +1,80 @@
+#!/bin/bash
+# Xylocopa management CLI (cross-platform — Linux + macOS)
+# Uses pm2 for process management.
+# Usage: xylocopa {start|stop|restart|status|logs|kill|startup}
+
+set -uo pipefail
+
+# Resolve project dir (works on both Linux and macOS)
+_resolve_dir() {
+    local src="$0"
+    # Follow symlinks (macOS readlink has no -f)
+    while [ -L "$src" ]; do
+        local dir="$(cd "$(dirname "$src")" && pwd)"
+        src="$(readlink "$src")"
+        [[ "$src" != /* ]] && src="$dir/$src"
+    done
+    cd "$(dirname "$src")" && pwd
+}
+PROJECT_DIR="$(_resolve_dir)"
+ECOSYSTEM="$PROJECT_DIR/ecosystem.config.cjs"
+
+# Ensure pm2 is available
+if ! command -v pm2 >/dev/null 2>&1; then
+    echo "pm2 not found — installing globally..."
+    npm install -g pm2
+fi
+
+case "${1:-}" in
+    start)
+        echo "Starting Xylocopa..."
+        pm2 start "$ECOSYSTEM" 2>/dev/null || pm2 restart "$ECOSYSTEM"
+        pm2 status
+        ;;
+    stop)
+        echo "Stopping Xylocopa..."
+        pm2 stop "$ECOSYSTEM" 2>/dev/null || true
+        echo "Stopped."
+        ;;
+    restart)
+        echo "Restarting Xylocopa..."
+        pm2 restart "$ECOSYSTEM" 2>/dev/null || pm2 start "$ECOSYSTEM"
+        pm2 status
+        ;;
+    status)
+        pm2 status
+        ;;
+    logs)
+        target="${2:-}"
+        case "$target" in
+            backend|b)  pm2 logs xylocopa-backend --lines 50 ;;
+            frontend|f) pm2 logs xylocopa-frontend --lines 50 ;;
+            *)          pm2 logs --lines 50 ;;
+        esac
+        ;;
+    kill)
+        echo "Force-killing all Xylocopa processes..."
+        pm2 delete "$ECOSYSTEM" 2>/dev/null || true
+        echo "Done."
+        ;;
+    startup)
+        echo "Configuring auto-start on boot..."
+        pm2 start "$ECOSYSTEM" 2>/dev/null || true
+        pm2 save
+        pm2 startup
+        echo "Follow the instructions above if prompted."
+        ;;
+    *)
+        echo "Usage: xylocopa {start|stop|restart|status|logs|kill|startup}"
+        echo ""
+        echo "Commands:"
+        echo "  start    Start backend and frontend"
+        echo "  stop     Stop backend and frontend (graceful)"
+        echo "  restart  Restart both servers"
+        echo "  status   Show running state"
+        echo "  logs     Tail logs (backend|frontend|all)"
+        echo "  kill     Force-kill all Xylocopa processes"
+        echo "  startup  Enable auto-start on boot (pm2 startup)"
+        exit 1
+        ;;
+esac

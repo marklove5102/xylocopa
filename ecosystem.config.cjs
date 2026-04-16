@@ -1,4 +1,4 @@
-// AgentHive — pm2 process configuration
+// Xylocopa — pm2 process configuration
 // Usage:  pm2 start ecosystem.config.cjs
 //         pm2 stop   ecosystem.config.cjs
 //         pm2 logs
@@ -38,19 +38,20 @@ const frontendPort = dotenv.FRONTEND_PORT || '3000';
 module.exports = {
   apps: [
     {
-      name: 'agenthive-backend',
+      name: 'xylocopa-backend',
       cwd: path.join(ROOT, 'orchestrator'),
       script: VENV_UVICORN,
       args: `main:app --host 0.0.0.0 --port ${port}`,
       interpreter: 'none',  // uvicorn is its own binary
       env: {
         ...dotenv,
-        PROJECTS_DIR: dotenv.HOST_PROJECTS_DIR || path.join(require('os').homedir(), 'agenthive-projects'),
+        PROJECTS_DIR: dotenv.HOST_PROJECTS_DIR || path.join(require('os').homedir(), 'xylocopa-projects'),
         DB_PATH: path.join(ROOT, 'data', 'orchestrator.db'),
         LOG_DIR: path.join(ROOT, 'logs'),
         BACKUP_DIR: path.join(ROOT, 'backups'),
         PROJECT_CONFIGS_PATH: path.join(ROOT, 'project-configs'),
-        AGENTHIVE_MANAGED: '1',
+        XYLOCOPA_MANAGED: '1',
+        AGENTHIVE_MANAGED: '1',  // legacy alias for external consumers
       },
       autorestart: true,
       max_restarts: 10,
@@ -61,7 +62,7 @@ module.exports = {
       max_size: '50M',
     },
     {
-      name: 'agenthive-frontend',
+      name: 'xylocopa-frontend',
       cwd: path.join(ROOT, 'frontend'),
       script: 'npx',
       args: `vite --host 0.0.0.0 --port ${frontendPort}`,

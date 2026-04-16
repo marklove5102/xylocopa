@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * AgentHive — cross-platform interactive installer (Linux + macOS)
+ * Xylocopa — cross-platform interactive installer (Linux + macOS)
  *
  * Usage:
- *   npx create-agenthive          ← one-liner (clones repo + full setup)
+ *   npx create-xylocopa           ← one-liner (clones repo + full setup)
  *   node install.js               ← run inside an existing clone
  *   curl … | bash → setup.sh      ← bash bootstrap → this script
  */
@@ -72,7 +72,7 @@ const PLATFORM = os.platform();
 async function main() {
   console.log(`
   ${B}==========================================${R}
-  ${B}      AgentHive Interactive Installer${R}
+  ${B}      Xylocopa Interactive Installer${R}
   ${B}==========================================${R}
   Platform: ${PLATFORM === 'darwin' ? 'macOS' : 'Linux'}
   Node:     ${process.version}
@@ -89,14 +89,14 @@ async function main() {
     info(`Running inside existing repo: ${ROOT}`);
   } else {
     step(0, 'Choose install location');
-    const defaultDir = path.join(os.homedir(), 'agenthive');
+    const defaultDir = path.join(os.homedir(), 'xylocopa');
     const installDir = await ask('Install directory', defaultDir);
     ROOT = path.resolve(installDir);
 
     if (fs.existsSync(path.join(ROOT, 'orchestrator', 'main.py'))) {
-      info(`AgentHive already cloned at ${ROOT}`);
+      info(`Xylocopa already cloned at ${ROOT}`);
     } else {
-      info(`Cloning AgentHive to ${ROOT}...`);
+      info(`Cloning Xylocopa to ${ROOT}...`);
       run(`git clone https://github.com/jyao97/AgentHive.git "${ROOT}"`);
       info('Repository cloned');
     }
@@ -206,7 +206,7 @@ async function main() {
     let envContent = fs.readFileSync(envExample, 'utf8');
 
     // Projects directory
-    const defaultProjectsDir = path.join(os.homedir(), 'ah-projects');
+    const defaultProjectsDir = path.join(os.homedir(), 'xylocopa-projects');
     const projectsDir = await ask('Where should project repos live?', defaultProjectsDir);
     envContent = envContent.replace(/^HOST_PROJECTS_DIR=.*$/m, `HOST_PROJECTS_DIR=${projectsDir}`);
     fs.mkdirSync(projectsDir, { recursive: true });
@@ -278,8 +278,8 @@ async function main() {
       `openssl req -x509 -nodes -days 365 -newkey rsa:2048 ` +
       `-keyout "${path.join(certsDir, 'selfsigned.key')}" ` +
       `-out "${path.join(certsDir, 'selfsigned.crt')}" ` +
-      `-subj "/CN=agenthive" ` +
-      `-addext "subjectAltName=DNS:agenthive,DNS:localhost,IP:127.0.0.1,IP:${certIp}"`,
+      `-subj "/CN=xylocopa" ` +
+      `-addext "subjectAltName=DNS:xylocopa,DNS:localhost,IP:127.0.0.1,IP:${certIp}"`,
       { quiet: true }
     );
     info('Certificate generated');
@@ -287,7 +287,7 @@ async function main() {
     // Trust certificate
     if (await confirm('Trust certificate system-wide? (requires sudo password)')) {
       if (PLATFORM === 'linux' && fs.existsSync('/usr/local/share/ca-certificates')) {
-        run(`sudo cp "${path.join(certsDir, 'selfsigned.crt')}" /usr/local/share/ca-certificates/agenthive.crt`, { allowFail: true });
+        run(`sudo cp "${path.join(certsDir, 'selfsigned.crt')}" /usr/local/share/ca-certificates/xylocopa.crt`, { allowFail: true });
         run('sudo update-ca-certificates 2>/dev/null', { allowFail: true, quiet: true });
         info('Certificate trusted (Linux)');
       } else if (PLATFORM === 'darwin') {
@@ -328,7 +328,7 @@ async function main() {
     info('Claude credentials found');
   } else {
     warn('No Claude credentials detected');
-    console.log(`  ${DIM}AgentHive needs an authenticated Claude CLI to run agents.${R}`);
+    console.log(`  ${DIM}Xylocopa needs an authenticated Claude CLI to run agents.${R}`);
     if (which('claude')) {
       if (await confirm('Run "claude" now to authenticate?')) {
         console.log(`\n  ${DIM}This will open a browser window for OAuth login.${R}`);
@@ -336,7 +336,7 @@ async function main() {
         run('claude --version', { allowFail: true });  // triggers auth flow
         info('Check complete');
       } else {
-        warn('Skipped — run "claude" manually before starting AgentHive');
+        warn('Skipped — run "claude" manually before starting Xylocopa');
       }
     } else {
       warn('Install Claude CLI first, then run "claude" to authenticate');
@@ -367,7 +367,7 @@ async function main() {
   `);
 
   step(9, 'Launch');
-  if (await confirm('Start AgentHive now?')) {
+  if (await confirm('Start Xylocopa now?')) {
     process.chdir(ROOT);
     run(`bash "${path.join(ROOT, 'run.sh')}" start`);
 

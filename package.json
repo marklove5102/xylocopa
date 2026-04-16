@@ -1,14 +1,16 @@
 {
-  "name": "create-agenthive",
+  "name": "create-xylocopa",
   "version": "1.0.0",
-  "description": "One-command installer for AgentHive — multi-agent Claude Code dashboard",
+  "description": "One-command installer for Xylocopa — multi-agent Claude Code dashboard",
   "bin": {
+    "create-xylocopa": "./install.js",
     "create-agenthive": "./install.js"
   },
   "files": [
     "install.js"
   ],
   "keywords": [
+    "xylocopa",
     "agenthive",
     "claude",
     "claude-code",

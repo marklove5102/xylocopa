@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentHive — upgrade to latest version
+# Xylocopa — upgrade to latest version
 # Usage:  ./upgrade.sh
 
 set -euo pipefail
@@ -11,7 +11,7 @@ B='\033[1m'; GREEN='\033[32m'; YELLOW='\033[33m'; R='\033[0m'
 info()  { echo -e "  ${GREEN}+${R} $1"; }
 warn()  { echo -e "  ${YELLOW}!${R} $1"; }
 
-echo -e "\n  ${B}AgentHive Upgrade${R}\n"
+echo -e "\n  ${B}Xylocopa Upgrade${R}\n"
 
 # ── Pull latest code ────────────────────────────────────────────────
 info "Pulling latest code..."
@@ -33,7 +33,7 @@ fi
 
 # ── Restart services ────────────────────────────────────────────────
 if command -v pm2 >/dev/null 2>&1; then
-    info "Restarting AgentHive..."
+    info "Restarting Xylocopa..."
     "$SCRIPT_DIR/run.sh" restart
 else
     warn "pm2 not found — start manually with ./run.sh"

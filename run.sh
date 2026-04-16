@@ -1,5 +1,5 @@
 #!/bin/bash
-# AgentHive — cross-platform launch script (Linux + macOS)
+# Xylocopa — cross-platform launch script (Linux + macOS)
 # Uses pm2 for process management.  Auto-migrates from systemd on first run.
 # Usage:
 #   ./run.sh           — restart both backend + frontend
@@ -63,7 +63,7 @@ CMD="${1:-restart}"
 
 case "$CMD" in
     stop)
-        echo "Stopping AgentHive..."
+        echo "Stopping Xylocopa..."
         pm2 stop "$ECOSYSTEM" 2>/dev/null || true
         echo "Stopped."
         ;;
@@ -81,11 +81,13 @@ case "$CMD" in
         echo "Follow the instructions above if prompted."
         ;;
     restart|start)
-        echo "Restarting AgentHive..."
+        echo "Restarting Xylocopa..."
         # Delete stale processes first — a prior crash or direct-kill can leave
         # PM2's process table referencing dead PIDs, causing TypeError crashes
         # on `pm2 restart`.  `delete` is idempotent and clears that state.
-        pm2 delete agenthive-backend agenthive-frontend 2>/dev/null || true
+        # Delete both new (xylocopa-*) and legacy (agenthive-*) names so an
+        # upgraded install doesn't end up running both.
+        pm2 delete xylocopa-backend xylocopa-frontend agenthive-backend agenthive-frontend 2>/dev/null || true
         sleep 1   # let PM2 daemon finish cleanup to avoid stale-process race
         pm2 start "$ECOSYSTEM"
 
@@ -114,7 +116,7 @@ case "$CMD" in
         echo ""
         pm2 status
         echo ""
-        echo "AgentHive running at https://localhost:${FPORT}"
+        echo "Xylocopa running at https://localhost:${FPORT}"
         ;;
     *)
         echo "Usage: ./run.sh [start|stop|restart|status|logs|startup]"
