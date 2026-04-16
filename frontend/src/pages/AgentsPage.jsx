@@ -114,7 +114,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
           </span>
         </div>
         {/* Preview */}
-        <p className="text-sm text-dim leading-relaxed mt-1 line-clamp-2">
+        <p className="text-sm text-dim mt-1 truncate">
           {agent.last_message_preview || "No messages yet"}
         </p>
         {/* Tags — same order as InboxCard, status shown by left strip */}
