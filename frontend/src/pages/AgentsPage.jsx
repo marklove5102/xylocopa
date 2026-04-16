@@ -38,13 +38,13 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
       data-agent-id={agent.id}
       data-unread={agent.unread_count > 0 ? "1" : undefined}
       onClick={handleClick}
-      className={`w-full text-left rounded-xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
+      className={`w-full text-left rounded-r-xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
         selecting && selected ? "ring-1 ring-cyan-500" : ""
       }`}
     >
       <div className="flex items-stretch">
         {/* Left color strip */}
-        <div className={`w-[5px] shrink-0 ${
+        <div className={`w-2 shrink-0 ${
           agent.status === "EXECUTING" ? "bg-cyan-400 animate-breathe"
             : agent.status === "IDLE" ? "bg-emerald-400"
             : agent.status === "ERROR" ? "bg-red-400"
