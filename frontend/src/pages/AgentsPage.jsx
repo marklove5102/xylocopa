@@ -3,7 +3,7 @@ import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, POLL_INTERVAL, modelDisplayName } from "../lib/constants";
+import { POLL_INTERVAL, modelDisplayName } from "../lib/constants";
 // BotIcon removed — cards now use a left-edge color strip
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
@@ -21,8 +21,6 @@ const FILTER_TABS = [
 
 const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle }) {
   const navigate = useNavigate();
-  const statusDotColor = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
-  const statusTextColor = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
 
   const handleClick = () => {
     if (selecting) {
@@ -84,12 +82,8 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
         <p className="text-sm text-dim leading-relaxed mt-1 line-clamp-2">
           {agent.last_message_preview || "No messages yet"}
         </p>
-        {/* Tags — same order as InboxCard */}
+        {/* Tags — same order as InboxCard, status shown by left strip */}
         <div className="flex flex-wrap items-center gap-1 mt-1.5">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDotColor}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
-          <span className={`text-[10px] lowercase ${statusTextColor}`}>
-            {agent.status.toLowerCase().replace("_", " ")}
-          </span>
           <span
             className="text-[10px] text-cyan-400 font-medium px-1.5 py-px rounded-full bg-cyan-500/15 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
             onClick={(e) => { e.stopPropagation(); navigate(`/projects/${encodeURIComponent(agent.project)}`); }}
