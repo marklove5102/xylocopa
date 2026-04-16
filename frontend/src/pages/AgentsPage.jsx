@@ -106,21 +106,21 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 mt-1.5">
+        <div className="flex flex-wrap items-center gap-1 mt-1.5">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDotColor}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
-          <span className={`text-xs lowercase ${statusTextColor}`}>
+          <span className={`text-[10px] lowercase ${statusTextColor}`}>
             {agent.status.toLowerCase().replace("_", " ")}
           </span>
-          {agent.model && (
-            <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated ml-auto">
-              {modelDisplayName(agent.model)}
-            </span>
-          )}
           <span
-            className={`text-[10px] text-cyan-400 font-medium px-1.5 py-0.5 rounded bg-cyan-500/10 truncate cursor-pointer hover:bg-cyan-500/20 transition-colors ${agent.model ? "" : "ml-auto"}`}
+            className="text-[10px] text-cyan-400 font-medium px-1.5 py-px rounded-full bg-cyan-500/15 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
             onClick={(e) => { e.stopPropagation(); navigate(`/projects/${encodeURIComponent(agent.project)}`); }}
             title={agent.project}
           >{agent.project}</span>
+          {agent.model && (
+            <span className="text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
+              {modelDisplayName(agent.model)}
+            </span>
+          )}
         </div>
       </div>
         </div>{/* end padded content */}
