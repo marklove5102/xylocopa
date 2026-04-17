@@ -83,7 +83,7 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
         {/* Tags — same order as InboxCard, status shown by left strip */}
         <div className="flex flex-wrap items-center gap-1 mt-1.5">
           <span
-            className="text-[10px] text-cyan-400 font-medium px-1.5 py-px rounded-full bg-cyan-500/15 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
+            className="text-[10px] font-medium px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
             onClick={(e) => { e.stopPropagation(); navigate(`/projects/${encodeURIComponent(agent.project)}`); }}
             title={agent.project}
           >{agent.project}</span>
