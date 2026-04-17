@@ -84,7 +84,7 @@ Already using Claude Code? Xylocopa plugs right in. It wraps the same `claude` C
 
 ### Built for Reliability
 
-Xylocopa hooks into Claude Code's native event system — not polling, not heuristics. Notifications, message delivery, and session sync are all event-driven. Messages reach agents through stop-hook dispatch with guaranteed ordering. Session lifecycle is tracked via SessionStart/SessionEnd hooks. Each agent runs in its own tmux session with a dedicated git worktree, with configurable timeouts and automatic crash recovery.
+Xylocopa hooks into Claude Code's native event system — not polling, not heuristics. Notifications, message delivery, and session sync are all event-driven. Messages reach agents through stop-hook dispatch with guaranteed ordering. Session lifecycle is tracked via SessionStart/SessionEnd hooks. Each agent runs in its own tmux session with a dedicated git worktree, with configurable timeouts and automatic crash recovery. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations (`rm -rf`, `git push --force`, `DROP TABLE`, out-of-project writes, …) — active even when agents run in Auto mode with `--dangerously-skip-permissions`.
 
 ## Features
 
