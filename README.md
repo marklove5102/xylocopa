@@ -16,9 +16,9 @@
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea) — the blue carpenter bee._
 
-> **Note:** Xylocopa was previously named **AgentHive**. The `agenthive` CLI alias keeps working — see the [migration notes](#migration-from-agenthive) below.
+**Tasks in. Agents out. Lessons kept.**
 
-Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that turns it from a synchronous terminal tool into an asynchronous, agentic workflow. Capture ideas from your phone or by voice, dispatch to parallel agents on isolated worktrees, monitor progress in real time, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over, and project knowledge grows with every session.
+Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Capture ideas from anywhere, dispatch to parallel agents on isolated worktrees, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over — and project knowledge accrues across sessions instead of resetting with each one.
 
 If you find Xylocopa useful, a star helps others discover it :)
 
@@ -67,18 +67,22 @@ Check results, give feedback, and keep the knowledge growing.
 - **Git operations** — view diffs, commit history, and branch status per project. One-click cleanup and push when you're satisfied.
 - **Growing intelligence** — each project carries a PROGRESS.md where lessons accumulate across sessions. You control which agent conversations generate summaries, review and cherry-pick which insights to keep, and relevant lessons are automatically retrieved (top-k) when dispatching new agents — more control over project memory than Claude Code's native auto-memory.
 
-### 5. Maintain
+### 5. Remember
 
-Your conversations with agents are valuable. Don't lose them.
+Knowledge accumulates — across sessions, across projects, across time.
 
-- **Automatic backups** — database, session history, and project configs are backed up on a configurable schedule. Crash recovery salvages partial output.
+- **Project memory** — per-project PROGRESS.md managed through the UI. Choose which sessions to summarize, accept or reject individual insights, and edit the file directly. Future agents start with what's already been learned.
 - **Session archive** — every agent conversation is persisted and searchable. Star important sessions for quick access. Browse history across projects.
 - **Resume anytime** — pick up any agent conversation right where it left off, whether it finished yesterday or last month.
 - **Full-text search** — find any task, message, or agent session across your entire history.
 - **Progress tracking** — weekly completion stats show how much your agents are getting done. See the trend, not just the backlog.
-- **Project memory** — per-project PROGRESS.md managed through the UI. Choose which sessions to summarize, accept or reject individual insights, and edit the file directly. Survives across agents, sessions, and time.
+- **Automatic backups** — database, session history, and project configs are backed up on a configurable schedule. Crash recovery salvages partial output.
 
 ## Why Xylocopa?
+
+### Lessons Compound
+
+Most agent tools assume the agent gets it right. Xylocopa assumes it won't. When an agent misses the mark, one click summarizes what was tried, and the next agent picks up from there. Iterate until done — and the lessons accumulate per project (in `PROGRESS.md`), not per session, so future agents start with what you've already learned.
 
 ### Zero Migration Cost
 
@@ -89,6 +93,15 @@ Already using Claude Code? Xylocopa plugs right in. It wraps the same `claude` C
 Xylocopa hooks into Claude Code's native event system — not polling, not heuristics. Notifications, message delivery, and session sync are all event-driven. Messages reach agents through stop-hook dispatch with guaranteed ordering. Session lifecycle is tracked via SessionStart/SessionEnd hooks. Each agent runs in its own tmux session with a dedicated git worktree, with configurable timeouts and automatic crash recovery. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations (`rm -rf`, `git push --force`, `DROP TABLE`, out-of-project writes, …) — active even when agents run in Auto mode with `--dangerously-skip-permissions`.
 
 ## Features
+
+### Highlights
+
+- **Try → Summarize → Retry** — when an agent misses the mark, one click captures what was tried; the next dispatch picks up from there instead of starting cold.
+- **RAG-powered context** — new agents are seeded with relevant lessons from past sessions in the same project, retrieved automatically at dispatch time.
+- **Dual-directional CLI sync** — every agent runs in a tmux session you can attach to from your terminal; sessions you start in the CLI also appear in the web UI.
+- **Deterministic [safety hook](#safety-guardrails)** — `PreToolUse` hard-blocks destructive commands (`rm -rf`, force-pushes, `DROP TABLE`, out-of-project writes) — even when agents run with `--dangerously-skip-permissions`.
+
+### Full feature list
 
 | Category | What you get |
 |---|---|
