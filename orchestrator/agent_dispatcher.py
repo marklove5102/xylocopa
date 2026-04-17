@@ -3932,10 +3932,10 @@ Here are the day's conversations (with timestamps):
         file_pos = 0
         last_content = ""
         idle_checks = 0  # counts consecutive ticks with no new output
-        PERMISSION_CHECK_TICKS = 60  # check tmux pane after ~30s of no output
+        PERMISSION_CHECK_TICKS = 300  # check tmux pane after ~30s of no output
         try:
             while True:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)
 
                 # Check if the exec is still tracked (may have been harvested)
                 if agent_id not in self._active_execs:
