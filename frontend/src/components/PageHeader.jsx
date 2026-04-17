@@ -204,7 +204,7 @@ function QueuePopover({ onClose, containerRef, navigate }) {
                 label={a.task_title || a.name}
                 sub={(a.project || "").slice(0, 8)}
                 dim={!a.task_id}
-                onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`); }} />
+                onClick={() => { onClose(); window.open(`/agents/${a.agent_id}`, '_blank', 'noopener'); }} />
             ))}
           </div>
         )}

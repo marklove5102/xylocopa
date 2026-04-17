@@ -710,7 +710,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                   <button
                     key={proc.agent_id}
                     type="button"
-                    onClick={() => navigate(`/agents/${proc.agent_id}`)}
+                    onClick={() => window.open(`/agents/${proc.agent_id}`, '_blank', 'noopener')}
                     className="w-full text-left rounded-xl bg-surface shadow-card p-3 border-l-2 border-cyan-500/40 flex items-center gap-3 transition-colors active:bg-input hover:ring-1 hover:ring-ring-hover"
                   >
                     <div className="shrink-0">
@@ -755,7 +755,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                     <button
                       key={agent.id}
                       type="button"
-                      onClick={() => navigate(`/agents/${agent.id}`)}
+                      onClick={() => window.open(`/agents/${agent.id}`, '_blank', 'noopener')}
                       className="w-full text-left rounded-xl bg-surface shadow-card p-3 flex items-center gap-3 transition-colors active:bg-input hover:ring-1 hover:ring-ring-hover"
                     >
                       <div className="min-w-0 flex-1">

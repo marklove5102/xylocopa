@@ -189,7 +189,7 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
                 {task.agent_id && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
+                    onClick={(e) => { e.stopPropagation(); window.open(`/agents/${task.agent_id}`, '_blank', 'noopener'); }}
                     className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center hover:bg-cyan-400 active:scale-90 transition-all"
                     title="View Conversation"
                   >

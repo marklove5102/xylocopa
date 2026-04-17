@@ -15,7 +15,7 @@ export default memo(function ActiveCard({ task, selecting, selected, onToggle })
 
   const handleClick = () => {
     if (selecting) { onToggle?.(task.id); return; }
-    if (task.agent_id) navigate(`/agents/${task.agent_id}`);
+    if (task.agent_id) window.open(`/agents/${task.agent_id}`, '_blank', 'noopener');
   };
 
   return (

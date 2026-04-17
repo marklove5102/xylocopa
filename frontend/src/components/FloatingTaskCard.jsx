@@ -285,7 +285,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                     ))}
                     <button
                       type="button"
-                      onClick={() => { onClose(); navigate(`/agents/${task.attempt_agents[sel].agent_id}`); }}
+                      onClick={() => { onClose(); window.open(`/agents/${task.attempt_agents[sel].agent_id}`, '_blank', 'noopener'); }}
                       className="ml-auto text-[11px] font-medium text-cyan-500 hover:text-cyan-400 transition-colors"
                     >
                       Enter Chat &rarr;

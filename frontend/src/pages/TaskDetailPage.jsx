@@ -417,7 +417,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 <code className="text-[10px] text-faint font-mono">{task.agent_id.slice(0, 8)}</code>
                 <button
                   type="button"
-                  onClick={() => navigate(`/agents/${task.agent_id}`)}
+                  onClick={() => window.open(`/agents/${task.agent_id}`, '_blank', 'noopener')}
                   className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 text-xs text-cyan-400 hover:bg-cyan-500/20 transition-colors font-medium"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -468,7 +468,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                     {arts.verify_agent_id && (
                       <button
                         type="button"
-                        onClick={() => navigate(`/agents/${arts.verify_agent_id}`)}
+                        onClick={() => window.open(`/agents/${arts.verify_agent_id}`, '_blank', 'noopener')}
                         className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
                       >
                         View verification agent
@@ -488,8 +488,9 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
               {task.merge_agent_id && (
                 <a
                   href={`/agents/${task.merge_agent_id}`}
+                  target="_blank"
+                  rel="noopener"
                   className="text-xs text-accent hover:underline ml-auto"
-                  onClick={(e) => { e.preventDefault(); navigate(`/agents/${task.merge_agent_id}`); }}
                 >
                   View merge agent
                 </a>

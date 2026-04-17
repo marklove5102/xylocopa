@@ -1597,7 +1597,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 agent={agent}
                 project={name}
                 starred={starredIds.has(agent.session_id || agent.id)}
-                onClick={() => navigate(`/agents/${agent.id}`)}
+                onClick={() => window.open(`/agents/${agent.id}`, '_blank', 'noopener')}
                 onError={(msg) => showToast(msg, "error")}
                 onToggleStar={(sid, newStarred) => {
                   setStarredIds((prev) => {
