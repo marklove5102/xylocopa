@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "xylocopa": {
-      "command": "python3",
-      "args": ["orchestrator/mcp_server.py"]
+      "command": "/home/zhixu/xylocopa/.venv/bin/python",
+      "args": ["/home/zhixu/xylocopa/orchestrator/mcp_server.py"]
     }
   }
 }
