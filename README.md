@@ -37,7 +37,7 @@ Get ideas out of your head and into the system — fast, from anywhere.
 
 Assign tasks to AI agents and let them work.
 
-- **Task → Agent** — turn any task into an autonomous agent with one click. Pick a model (Opus/Sonnet/Haiku), set permissions, and let the agent do the work while you move on.
+- **Task → Agent** — turn any task into an autonomous agent with one click. Pick a model (Opus/Sonnet/Haiku), toggle **Auto mode** (runs Claude Code with `--dangerously-skip-permissions` — bypasses per-tool confirmation prompts; destructive commands are still hard-blocked by the [safety hook](#safety-guardrails)), and let the agent do the work while you move on.
 - **Parallel execution** — run 5, 10, or more agents in parallel across different projects. Each agent gets its own isolated git worktree so they never step on each other's code.
 - **AI batch processing** — got a pile of tasks in your inbox? One click to let AI triage and dispatch them in bulk, instead of handling each one manually.
 - **RAG-powered context** — when dispatching a task, Xylocopa automatically retrieves relevant history from past agent sessions. Your new agent starts with the lessons learned, not from scratch.
@@ -100,6 +100,7 @@ Xylocopa hooks into Claude Code's native event system — not polling, not heuri
 | **Git Integration** | Commit history, diffs, branch status per project. Agents work in isolated worktrees. One-click cleanup and push. |
 | **Session History** | Every conversation persisted and searchable. Star sessions. Resume any agent anytime. Full-text search. |
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
+| <a id="safety-guardrails"></a>**Safety Guardrails** | Deterministic `PreToolUse` hook hard-blocks destructive operations — `rm -rf`, `git push --force`, `git reset --hard` outside worktrees, `git clean -f`, `git checkout -- .` / `git restore .`, `DROP TABLE` / `TRUNCATE`, and any `Write`/`Edit` to paths outside the project directory. Enforced even when **Auto mode** (`--dangerously-skip-permissions`) is on. |
 | **Backups** | Automatic database backups. Session JSONL caching. Crash recovery with partial output salvage. |
 
 ## Getting Started
