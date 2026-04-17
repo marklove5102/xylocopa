@@ -71,6 +71,15 @@ Frontend:
 cd frontend && npx vitest run
 ```
 
+## Architecture
+
+Before making backend changes, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+It's a contributor's map of the codebase — especially the **four-layer message
+sync pipeline** (JSONL → DB → display file → WebUI) and the single content-sync
+entry point (`AgentDispatcher.wake_sync`). A number of non-obvious invariants
+live there; violating them tends to produce subtle bugs rather than loud
+errors.
+
 ## Code Style
 
 - Follow existing patterns in the codebase. Don't introduce new conventions.
