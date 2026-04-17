@@ -16,7 +16,7 @@
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea) — the blue carpenter bee._
 
-**Tasks in. Agents out. Lessons kept.**
+**Thoughts in. Agents out. Lessons kept.**
 
 Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Capture ideas from anywhere, dispatch to parallel agents on isolated worktrees, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over — and project knowledge accrues across sessions instead of resetting with each one.
 
