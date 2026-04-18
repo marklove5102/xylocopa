@@ -133,6 +133,20 @@ COMMANDS: dict[str, CommandConfig] = {
 
 
 # ---------------------------------------------------------------------------
+# Known-problematic slash commands
+# ---------------------------------------------------------------------------
+# These are side-channel built-ins that don't write to the session JSONL and
+# don't trigger UserPromptSubmit / Stop. Sending them via the orchestrator
+# would leave the message stuck as PENDING forever. They must be invoked
+# directly in the terminal — not through the web UI.
+KNOWN_PROBLEMATIC: frozenset[str] = frozenset({
+    "/agents", "/auth", "/btw", "/config", "/context", "/doctor",
+    "/help", "/ide", "/install", "/login", "/logout", "/model",
+    "/permissions", "/resume", "/status",
+})
+
+
+# ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
 
@@ -172,12 +186,18 @@ def classify(content: str) -> CommandConfig | None:
 def is_allowed(content: str) -> bool:
     """Check if a slash command is allowed from web UI.
 
-    Regular (non-slash) messages are always allowed.
+    Regular (non-slash) messages are always allowed. For slash commands we
+    use a hybrid gate: anything in COMMANDS has a known lifecycle and is
+    allowed; anything in KNOWN_PROBLEMATIC is rejected; everything else
+    (custom skills, project commands, plugins) defaults to allowed and
+    relies on USP+Stop being the right lifecycle.
     """
     if not is_slash_command(content):
         return True
     cmd, _ = parse(content)
-    return cmd in COMMANDS
+    if cmd in COMMANDS:
+        return True
+    return cmd not in KNOWN_PROBLEMATIC
 
 
 def rejection_message(content: str) -> str:
