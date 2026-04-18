@@ -6,12 +6,16 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import skills as skills_mod
 from jsonl_parser import format_tool_summary, parse_session_turns_from_lines
 from skills import (
     BUNDLED_SKILLS,
+    _scan_command_dir,
+    clear_skills_cache,
     format_skill_summary,
     is_hidden_meta_entry,
     list_skills,
+    refresh_skills_cache,
     skill_turn_metadata,
 )
 from slash_commands import COMMANDS
@@ -165,3 +169,117 @@ class TestSkillFolding:
         assert "<<SKILL BODY>>" not in contents
         assert "real user message" in contents
         assert "second real message" in contents
+
+
+# ---------------------------------------------------------------------------
+# _scan_command_dir — file-per-command markdown layout
+# ---------------------------------------------------------------------------
+
+class TestScanCommandDir:
+    def test_returns_empty_for_missing_dir(self, tmp_path):
+        assert _scan_command_dir(str(tmp_path / "nope"), "project") == []
+
+    def test_picks_up_md_files(self, tmp_path):
+        (tmp_path / "ship.md").write_text("Ship the build")
+        (tmp_path / "lint.md").write_text("Run linter")
+        out = _scan_command_dir(str(tmp_path), "project")
+        names = sorted(s["name"] for s in out)
+        assert names == ["lint", "ship"]
+        assert all(s["source"] == "project" for s in out)
+        assert all(s["path"].endswith(".md") for s in out)
+
+    def test_ignores_non_md_files(self, tmp_path):
+        (tmp_path / "ship.md").write_text("body")
+        (tmp_path / "README.txt").write_text("nope")
+        (tmp_path / "notes").write_text("nope")
+        out = _scan_command_dir(str(tmp_path), "personal")
+        assert [s["name"] for s in out] == ["ship"]
+
+    def test_uses_frontmatter_description(self, tmp_path):
+        (tmp_path / "deploy.md").write_text(
+            "---\ndescription: Push to prod\n---\nbody here\n"
+        )
+        out = _scan_command_dir(str(tmp_path), "project")
+        assert out[0]["description"] == "Push to prod"
+
+    def test_filters_user_invocable_false(self, tmp_path):
+        (tmp_path / "internal.md").write_text(
+            "---\nuser-invocable: false\n---\nbody\n"
+        )
+        (tmp_path / "public.md").write_text("body")
+        out = _scan_command_dir(str(tmp_path), "project")
+        assert [s["name"] for s in out] == ["public"]
+
+
+class TestProjectCommandsInListSkills:
+    def test_project_commands_appear_with_project_source(self, tmp_path, monkeypatch):
+        clear_skills_cache()
+        cmds_dir = tmp_path / ".claude" / "commands"
+        cmds_dir.mkdir(parents=True)
+        (cmds_dir / "ship-it.md").write_text(
+            "---\ndescription: project-only command\n---\nbody\n"
+        )
+        skills = list_skills(project_path=str(tmp_path))
+        match = [s for s in skills if s["name"] == "ship-it"]
+        assert match, "expected project command 'ship-it' in list_skills output"
+        assert match[0]["source"] == "project"
+        assert match[0]["description"] == "project-only command"
+
+
+# ---------------------------------------------------------------------------
+# Cache behavior
+# ---------------------------------------------------------------------------
+
+class TestSkillsCache:
+    def test_list_skills_caches_result(self, monkeypatch):
+        clear_skills_cache()
+        calls = {"n": 0}
+        original = skills_mod._build_skills
+
+        def counting_build(p):
+            calls["n"] += 1
+            return original(p)
+
+        monkeypatch.setattr(skills_mod, "_build_skills", counting_build)
+
+        list_skills(None)
+        list_skills(None)
+        list_skills(None)
+        assert calls["n"] == 1, "second/third calls should hit cache"
+
+    def test_distinct_project_paths_cached_separately(self, monkeypatch):
+        clear_skills_cache()
+        calls = {"n": 0}
+        original = skills_mod._build_skills
+
+        def counting_build(p):
+            calls["n"] += 1
+            return original(p)
+
+        monkeypatch.setattr(skills_mod, "_build_skills", counting_build)
+
+        list_skills("/tmp/proj-a")
+        list_skills("/tmp/proj-b")
+        list_skills("/tmp/proj-a")
+        list_skills("/tmp/proj-b")
+        assert calls["n"] == 2, "each unique project_path builds once"
+
+    def test_refresh_rebuilds_and_clears_old_keys(self, monkeypatch):
+        clear_skills_cache()
+        list_skills("/tmp/old-project")
+        # /tmp/old-project is now cached
+        assert "/tmp/old-project" in skills_mod._cache
+
+        n = refresh_skills_cache(["/tmp/new-project"])
+        # Old key dropped; only None + the new project remain
+        assert n == 2
+        assert "/tmp/old-project" not in skills_mod._cache
+        assert None in skills_mod._cache
+        assert "/tmp/new-project" in skills_mod._cache
+
+    def test_refresh_with_no_paths_keeps_only_global(self):
+        clear_skills_cache()
+        list_skills("/tmp/p1")
+        n = refresh_skills_cache(None)
+        assert n == 1
+        assert set(skills_mod._cache.keys()) == {None}

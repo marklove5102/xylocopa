@@ -212,6 +212,18 @@ async def lifespan(app: FastAPI):
     if _project_paths:
         logger.info("Refreshed hook configs for %d projects", len(_project_paths))
 
+    # Warm the per-project skills cache off-thread so the first /-trigger in
+    # the picker doesn't pay disk-scan latency. Failures are non-fatal.
+    def _warm_skills_cache():
+        try:
+            from skills import refresh_skills_cache
+            n = refresh_skills_cache(_project_paths)
+            logger.info("Warmed skills cache for %d entries", n)
+        except Exception:
+            logger.exception("Failed to warm skills cache (non-fatal)")
+
+    import threading
+    threading.Thread(target=_warm_skills_cache, name="skills-cache-warmup", daemon=True).start()
 
     # Recover tasks stuck in EXECUTING whose agent already stopped/errored
     from task_state import TaskStateMachine as _TSM
