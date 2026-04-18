@@ -16,6 +16,8 @@
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea) — the blue carpenter bee._
 
+**An AI-native take on GTD** — capture anywhere, dispatch to agents, keep what's learned.
+
 **Thoughts in. Agents out. Lessons kept.**
 
 Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Capture ideas from anywhere, dispatch to parallel agents on isolated worktrees, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over — and project knowledge accrues across sessions instead of resetting with each one.
@@ -23,6 +25,8 @@ Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.c
 If you find Xylocopa useful, a star helps others discover it :)
 
 ## The Loop
+
+Classic GTD moves ideas through a five-step loop — capture, clarify, organize, reflect, engage — all performed by one human. Xylocopa keeps the loop but rewires the executor: **you capture and decide, your agents execute, and the system reflects and remembers.** The five steps below are GTD for an era where the work itself can be delegated to AI.
 
 Traditional task management tracks what **you** need to do. Xylocopa tracks what your **agents** are doing.
 
