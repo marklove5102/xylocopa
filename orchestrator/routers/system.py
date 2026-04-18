@@ -318,10 +318,18 @@ async def auth_diag(request: Request):
     path = body.get("path", "?")
     if action == "reload-trace":
         persisted = body.get("persisted", "?")
+        is_vite = body.get("isVite", "?")
+        error = body.get("error", "")
         stack = (body.get("stack") or "").replace("\n", " | ")[:1500]
+        extras = []
+        if is_vite != "?":
+            extras.append(f"isVite={is_vite}")
+        if error:
+            extras.append(f"error={error}")
+        extras_str = (" " + " ".join(extras)) if extras else ""
         logger.info(
-            "RELOAD_TRACE: reason=%s path=%s persisted=%s stack=%s",
-            reason, path, persisted, stack,
+            "RELOAD_TRACE: reason=%s path=%s persisted=%s%s stack=%s",
+            reason, path, persisted, extras_str, stack,
         )
     else:
         since_ms = body.get("since_login_ms", "?")

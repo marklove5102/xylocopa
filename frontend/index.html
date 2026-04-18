@@ -11,6 +11,50 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Xylocopa</title>
     <script>
+      // Reload tracing + vite-HMR-reload suppression.
+      // Installed BEFORE any ES module loads so we intercept vite client's
+      // location.reload() on HMR ws reconnect (which causes PWA white-screen
+      // refresh on iOS when the HMR socket flaps).  Other reload sources
+      // (user "Retry" buttons, ErrorBoundary, etc.) are logged but allowed.
+      (function(){
+        try {
+          var origReload = window.location.reload.bind(window.location);
+          var beacon = function(payload){
+            try {
+              var body = JSON.stringify(Object.assign({ts: Date.now(), path: location.pathname}, payload));
+              if (navigator.sendBeacon) {
+                navigator.sendBeacon("/api/debug/auth-diag", new Blob([body], {type:"application/json"}));
+              } else {
+                fetch("/api/debug/auth-diag", {method:"POST", headers:{"Content-Type":"application/json"}, body: body, keepalive: true});
+              }
+            } catch(_){}
+          };
+          Object.defineProperty(window.location, "reload", {
+            value: function(){
+              var stack = (new Error().stack || "");
+              var isVite = /@vite\/client|@vite\/env|vite\/dist\/client/.test(stack);
+              beacon({action:"reload-trace", reason:"location.reload", stack: stack.slice(0,1500), isVite: isVite});
+              if (isVite) {
+                console.warn("[reload-probe] suppressed vite-originated reload");
+                return;
+              }
+              return origReload.apply(window.location, arguments);
+            },
+            writable: true,
+            configurable: true,
+          });
+          beacon({action:"reload-trace", reason:"patch-installed"});
+        } catch(e) {
+          try {
+            navigator.sendBeacon && navigator.sendBeacon(
+              "/api/debug/auth-diag",
+              new Blob([JSON.stringify({action:"reload-trace", reason:"patch-failed", error: String(e), ts: Date.now(), path: location.pathname})], {type:"application/json"})
+            );
+          } catch(_){}
+        }
+      })();
+    </script>
+    <script>
       (function(){
         // Force-clear stale PWA caches — bump version to trigger
         var CV="v2";

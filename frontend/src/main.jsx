@@ -6,12 +6,10 @@ import "./index.css";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 
-// --- Reload tracing probe ---------------------------------------------------
-// Logs every reload trigger to /api/debug/auth-diag so we can tell which of
-// these is causing white-screen refreshes: (A) SW controllerchange from
-// VitePWA autoUpdate, (B) explicit window.location.reload() from app code,
-// (C) vite HMR full-reload after ws reconnect, (D) iOS background kill
-// (no event at all — absence is the signal).  Remove after root cause pinned.
+// --- Reload tracing probe (event listeners only) ---------------------------
+// The location.reload() monkey-patch lives in index.html so it installs
+// before any ES module (including vite client) loads.  Here we add the
+// remaining event listeners that don't need to run pre-module.
 (function installReloadProbe() {
   const beacon = (payload) => {
     try {
@@ -28,15 +26,11 @@ import { registerSW } from "virtual:pwa-register";
       }
     } catch { /* best-effort */ }
   };
-  try {
-    const origReload = window.location.reload.bind(window.location);
-    window.location.reload = function (...args) {
-      beacon({ action: "reload-trace", reason: "location.reload", stack: (new Error().stack || "").slice(0, 1500) });
-      return origReload(...args);
-    };
-  } catch { /* some browsers block reassigning location.reload */ }
   window.addEventListener("pagehide", (e) => {
     beacon({ action: "reload-trace", reason: "pagehide", persisted: e.persisted });
+  });
+  window.addEventListener("beforeunload", () => {
+    beacon({ action: "reload-trace", reason: "beforeunload" });
   });
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("controllerchange", () => {
