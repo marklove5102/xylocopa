@@ -150,6 +150,8 @@ export const authChangePassword = (current_password, new_password) =>
 // --- Projects ---
 const e = encodeURIComponent;
 export const fetchProjects = () => request("/api/projects");
+export const fetchSkills = (project) =>
+  request(`/api/skills${project ? `?project=${e(project)}` : ""}`);
 export const createProject = (data) =>
   request("/api/projects", { method: "POST", body: JSON.stringify(data) });
 export const fetchAllFolders = () =>

@@ -1747,12 +1747,14 @@ function StreamingBubble({ content, project, activeTool }) {
 // --- Send Later Time Picker ---
 
 import SendLaterPicker from "../components/SendLaterPicker";
+import SkillPickerPanel from "../components/SkillPickerPanel";
 
 // --- Chat Input ---
 
-function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode, onEscape, escapeUrgent, escapeAvailable = true, escapeDisabled = false, voiceTarget, scrollButton, kbOpen = false }) {
+function ChatInput({ agentId, project, onSend, onSendLater, disabled, disabledReason, isBusy, tmuxMode, onEscape, escapeUrgent, escapeAvailable = true, escapeDisabled = false, voiceTarget, scrollButton, kbOpen = false }) {
   const [text, setText] = useDraft(agentId ? `chat:${agentId}` : null, "");
   const [showPicker, setShowPicker] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const [escCooldown, setEscCooldown] = useState(false);
 
   const [attPreviewIndex, setAttPreviewIndex] = useState(null);
@@ -2182,6 +2184,35 @@ function ChatInput({ agentId, onSend, onSendLater, disabled, disabledReason, isB
               </svg>
             </button>
           )}
+          {/* Skill picker button */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowSkills((v) => !v)}
+              title="Insert skill"
+              className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors bg-elevated hover:bg-hover text-label"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </button>
+            {showSkills && (
+              <SkillPickerPanel
+                project={project}
+                onSelect={(cmd) => {
+                  setShowSkills(false);
+                  setText((prev) => {
+                    const cur = prev || "";
+                    if (!cur.trim()) return `${cmd} `;
+                    if (cur.endsWith(" ")) return `${cur}${cmd} `;
+                    return `${cur} ${cmd} `;
+                  });
+                  textareaRef.current?.focus();
+                }}
+                onClose={() => setShowSkills(false)}
+              />
+            )}
+          </div>
           {/* Send later (clock) button */}
           <div className="relative">
             <button
@@ -3966,6 +3997,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       {/* Input bar */}
       <ChatInput
         agentId={id}
+        project={agent?.project}
         onSend={handleSend}
         onSendLater={handleSendLater}
         disabled={isStarting || isStopped || isError || hasPendingInteractive}
