@@ -310,18 +310,26 @@ async def auth_diag(request: Request):
 
     The frontend sends events whenever clearAuthToken is called (or blocked),
     including which code path triggered it and how long since the last login.
-    This is invaluable for diagnosing iOS PWA resume race conditions.
+    Also receives reload-trace events from the reload probe (see main.jsx).
     """
     body = await request.json()
     action = body.get("action", "?")
     reason = body.get("reason", "?")
-    since_ms = body.get("since_login_ms", "?")
     path = body.get("path", "?")
-    has_token = body.get("has_token", "?")
-    logger.info(
-        "AUTH_DIAG: action=%s reason=%s since_login=%sms path=%s has_token=%s",
-        action, reason, since_ms, path, has_token,
-    )
+    if action == "reload-trace":
+        persisted = body.get("persisted", "?")
+        stack = (body.get("stack") or "").replace("\n", " | ")[:1500]
+        logger.info(
+            "RELOAD_TRACE: reason=%s path=%s persisted=%s stack=%s",
+            reason, path, persisted, stack,
+        )
+    else:
+        since_ms = body.get("since_login_ms", "?")
+        has_token = body.get("has_token", "?")
+        logger.info(
+            "AUTH_DIAG: action=%s reason=%s since_login=%sms path=%s has_token=%s",
+            action, reason, since_ms, path, has_token,
+        )
     return {"ok": True}
 
 

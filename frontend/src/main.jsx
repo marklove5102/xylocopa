@@ -6,6 +6,51 @@ import "./index.css";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 
+// --- Reload tracing probe ---------------------------------------------------
+// Logs every reload trigger to /api/debug/auth-diag so we can tell which of
+// these is causing white-screen refreshes: (A) SW controllerchange from
+// VitePWA autoUpdate, (B) explicit window.location.reload() from app code,
+// (C) vite HMR full-reload after ws reconnect, (D) iOS background kill
+// (no event at all — absence is the signal).  Remove after root cause pinned.
+(function installReloadProbe() {
+  const beacon = (payload) => {
+    try {
+      const body = JSON.stringify({ ...payload, ts: Date.now(), path: location.pathname });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/api/debug/auth-diag", new Blob([body], { type: "application/json" }));
+      } else {
+        fetch("/api/debug/auth-diag", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch { /* best-effort */ }
+  };
+  try {
+    const origReload = window.location.reload.bind(window.location);
+    window.location.reload = function (...args) {
+      beacon({ action: "reload-trace", reason: "location.reload", stack: (new Error().stack || "").slice(0, 1500) });
+      return origReload(...args);
+    };
+  } catch { /* some browsers block reassigning location.reload */ }
+  window.addEventListener("pagehide", (e) => {
+    beacon({ action: "reload-trace", reason: "pagehide", persisted: e.persisted });
+  });
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      beacon({ action: "reload-trace", reason: "sw-controllerchange" });
+    });
+  }
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    if (nav?.type === "reload") {
+      beacon({ action: "reload-trace", reason: "load-after-reload" });
+    }
+  } catch { /* performance API may be restricted */ }
+})();
+
 // Register VitePWA service worker with autoUpdate.
 // Precaches all static assets (JS/CSS/HTML with content hashes).
 if ("serviceWorker" in navigator) {
