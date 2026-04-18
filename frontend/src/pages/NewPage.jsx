@@ -127,7 +127,7 @@ function NewTaskForm({ showToast, navigate }) {
   const [title, setTitle, clearTitle] = useDraft("create-task:title", "");
   const [description, setDescription, clearDesc] = useDraft("create-task:description", "");
   const [model, setModel] = useState(MODEL_OPTIONS[0].value);
-  const [effort, setEffort] = useState("high");
+  const [effort, setEffort] = useState("xhigh");
   const [autoDispatch, setAutoDispatch] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const clearAllDrafts = () => { clearProject(); clearTitle(); clearDesc(); };
@@ -256,7 +256,7 @@ function NewAgentForm({ showToast, navigate }) {
   const [project, setProject, clearProject] = useDraft("create-agent:project", "");
   const [prompt, setPrompt, clearPrompt] = useDraft("create-agent:prompt", "");
   const [model, setModel, clearModel] = useDraft("create-agent:model", MODEL_OPTIONS[0].value);
-  const [effort, setEffort, clearEffort] = useDraft("create-agent:effort", "high");
+  const [effort, setEffort, clearEffort] = useDraft("create-agent:effort", "xhigh");
   const [worktree, setWorktree] = useState(null);
   const [linkTask, setLinkTask] = useState(false);
   // syncMode removed — all agents use tmux now

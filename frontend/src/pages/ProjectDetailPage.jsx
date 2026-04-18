@@ -560,7 +560,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Agent creation (draft persisted per project)
   const [prompt, setPrompt, clearPrompt] = useDraft(`project-agent:${name}:prompt`, "");
   const [model, setModel, clearModel] = useDraft(`project-agent:${name}:model`, MODEL_OPTIONS[0].value);
-  const [effort, setEffort, clearEffort] = useDraft(`project-agent:${name}:effort`, "high");
+  const [effort, setEffort, clearEffort] = useDraft(`project-agent:${name}:effort`, "xhigh");
   const [worktree, setWorktree] = useState(() => {
     try { const v = localStorage.getItem(`pref:project-agent:${name}:worktree`); return v !== null ? (v === "" ? null : v) : null; } catch { return null; }
   });

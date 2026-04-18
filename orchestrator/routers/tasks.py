@@ -75,7 +75,7 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
     model = task.model or proj.default_model or CC_MODEL
     if model not in VALID_MODELS:
         model = CC_MODEL
-    effort = task.effort or "high"
+    effort = task.effort or "xhigh"
     worktree = None
     if getattr(task, "use_worktree", True):
         worktree = task.worktree_name or _generate_worktree_name_local(prompt)

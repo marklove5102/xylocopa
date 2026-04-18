@@ -32,7 +32,7 @@ export default function NewTaskPage({ embedded = false }) {
   const [description, setDescription, clearDesc] = useDraft("new-task:description", "");
   const [project, setProject, clearProject] = useDraft("new-task:project", "");
   const [model, setModel, clearModel] = useDraft("new-task:model", MODEL_OPTIONS[0].value);
-  const [effort, setEffort, clearEffort] = useDraft("new-task:effort", "high");
+  const [effort, setEffort, clearEffort] = useDraft("new-task:effort", "xhigh");
   const [priority, setPriority] = useState(0);
   const [skipPermissions, setSkipPermissions] = useState(() => {
     try { return localStorage.getItem("pref:skipPermissions") !== "false"; } catch { return true; }
