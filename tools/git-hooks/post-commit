@@ -1,0 +1,41 @@
+#!/bin/bash
+# Auto-rebuild frontend/dist/ if a commit touched frontend source.
+#
+# Prevents the "commit → forgot to restart → serving stale dist for hours"
+# gap. Runs ./run.sh build-frontend-if-stale in the background so the
+# commit itself returns immediately. Serialized with flock so rapid
+# commits don't race on dist/.
+#
+# Installed via tools/install-git-hooks.sh (symlinks into .git/hooks/).
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+[ -x "$repo_root/run.sh" ] || exit 0
+
+if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    changed=$(git diff --name-only HEAD^ HEAD)
+else
+    changed=$(git diff-tree --no-commit-id --name-only -r HEAD)
+fi
+
+touched=$(echo "$changed" \
+    | grep -E '^frontend/' \
+    | grep -vE '^frontend/(dist|node_modules|dev-dist)/' \
+    || true)
+
+[ -n "$touched" ] || exit 0
+
+log_file="$repo_root/logs/post-commit-rebuild.log"
+lock_file="$repo_root/logs/.post-commit-rebuild.lock"
+mkdir -p "$(dirname "$log_file")"
+
+(
+    flock -n 9 || { echo "[$(date '+%F %T')] another rebuild in progress — skipping"; exit 0; }
+    echo "[$(date '+%F %T')] post-commit rebuild — $(echo "$touched" | wc -l | tr -d ' ') frontend file(s) changed"
+    echo "$touched" | sed 's/^/    /'
+    "$repo_root/run.sh" build-frontend-if-stale
+    echo "[$(date '+%F %T')] done"
+) 9>"$lock_file" >> "$log_file" 2>&1 </dev/null &
+
+echo "[post-commit] frontend rebuild triggered in background → tail $log_file"
