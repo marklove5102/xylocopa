@@ -141,6 +141,41 @@ class TestSkillFolding:
         assert meta["skill_name"] == "debug"
         assert kind == "tool_use"
 
+    def test_command_wrapper_user_entries_dropped(self):
+        """Slash-command synthetic injections (<command-message>, <command-name>)
+        are rendered as user entries WITHOUT isMeta — must be filtered by prefix."""
+        lines = [
+            _line({
+                "type": "user",
+                "uuid": "u1",
+                "timestamp": "2026-04-18T00:00:00Z",
+                "message": {"role": "user", "content": "/claude-api"},
+            }),
+            _line({
+                "type": "user",
+                "uuid": "u2",
+                "timestamp": "2026-04-18T00:00:01Z",
+                "message": {
+                    "role": "user",
+                    "content": "<command-message>claude-api</command-message>\n<command-name>/claude-api</command-name>",
+                },
+            }),
+            _line({
+                "type": "user",
+                "uuid": "u3",
+                "timestamp": "2026-04-18T00:00:02Z",
+                "message": {
+                    "role": "user",
+                    "content": "<command-name>/claude-api</command-name>",
+                },
+            }),
+        ]
+        turns = parse_session_turns_from_lines(lines)
+        contents = [t[1] for t in turns if t[0] == "user"]
+        assert "/claude-api" in contents
+        assert not any("<command-message>" in c for c in contents)
+        assert not any("<command-name>" in c for c in contents)
+
     def test_ismeta_user_entries_dropped(self):
         """isMeta:true user entries (skill bodies, system reminders) are filtered out."""
         lines = [

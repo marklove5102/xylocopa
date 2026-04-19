@@ -525,6 +525,7 @@ def parse_session_turns_from_lines(
                 if (
                     stripped.startswith("<local-command-caveat>")
                     or stripped.startswith("<command-name>")
+                    or stripped.startswith("<command-message>")
                     or stripped.startswith("<local-command-stdout>")
                     or stripped.startswith("<system-reminder>")
                     or stripped.startswith("<task-notification>")
