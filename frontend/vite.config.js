@@ -17,11 +17,17 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' (vs 'autoUpdate'): new SW installs in background but does
+      // NOT auto-reload the page. Combined with clientsClaim removed below,
+      // existing tabs keep using the old SW until manually refreshed —
+      // avoiding the iOS controllerchange→reload loop.
+      registerType: 'prompt',
       devOptions: { enabled: true },
       workbox: {
+        // skipWaiting kept: new SW activates without waiting for old SW to
+        // be released. clientsClaim removed: new SW will only control NEW
+        // navigations, not steal currently-loaded pages.
         skipWaiting: true,
-        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // Import existing push notification handler into generated SW
         importScripts: ['/push-handler.js'],
