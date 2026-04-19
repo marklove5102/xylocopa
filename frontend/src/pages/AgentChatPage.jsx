@@ -4045,6 +4045,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 activeQueuedMessages.map((m) => cancelMessage(id, m.id)),
               );
             }
+            // Kick the sync loop so freshly-written JSONL entries
+            // (e.g. "Request interrupted by user", "/loop resuming"
+            // system markers) get imported right away.
+            wakeSync(id).catch(() => {});
             loadData();
           } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
