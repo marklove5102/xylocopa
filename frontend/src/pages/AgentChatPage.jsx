@@ -62,7 +62,8 @@ import {
   POLL_ACTIVE_INTERVAL, POLL_IDLE_INTERVAL, STREAM_TIMEOUT,
   COPY_TOAST_DURATION, ERROR_TOAST_DURATION, TOAST_DURATION,
   ESCAPE_COOLDOWN, LONG_PRESS_DELAY, DOUBLE_TAP_WINDOW,
-  SCROLL_SAVE_DEBOUNCE, isSystemHealthy,
+  SCROLL_SAVE_DEBOUNCE, JSONL_FLUSH_DELAY_MS, SYNC_SETTLE_DELAY,
+  isSystemHealthy,
 } from "../lib/constants";
 import { DATE_SHORT, TIME_SHORT } from "../lib/formatters";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -1705,7 +1706,7 @@ function SyncPrompt({ agentId, onSync }) {
     try {
       await wakeSync(agentId);
       // Give the sync loop a moment to import, then refresh
-      setTimeout(() => onSync(), 800);
+      setTimeout(() => onSync(), SYNC_SETTLE_DELAY);
     } catch {
       setSyncing(false);
     }
@@ -3522,7 +3523,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     setSyncRefreshing(true);
                     try {
                       await wakeSync(id);
-                      setTimeout(() => refreshMessages(), 800);
+                      setTimeout(() => refreshMessages(), SYNC_SETTLE_DELAY);
                     } catch {}
                     setTimeout(() => setSyncRefreshing(false), 400);
                   }}
@@ -4011,7 +4012,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               setSyncRefreshing(true);
               try {
                 await wakeSync(id);
-                setTimeout(() => refreshMessages(), 800);
+                setTimeout(() => refreshMessages(), SYNC_SETTLE_DELAY);
               } catch {}
               setTimeout(() => setSyncRefreshing(false), 400);
             }}
@@ -4051,7 +4052,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             // gives the sync loop a tick to write to DB before we
             // re-read it — same pattern as the manual refresh button.
             wakeSync(id).catch(() => {});
-            setTimeout(() => loadData(), 150);
+            setTimeout(() => loadData(), JSONL_FLUSH_DELAY_MS);
           } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
         escapeDisabled={isStopped || isError}

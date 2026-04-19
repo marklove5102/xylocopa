@@ -3,7 +3,7 @@ import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { POLL_INTERVAL, modelDisplayName } from "../lib/constants";
+import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL, modelDisplayName } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
@@ -261,8 +261,8 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     setRefreshing(true);
     // Fire scan + wake in parallel, then wait for sync loops to import
     await Promise.allSettled([scanAgents(), wakeSyncAll()]);
-    // Give sync loops time to read JSONL and write to DB (like chat view's 800ms)
-    await new Promise((r) => setTimeout(r, 1000));
+    // Give sync loops time to read JSONL and write to DB
+    await new Promise((r) => setTimeout(r, SYNC_SETTLE_DELAY_GLOBAL));
     await load();
     setTimeout(() => setRefreshing(false), 400);
   }, [load]);

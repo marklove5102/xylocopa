@@ -117,6 +117,27 @@ export const DOUBLE_TAP_WINDOW = 350;
 /** Scroll-save debounce delay. */
 export const SCROLL_SAVE_DEBOUNCE = 200;
 
+/**
+ * Delay before re-reading the DB after triggering wake-sync when we
+ * know only a small burst of JSONL was just written (e.g. ESC → CLI
+ * writes a "Request interrupted" marker). Mirrors the backend
+ * JSONL_FLUSH_DELAY env var (default 0.15s).
+ */
+export const JSONL_FLUSH_DELAY_MS = 150;
+
+/**
+ * Delay before re-reading the DB after a user-initiated manual refresh
+ * (the in-chat sync button, pull-to-refresh). Larger than the flush
+ * delay because the sync loop may be importing a long tail of JSONL.
+ */
+export const SYNC_SETTLE_DELAY = 800;
+
+/**
+ * Delay before reloading the agent list after a global wake-sync-all +
+ * scan. Bigger still because every agent's sync loop is competing.
+ */
+export const SYNC_SETTLE_DELAY_GLOBAL = 1000;
+
 /** Lightbox swipe navigation threshold (px). */
 export const SWIPE_THRESHOLD = 80;
 
