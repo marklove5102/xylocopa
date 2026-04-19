@@ -4047,9 +4047,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             }
             // Kick the sync loop so freshly-written JSONL entries
             // (e.g. "Request interrupted by user", "/loop resuming"
-            // system markers) get imported right away.
+            // system markers) get imported right away. Short delay
+            // gives the sync loop a tick to write to DB before we
+            // re-read it — same pattern as the manual refresh button.
             wakeSync(id).catch(() => {});
-            loadData();
+            setTimeout(() => loadData(), 150);
           } catch (e) { showToast(e.message || "Escape failed", "error"); }
         } : null}
         escapeDisabled={isStopped || isError}
