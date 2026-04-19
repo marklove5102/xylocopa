@@ -615,6 +615,9 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             ad._stop_generating(ctx.agent_id)
             # unread + notify
             _sh_db = SessionLocal()
+            _sh_project = None
+            _sh_status = None
+            _sh_bumped = False
             try:
                 _sh_agent = _sh_db.get(Agent, ctx.agent_id)
                 if _sh_agent:
@@ -623,11 +626,23 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                         _sh_agent.id, _sh_agent.tmux_pane
                     ):
                         _sh_agent.unread_count += 1
+                        _sh_bumped = True
                     _sh_db.commit()
+                    _sh_project = _sh_agent.project
+                    _sh_status = _sh_agent.status.value
                     if not _is_sub:
                         ad._maybe_notify_message(_sh_agent)
             finally:
                 _sh_db.close()
+            # Broadcast immediately so frontend subscribers (e.g. the FAB
+            # unread badge) update in sync with the APNs push, instead of
+            # waiting for the per-turn emit at the end of sync import (which
+            # can lag 2-3s when importing large deltas / thumbnails).
+            if _sh_bumped and _sh_project is not None:
+                from websocket import emit_agent_update
+                ad._emit(emit_agent_update(
+                    ctx.agent_id, _sh_status or "IDLE", _sh_project,
+                ))
             # mark slash commands completed
             import slash_commands as _sc
             _sc.mark_completed(ctx.agent_id)
