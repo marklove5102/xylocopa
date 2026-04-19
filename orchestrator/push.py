@@ -6,6 +6,7 @@ Backend: Web Push (VAPID) — browser-based, works when PWA is open.
 import json
 import logging
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 
 import requests as _requests
 
@@ -16,6 +17,11 @@ from config import (
 )
 
 logger = logging.getLogger("orchestrator.push")
+
+# Shared pool for parallel webpush sends. Each push is an HTTPS round-trip
+# (TLS + POST to Apple/Google/Mozilla) ~200-250ms; doing them serially used
+# to stack up to 11*250ms ≈ 2.5s on the caller's hot path.
+_push_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="webpush")
 
 
 def is_notification_enabled(category: str) -> bool:
@@ -63,9 +69,7 @@ def _send_webpush(title: str, body: str, url: str = "/") -> None:
         logger.info(
             "push send: nid=%s subs=%d title=%r", nid, len(subs), title[:60],
         )
-        expired_ids = []
-
-        for sub in subs:
+        def _send_one(sub):
             subscription_info = {
                 "endpoint": sub.endpoint,
                 "keys": {
@@ -87,14 +91,19 @@ def _send_webpush(title: str, body: str, url: str = "/") -> None:
                     "push send: nid=%s sub=%s host=%s ok",
                     nid, sub.id, parsed.netloc,
                 )
+                return None
             except WebPushException as e:
                 if hasattr(e, "response") and e.response is not None:
                     if e.response.status_code == 410:
-                        expired_ids.append(sub.id)
-                        continue
+                        return sub.id  # expired — caller deletes
                 logger.warning("Push failed for %s: %s", sub.endpoint[:60], e)
+                return None
             except Exception:
                 logger.warning("Push error for %s", sub.endpoint[:60], exc_info=True)
+                return None
+
+        # Fan out in parallel — serial was ~sum(rtts); parallel is ~max(rtt).
+        expired_ids = [r for r in _push_pool.map(_send_one, subs) if r]
 
         if expired_ids:
             db.query(PushSubscription).filter(
