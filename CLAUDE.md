@@ -55,7 +55,7 @@
 - Tests: test_multi_question.py
 - Build (frontend): `cd frontend && npx vite build && pm2 reload xylocopa-frontend` — required after a frontend-only edit (prod-build mode, no HMR). Skip the manual build if you're about to restart anyway: both `./run.sh restart` and `/api/system/restart` auto-detect stale dist/ and rebuild first
 - Test (frontend): `cd frontend && npx vitest run`
-- Verify backend: `cd orchestrator && python3 -c "from models import *; print('OK')"`
+- Verify backend: `cd orchestrator && ../.venv/bin/python -c "from models import *; print('OK')"` (use the project venv — system python lacks the deps)
 - Restart: `./run.sh` or POST `/api/system/restart` (both auto-rebuild stale frontend before restart)
 - Logs: `logs/server.log`, `logs/orchestrator.log`
 
