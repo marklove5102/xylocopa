@@ -53,6 +53,7 @@ Watch everything happen in real time — from your desk or your phone.
 
 - **Mobile-first web UI** — a full PWA you can add to your Home Screen. Works on any device, any screen size.
 - **Split screen** — monitor 2, 3, or 4 agents side by side (2-column, 3-column, 2x2 grid on desktop; stacked on mobile). Each pane navigates independently.
+- **Jump-to-unread FAB** — the floating split-screen button doubles as a live unread badge. When any agent has new messages, the button turns cyan and shows the unread count; tap it to jump straight into the oldest unread conversation (FIFO), and the badge decrements as you work through them. Long-press still opens split screen. Updates are event-driven over WebSocket, so the badge lights up in sync with the push notification — no polling delay.
 - **Rich chat interface** — markdown rendering, inline image and media preview, interactive cards for tool approvals and plan review. Approve, deny, or respond to agents directly in the conversation.
 - **Dual-directional CLI sync** — CLI sessions appear in the web app, web app sessions are resumable from the CLI. Attach to any agent's terminal with `tmux attach -t xy-<agent-id prefix>` (legacy `ah-` sessions still attach for back-compat) and keep working from your keyboard. One conversation history, two interfaces.
 
@@ -240,6 +241,7 @@ For Android, macOS, Windows, and Linux — see [detailed instructions](docs/inst
 - **Conversation appears stuck or not updating?** — Try clicking the **refresh button** at the top of the chat view. This manually re-syncs the agent's session data from the CLI and often resolves display issues without restarting the agent.
 - **Agent shows IDLE after server restart but is still running?** — When the backend restarts while agents are executing, their status may temporarily show as IDLE even though the underlying Claude CLI process is still active. This is normal — the status will automatically restore to EXECUTING the next time the agent makes a tool call (which triggers a heartbeat via the `agent-tool-activity` hook). If the agent is in a long thinking phase with no tool calls, you can wait or send it a message to trigger activity.
 - **Don't name tmux sessions with the `xy-` or `ah-` prefix** — Xylocopa uses `xy-{id}` as its internal naming convention for managed agent sessions (legacy `ah-{id}` is also still recognized for back-compat). User-created tmux sessions starting with either prefix will not be detected or synced by the orchestrator.
+- **PWA stuck on a perpetual loading screen (iPhone or other device)?** — The Service Worker on the device is likely holding a stale precache from a previous deploy. From the host, run `python tools/push_reset.py list` to identify the device's subscription, then `python tools/push_reset.py <sub_id>` to send a reset push. The SW will clear its caches, unregister itself, and show a "Reset done" notification. After that, fully close the PWA on the device (e.g. swipe up from the iOS app switcher) and reopen it for a clean fetch. Use `python tools/push_reset.py all` to reset every device at once.
 
 ## Known Issues
 
