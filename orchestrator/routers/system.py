@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 import base64
@@ -24,6 +26,39 @@ from route_helpers import IMPORT_CHECK_TIMEOUT as _IMPORT_CHECK_TIMEOUT, API_REQ
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["system"])
+
+
+# Reload-storm detector: counts full-page reload markers per client IP.
+# `patch-failed` fires once per fresh page load (inline script in index.html
+# runs on every navigation/reload), so it's a reliable reload marker that
+# can't be faked by normal pagehide/visibilitychange traffic.
+_RELOAD_STORM_WINDOW_SEC = 60
+_RELOAD_STORM_THRESHOLD = 5
+_RELOAD_STORM_COOLDOWN_SEC = 60
+_reload_ts_by_ip: dict = defaultdict(lambda: deque(maxlen=20))
+_reload_storm_last_warned: dict = {}
+
+
+def _check_reload_storm(ip: str, reason: str, path: str) -> None:
+    if reason != "patch-failed":
+        return
+    now = time.monotonic()
+    dq = _reload_ts_by_ip[ip]
+    dq.append(now)
+    cutoff = now - _RELOAD_STORM_WINDOW_SEC
+    while dq and dq[0] < cutoff:
+        dq.popleft()
+    if len(dq) < _RELOAD_STORM_THRESHOLD:
+        return
+    last_warned = _reload_storm_last_warned.get(ip, 0)
+    if now - last_warned < _RELOAD_STORM_COOLDOWN_SEC:
+        return
+    _reload_storm_last_warned[ip] = now
+    logger.error(
+        "RELOAD_STORM: ip=%s reloaded %d times in last %ds (threshold=%d) path=%s "
+        "— likely SW update loop or crashed frontend",
+        ip, len(dq), _RELOAD_STORM_WINDOW_SEC, _RELOAD_STORM_THRESHOLD, path,
+    )
 
 
 # ---- Certificate download (for mobile trust setup) ----
@@ -331,6 +366,8 @@ async def auth_diag(request: Request):
             "RELOAD_TRACE: reason=%s path=%s persisted=%s%s stack=%s",
             reason, path, persisted, extras_str, stack,
         )
+        ip = request.client.host if request.client else "unknown"
+        _check_reload_storm(ip, reason, path)
     else:
         since_ms = body.get("since_login_ms", "?")
         has_token = body.get("has_token", "?")

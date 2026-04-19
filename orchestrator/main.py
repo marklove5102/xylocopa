@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 
 # Clear Claude Code nesting-detection vars from the orchestrator process
@@ -112,6 +113,8 @@ async def lifespan(app: FastAPI):
 
     logger.info("Xylocopa starting up...")
     _main_event_loop = asyncio.get_event_loop()
+
+    _check_frontend_dist_staleness()
 
     # One-time migration: rename legacy ~/.agenthive → ~/.xylocopa if needed
     try:
@@ -283,6 +286,31 @@ async def lifespan(app: FastAPI):
     logger.info("Xylocopa shutting down...")
 
 
+def _check_frontend_dist_staleness():
+    # If any frontend/src file is newer than dist/index.html, someone committed
+    # but didn't rebuild — old build is still being served. This warning makes
+    # that gap visible instead of silently shipping stale JS to every browser.
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    src = root / "frontend" / "src"
+    dist_index = root / "frontend" / "dist" / "index.html"
+    if not src.is_dir() or not dist_index.is_file():
+        return
+    try:
+        src_mtime = max(p.stat().st_mtime for p in src.rglob("*") if p.is_file())
+    except ValueError:
+        return
+    dist_mtime = dist_index.stat().st_mtime
+    delta = src_mtime - dist_mtime
+    if delta > 5:
+        mins = int(delta // 60)
+        logger.warning(
+            "DIST STALE: frontend/src is %ds (%dm) newer than frontend/dist/index.html "
+            "— rebuild with `cd frontend && npx vite build` or POST /api/system/restart",
+            int(delta), mins,
+        )
+
+
 def _migrate_legacy_user_dirs():
     """Rename legacy ~/.agenthive → ~/.xylocopa on startup.
 
@@ -315,6 +343,27 @@ app.add_middleware(
 
 
 # ---- Middleware ----
+
+_TIMING_SLOW_MS = float(os.environ.get("API_TIMING_SLOW_MS", "100"))
+
+
+@app.middleware("http")
+async def api_timing_logger(request: Request, call_next):
+    """Log request duration for /api/* calls, flag slow ones at WARNING."""
+    path = request.url.path
+    if not path.startswith("/api/") or path.startswith("/api/hooks/"):
+        return await call_next(request)
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    dur_ms = (time.perf_counter() - t0) * 1000.0
+    level = logging.WARNING if dur_ms >= _TIMING_SLOW_MS else logging.INFO
+    logger.log(
+        level,
+        "API_TIMING: %s %s status=%d dur=%.1fms",
+        request.method, path, response.status_code, dur_ms,
+    )
+    return response
+
 
 @app.middleware("http")
 async def hook_request_logger(request: Request, call_next):
