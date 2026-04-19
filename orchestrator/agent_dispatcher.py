@@ -2486,17 +2486,21 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
-    def _stop_generating(self, agent_id: str):
+    def _stop_generating(self, agent_id: str, *, dispatch_after_idle: bool = True):
         """Mark agent as no longer generating: in-memory set, DB status, and WS events.
 
-        Only clears state — does NOT dispatch PENDING messages.  Dispatch is
-        the caller's responsibility (sync engine does it after commit+flush
-        when it detects stop_hook_summary or interrupt in JSONL).
+        On EXECUTING → IDLE transition, schedules dispatch of any PENDING
+        message (unless `dispatch_after_idle=False`).  Covers paths that
+        flip the agent idle without going through the JSONL stop_hook_summary
+        branch in sync_engine: PostCompact hook, manual escape/stop, sync
+        task cleanup, generating-agents fallback, etc.  Idempotent with the
+        explicit dispatch_pending_message calls in sync_engine.
         """
         gid = self._generation_ids.get(agent_id)
         self._generating_agents.discard(agent_id)
         from websocket import emit_agent_stream_end, emit_agent_update
         self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
+        transitioned_to_idle = False
         db = SessionLocal()
         try:
             agent = db.get(Agent, agent_id)
@@ -2508,11 +2512,15 @@ Here are the day's conversations (with timestamps):
                 if agent.status == AgentStatus.EXECUTING:
                     agent.status = AgentStatus.IDLE
                     changed = True
+                    transitioned_to_idle = True
                     self._emit(emit_agent_update(agent_id, "IDLE", agent.project or ""))
                 if changed:
                     db.commit()
         finally:
             db.close()
+
+        if dispatch_after_idle and transitioned_to_idle:
+            asyncio.ensure_future(self.dispatch_pending_message(agent_id, delay=0))
 
     async def dispatch_pending_message(self, agent_id: str, delay: float = 0):
         """Dispatch the first PENDING user message to the agent's tmux pane.
@@ -2542,6 +2550,21 @@ Here are the day's conversations (with timestamps):
 
             agent = db.get(Agent, agent_id)
             if not agent or not agent.tmux_pane:
+                return
+
+            # Don't dispatch into a busy pane: Claude may be in a TUI prompt
+            # (permission, AskUserQuestion, ExitPlanMode) where send-keys
+            # lands in the wrong UI and never reaches the prompt input,
+            # leaving the message stuck QUEUED with no UserPromptSubmit.
+            # Stop hook will re-trigger dispatch when the agent truly idles.
+            if agent.status == AgentStatus.EXECUTING or agent.generating_msg_id:
+                logger.info(
+                    "dispatch_pending: agent %s busy (status=%s, generating=%s) — leaving %s PENDING for stop hook",
+                    agent_id[:8],
+                    agent.status.value if agent.status else None,
+                    bool(agent.generating_msg_id),
+                    pending_msg.id[:8],
+                )
                 return
 
             if not verify_tmux_pane(agent.tmux_pane):
