@@ -29,6 +29,36 @@ self.addEventListener("push", (event) => {
     // use defaults
   }
 
+  // Admin reset: clear all caches + unregister this SW. Sent by
+  // tools/push_reset.py to recover devices stuck on a stale SW.
+  // iOS Web Push requires a visible notification per push, so we show
+  // a brief "reset done" toast — user manually closes & reopens the PWA
+  // afterwards for a clean fetch (no SW left to intercept).
+  if (data.type === "reset") {
+    const shownPromise = self.registration
+      .showNotification("Xylocopa", {
+        body: "Reset done — please re-open the app",
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data: { nid: data.nid },
+      })
+      .then(() => true, () => false);
+
+    event.waitUntil(
+      shownPromise.then(async (shown) => {
+        try {
+          const names = await caches.keys();
+          await Promise.all(names.map((n) => caches.delete(n)));
+        } catch { /* best-effort */ }
+        try {
+          await self.registration.unregister();
+        } catch { /* best-effort */ }
+        return sendAck(data.nid, shown);
+      }),
+    );
+    return;
+  }
+
   const shownPromise = self.registration
     .showNotification(data.title, {
       body: data.body,
