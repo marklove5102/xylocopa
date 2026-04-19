@@ -69,7 +69,7 @@ export default function SplitScreenButton() {
         defaultPosition={defaultPos}
         onClick={handleTap}
         onLongPress={handleLongPress}
-        className="w-11 h-11 flex items-center justify-center rounded-full bg-cyan-500 hover:bg-cyan-400 shadow-lg shadow-cyan-500/30 text-white font-semibold text-sm transition-colors"
+        className="w-11 h-11 flex items-center justify-center rounded-full bg-cyan-500 hover:bg-cyan-400 shadow-lg text-white font-semibold text-sm transition-colors"
       >
         {label}
       </DraggableFab>
