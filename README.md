@@ -12,6 +12,8 @@
 </p>
 
 
+**Xylocopa — a hive for your AI agents.**
+
 **All your AI worker bees in one hive. 🐝**
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea) — the blue carpenter bee._
