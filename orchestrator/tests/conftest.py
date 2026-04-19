@@ -20,33 +20,38 @@ from models import Agent, AgentMode, AgentStatus, Base, Message, MessageRole, Me
 
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_test_tmux_sessions():
-    """Kill orphan ``xy-*`` tmux sessions left behind by dispatch tests.
+    """Kill orphan ``xy-*`` tmux sessions spawned by this pytest run.
 
     Tests hit ``/api/v2/tasks/{id}/dispatch`` through the ASGI client, which
     runs production code that calls real ``tmux new-session``. Claude itself
     fails fast on ``/tmp/`` fixture dirs (not a git repo), but the wrapping
-    bash shell + tmux session linger forever. Filtering by cwd under ``/tmp/``
-    avoids touching real production agents.
+    bash shell + tmux session linger forever. Snapshot existing ``xy-*``
+    sessions at startup and only kill ones that appeared during the run, so
+    pre-existing production agents are never touched.
     """
-    yield
     import subprocess as _sp
-    try:
-        result = _sp.run(
-            ["tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_current_path}"],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, _sp.SubprocessError):
-        return
-    if result.returncode != 0:
-        return
-    for line in result.stdout.splitlines():
-        parts = line.split(maxsplit=1)
-        if len(parts) != 2:
-            continue
-        name, cwd = parts
-        if name.startswith("xy-") and cwd.startswith("/tmp/"):
-            _sp.run(["tmux", "kill-session", "-t", name],
-                    capture_output=True, timeout=5)
+
+    def _list_xy_sessions() -> set[str]:
+        try:
+            result = _sp.run(
+                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, _sp.SubprocessError):
+            return set()
+        if result.returncode != 0:
+            return set()
+        return {
+            line.strip() for line in result.stdout.splitlines()
+            if line.strip().startswith("xy-")
+        }
+
+    pre_existing = _list_xy_sessions()
+    yield
+    new_sessions = _list_xy_sessions() - pre_existing
+    for name in new_sessions:
+        _sp.run(["tmux", "kill-session", "-t", name],
+                capture_output=True, timeout=5)
 
 
 @pytest.fixture()
