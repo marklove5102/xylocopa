@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useState, useRef } from "react";
 import DraggableFab from "./DraggableFab";
 import { fetchUnreadList, getAuthToken } from "../lib/api";
+import { useWebSocketContext } from "../contexts/WebSocketContext";
 
 const defaultPos = () => ({
   x: window.innerWidth - 64,
@@ -14,30 +15,50 @@ export default function SplitScreenButton() {
   const [unreadAgents, setUnreadAgents] = useState([]);
   const pathnameRef = useRef(location.pathname);
   pathnameRef.current = location.pathname;
+  const { subscribe } = useWebSocketContext();
 
   // Hide on split screen page itself and on login
   const hidden = location.pathname === "/split" || location.pathname === "/login";
 
-  // Poll unread agent list (oldest-first FIFO).  Only when not hidden.
+  // Event-driven refresh: WebSocket new_message / agent_update fire
+  // almost simultaneously with the backend's unread_count++ and push
+  // notification, so the FAB should update in near-real-time rather
+  // than waiting for the 5s poll tick.  Polling stays as a safety net
+  // for missed events (reconnect gaps, etc.).
   useEffect(() => {
     if (hidden) return;
     let cancelled = false;
+    let debounceTimer = null;
     const poll = () => {
       if (!getAuthToken()) return;
       fetchUnreadList()
         .then((r) => { if (!cancelled) setUnreadAgents(r.agents || []); })
         .catch(() => { /* network blips fine — next tick retries */ });
     };
+    const pollDebounced = () => {
+      if (debounceTimer) return;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        poll();
+      }, 150);
+    };
     poll();
     const id = setInterval(poll, 5000);
     const onDataChanged = () => poll();
     window.addEventListener("agents-data-changed", onDataChanged);
+    const unsub = subscribe((event) => {
+      if (event.type === "new_message" || event.type === "agent_update") {
+        pollDebounced();
+      }
+    });
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener("agents-data-changed", onDataChanged);
+      unsub();
     };
-  }, [hidden]);
+  }, [hidden, subscribe]);
 
   const unreadTotal = unreadAgents.reduce((s, a) => s + (a.unread_count || 0), 0);
   const hasUnread = unreadAgents.length > 0 && unreadTotal > 0;
