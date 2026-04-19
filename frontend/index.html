@@ -57,7 +57,7 @@
     <script>
       (function(){
         // Force-clear stale PWA caches — bump version to trigger
-        var CV="v2";
+        var CV="v3";
         if(navigator.serviceWorker&&!localStorage.getItem("ah-cv-"+CV)){
           navigator.serviceWorker.getRegistrations().then(function(regs){
             var p=regs.map(function(r){return r.unregister()});
