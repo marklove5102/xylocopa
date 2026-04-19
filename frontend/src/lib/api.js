@@ -248,6 +248,7 @@ export const fetchAgents = (params = "") =>
   request(`/api/agents${params ? `?${params}` : ""}`);
 export const fetchAgent = (id) => request(`/api/agents/${id}`);
 export const fetchUnreadCount = () => request("/api/agents/unread");
+export const fetchUnreadList = () => request("/api/agents/unread-list");
 export const createAgent = (data) =>
   request("/api/agents", { method: "POST", body: JSON.stringify(data) });
 export const renameAgent = (id, name) =>

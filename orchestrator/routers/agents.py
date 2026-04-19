@@ -1591,6 +1591,29 @@ async def agents_unread_count(db: Session = Depends(get_db)):
     return {"unread": int(total)}
 
 
+@router.get("/api/agents/unread-list")
+async def agents_unread_list(db: Session = Depends(get_db)):
+    """Unread agents sorted oldest-first (FIFO) for the notification-jump FAB."""
+    rows = (
+        db.query(Agent.id, Agent.unread_count, Agent.last_message_at)
+        .filter(Agent.is_subagent == False)  # noqa: E712
+        .filter(Agent.unread_count > 0)
+        .order_by(Agent.last_message_at.asc().nulls_last(), Agent.created_at.asc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "agents": [
+            {
+                "id": r[0],
+                "unread_count": int(r[1] or 0),
+                "last_message_at": r[2].isoformat() if r[2] else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/api/messages/search", response_model=MessageSearchResponse)
 async def search_messages(
     q: str,
