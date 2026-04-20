@@ -574,6 +574,21 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
                   if (consecutiveOk >= 2 && h?.status === "ok") {
                     clearInterval(pollRef.current);
                     pollRef.current = null;
+                    // Wipe SW + Cache Storage before reload so the tab
+                    // picks up the freshly-built bundle. Plain reload()
+                    // would still be served by the old SW precache.
+                    try {
+                      if ("serviceWorker" in navigator) {
+                        const regs = await navigator.serviceWorker.getRegistrations();
+                        await Promise.all(regs.map((r) => r.unregister()));
+                      }
+                      if ("caches" in window) {
+                        const keys = await caches.keys();
+                        await Promise.all(keys.map((k) => caches.delete(k)));
+                      }
+                    } catch (e) {
+                      console.warn("SW/cache cleanup failed before reload:", e);
+                    }
                     window.location.reload();
                   }
                 } catch (err) {
