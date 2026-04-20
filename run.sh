@@ -160,6 +160,11 @@ case "$CMD" in
         echo ""
         pm2 status
         echo ""
+        # Refresh dump.pm2 so a future reboot resurrects the current config.
+        # pm2 resurrect replays dump.pm2 verbatim — it does not re-read
+        # ecosystem.config.cjs or .env — so a stale dump would bring the
+        # service back with whatever env was saved last, not what's running now.
+        pm2 save >/dev/null 2>&1 || true
         echo "Xylocopa running at https://localhost:${FPORT}"
         ;;
     *)

@@ -367,26 +367,40 @@ async function main() {
   `);
 
   step(9, 'Launch');
-  if (await confirm('Start Xylocopa now?')) {
+  const startNow = await confirm('Start Xylocopa now?');
+  if (startNow) {
     process.chdir(ROOT);
     run(`bash "${path.join(ROOT, 'run.sh')}" start`);
+  }
 
-    // Auto-start on boot
-    console.log();
-    if (await confirm('Enable auto-start on boot? (pm2 startup)')) {
+  // Auto-start on boot — asked independently of "start now" so users who
+  // decline the immediate launch can still opt in.
+  //
+  // Why this matters beyond convenience: running pm2 startup moves the pm2
+  // daemon into a systemd user service (Linux) or launchd agent (macOS),
+  // lifting it out of whatever terminal scope it was spawned in. On Linux
+  // that escapes the GNOME Terminal's vte-spawn cgroup, which systemd-oomd
+  // can SIGKILL wholesale under memory pressure — taking backend+frontend
+  // with it. pm2 save persists the current process list so boot-time
+  // resurrect brings everything back.
+  console.log();
+  if (await confirm('Enable auto-start on boot? (pm2 startup)')) {
+    if (startNow) {
       run('pm2 save', { allowFail: true });
-      console.log();
-      run('pm2 startup', { allowFail: true });
-      console.log(`\n  ${DIM}If pm2 printed a sudo command above, copy and run it to complete setup.${R}`);
+    } else {
+      warn('Skipping pm2 save — no running processes to persist yet.');
+      warn('After first "./run.sh start", run "pm2 save" to record them.');
     }
-  } else {
+    console.log();
+    run('pm2 startup', { allowFail: true });
+    console.log(`\n  ${DIM}If pm2 printed a sudo command above, copy and run it to complete setup.${R}`);
+  }
+
+  if (!startNow) {
     console.log(`
   To start later:
     ${B}cd ${ROOT}${R}
     ${B}./run.sh${R}
-
-  To enable auto-start on boot:
-    ${B}./run.sh startup${R}
     `);
   }
 }

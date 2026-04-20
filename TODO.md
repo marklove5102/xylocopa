@@ -9,7 +9,46 @@ _(empty)_
 
 ## Medium
 
-_(empty)_
+### Offline-robust adoption of externally-created CLI sessions
+When a user runs `claude` outside the Xylocopa webapp, adoption depends entirely
+on the `SessionStart` hook POSTing to `/api/hooks/agent-session-start` live.
+If the backend is down at that exact moment, the session is lost to adoption
+forever (until the user manually restarts the `claude` process).
+
+**Observed.** 2026-04-19: backend was killed by systemd-oomd at 20:12; user
+started `claude` in `/home/jyao073/xylocopa` at 21:58 (cwd matches the
+registered `xylocopa` project); backend restarted at 21:59 via `./run.sh`.
+The session ran fine but never surfaced in the unlinked-sessions UI because
+the hook's HTTP POST at 21:58 hit connection-refused and the offline branch
+in `orchestrator/hooks/session-start.sh` only writes a signal file when
+`AGENT_ID` is non-empty (managed agent). Unmanaged sessions silently exit.
+
+**Why Medium, not High.** Backend uptime is now materially better after the
+pm2-systemd migration (oomd can no longer SIGKILL the vte-spawn scope that
+pm2 was living in). This bug only bites during backend-down windows, which
+should be rare going forward. But the failure mode is silent, so it's worth
+fixing before the next time it matters.
+
+**Fix A (small, ~40 lines).** Add an unmanaged-offline fallback to
+`session-start.sh`: when the HTTP POST fails and `AGENT_ID` is empty, write
+`/tmp/xy-pending-sessions/<session_id>.json` with `session_id`, `cwd`,
+`tmux_pane`, and a timestamp. On backend startup, scan that directory and
+replay each entry through the same `_write_unlinked_entry()` path the hook
+handler uses, then unlink the files. Covers the exact failure above.
+
+**Fix B (larger, true tmux polling).** The docstring at
+`routers/hooks.py:1125` claims a "polling-based tmux scan fallback" exists
+as a complement to the push path — it does not. Implement it: periodically
+`tmux list-panes -a -F '#{pane_pid} #{session_name}'`, walk each pane's
+child process tree for a `claude` executable, compare session names against
+`xy-*`/`ah-*` prefix and the `agents.tmux_pane` column, and write unlinked
+entries for the diff. This covers the "user never runs claude live while
+backend is up" case too (e.g. started claude, claude restarts its own
+session internally, hook retry window missed, etc.).
+
+**Recommendation.** Ship Fix A first. Consider Fix B only if the silent-loss
+pattern recurs despite Fix A, or if we want adoption to work for users whose
+hooks are not installed at all.
 
 ## Low
 

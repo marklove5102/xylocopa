@@ -176,26 +176,15 @@ Verify by opening `https://<machine-ip>:3000` on the host.
 
 #### Auto-Start on Reboot (PM2)
 
-Xylocopa uses PM2 to manage its processes. By default, PM2 does **not** auto-start after a system reboot. To enable it:
+Strongly recommended, not just for reboot survival: this step also moves the pm2 daemon out of the terminal session that spawned it. On Linux that matters because systemd-oomd can SIGKILL an entire terminal cgroup (e.g. GNOME Terminal's `vte-spawn-*.scope`) under memory pressure, taking backend+frontend with it. On macOS the equivalent benefit is that pm2 no longer dies if you close Terminal.app.
 
 ```bash
-# 1. Make sure Xylocopa is running
-./run.sh start
-
-# 2. Save the current process list
-pm2 save
-
-# 3. Install the systemd startup hook (one-time, requires sudo)
-pm2 startup systemd
-# PM2 will print a command starting with `sudo env PATH=...` — copy and run it exactly as shown.
+./run.sh startup
 ```
 
-After this, Xylocopa will automatically start when the machine boots.
+This runs `pm2 save` + `pm2 startup` with auto-detection (systemd on Linux, launchd on macOS). On Linux it will print a `sudo env PATH=... pm2 startup systemd ...` line — copy and run it exactly as shown. On macOS no sudo is needed.
 
-To disable auto-start later:
-```bash
-pm2 unstartup systemd
-```
+To disable later: `pm2 unstartup` (same auto-detection).
 
 #### Set Up Your Projects
 
@@ -246,6 +235,7 @@ For Android, macOS, Windows, and Linux — see [detailed instructions](docs/inst
 ## Known Issues
 
 - **iPad & mobile browser layout** — layout needs further optimization for iPad and non-PWA mobile browsers. There are minor visual quirks on iPad standalone mode. Tested and working correctly on iPhone (Add to Home Screen) and desktop browsers.
+- **CLI sessions started while backend is offline are silently missed** — adoption of externally-created `claude` CLI sessions relies on the `SessionStart` hook reaching the backend over HTTP. If the backend happens to be down at that moment (e.g. a crash, oomd kill, or manual restart window), the hook's offline fallback only persists managed-agent signal files — unmanaged session markers are dropped, and there is no startup rescan. The session will run normally but never appear in the "unlinked sessions" adoption UI. Workaround: after the backend is back, exit and re-launch `claude` in the same tmux pane so the hook fires again. Tracked in `TODO.md`.
 
 ## Roadmap
 
