@@ -1482,11 +1482,12 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-[auto_auto_1fr_auto] gap-y-2 gap-x-2 items-center">
-          <ModelSelector value={model} onChange={setModel} />
-          <EffortSelector value={effort} onChange={setEffort} />
-          <div />
-          <label className="flex items-center gap-1.5 cursor-pointer">
+        <div className="grid grid-cols-[1fr_max-content] gap-y-2 gap-x-2 items-center">
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            <ModelSelector value={model} onChange={setModel} />
+            <EffortSelector value={effort} onChange={setEffort} />
+          </div>
+          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <div
               role="switch"
               aria-checked={skipPermissions}
@@ -1497,7 +1498,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </div>
             <span className="text-sm text-label">Auto</span>
           </label>
-          <div className="col-span-2 flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <button
               type="button"
               onClick={async () => {
@@ -1508,7 +1509,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 setWorktree(val);
                 try { localStorage.setItem(`pref:project-agent:${name}:worktree`, val); } catch {}
               }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
                 worktree
                   ? "bg-purple-500/15 text-purple-400 ring-1 ring-purple-500/30"
                   : "bg-elevated text-dim hover:text-label"
@@ -1530,8 +1531,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               />
             )}
           </div>
-          <div />
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <div
               role="switch"
               aria-checked={linkTask}
