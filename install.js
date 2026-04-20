@@ -96,6 +96,21 @@ async function main() {
     if (fs.existsSync(path.join(ROOT, 'orchestrator', 'main.py'))) {
       info(`Xylocopa already cloned at ${ROOT}`);
     } else {
+      if (!which('git')) {
+        warn('git is required to clone the repository but was not found');
+        if (await confirm('Install git now?')) {
+          if (PLATFORM === 'darwin') {
+            if (!which('brew')) fail('Homebrew is required on macOS.\n    Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"');
+            run('brew install git');
+          } else {
+            run('sudo apt-get update -qq && sudo apt-get install -y -qq git');
+          }
+          if (!which('git')) fail('git installation did not succeed — please install git manually and re-run.');
+          info('git installed');
+        } else {
+          fail('Cannot clone repository without git. Install git and re-run.');
+        }
+      }
       info(`Cloning Xylocopa to ${ROOT}...`);
       run(`git clone https://github.com/jyao97/xylocopa.git "${ROOT}"`);
       info('Repository cloned');
