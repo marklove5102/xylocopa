@@ -2465,6 +2465,32 @@ Here are the day's conversations (with timestamps):
         # No wake event → sync loop is dead.  Restart if possible.
         return self._ensure_sync_running(agent_id)
 
+    async def _drain_session_sync(self, agent_id: str) -> bool:
+        """Synchronously import any pending JSONL turns for an agent.
+
+        Called from PreCompact hook before compact_notified pauses the sync
+        loop — ensures the old session's final turns land in the DB (with
+        created_at reflecting their true time) before the JSONL is rewritten.
+        Returns True if the drain ran, False if no sync context/lock exists.
+        """
+        ctx = self._sync_contexts.get(agent_id)
+        sync_lock = self._sync_locks.get(agent_id)
+        if ctx is None or sync_lock is None:
+            return False
+        from sync_engine import sync_import_new_turns
+        async with sync_lock:
+            try:
+                result = await sync_import_new_turns(self, ctx)
+                logger.info(
+                    "drain_session_sync: agent %s result=%s",
+                    agent_id[:8], result,
+                )
+            except Exception:
+                logger.exception(
+                    "drain_session_sync failed for agent %s", agent_id[:8],
+                )
+        return True
+
     def _ensure_sync_running(self, agent_id: str) -> bool:
         """Restart the sync loop for an agent if it's not running."""
         task = self._sync_tasks.get(agent_id)

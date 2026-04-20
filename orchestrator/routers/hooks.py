@@ -660,8 +660,17 @@ async def hook_agent_tool_activity(request: Request):
         if ad:
             ad._start_generating(agent_id, msg_id=_compact_msg_id or "compact")
             logger.info("PreCompact: started generating for %s", agent_id[:8])
-        # Pause sync — JSONL is being rewritten
+        # Drain the old session's pending JSONL turns into the DB before
+        # compact rewrites the file.  Without this, any turn produced in
+        # the hook-silent window since the last sync (e.g. final assistant
+        # reasoning before /compact) would only appear later with a
+        # post-rotation created_at and mis-order against the rotation
+        # marker.
         if ad and ad._sync_contexts.get(agent_id):
+            from config import JSONL_FLUSH_DELAY
+            await asyncio.sleep(JSONL_FLUSH_DELAY)
+            await ad._drain_session_sync(agent_id)
+            # Now pause sync — JSONL is about to be rewritten
             ad._sync_contexts[agent_id].compact_notified = True
     else:
         return {}
