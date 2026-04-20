@@ -221,6 +221,8 @@ function AppRoutes({ themeProps }) {
     if (path && path !== "/login" && path !== "/" && path !== "/split" && !path.startsWith("/new")) {
       localStorage.setItem("ah:last-route", path);
     }
+    // eslint-disable-next-line no-console
+    console.log(`[nav] → ${path} @ ${performance.now().toFixed(0)}ms`);
   }, [location.pathname]);
 
   // On first mount, redirect to last-visited route

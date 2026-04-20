@@ -97,6 +97,14 @@ function handle401(requestToken) {
   throw new Error("Not authenticated");
 }
 
+const _API_SLOW_MS = 300;
+
+function _logTiming(method, url, status, durMs) {
+  const tag = durMs >= _API_SLOW_MS ? "[api SLOW]" : "[api]";
+  // eslint-disable-next-line no-console
+  console.log(`${tag} ${method} ${url} → ${status} ${durMs.toFixed(0)}ms`);
+}
+
 async function request(url, opts = {}) {
   const headers = { "Content-Type": "application/json", ...opts.headers };
   const token = getAuthToken();
@@ -104,7 +112,10 @@ async function request(url, opts = {}) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
+  const method = opts.method || "GET";
+  const t0 = performance.now();
   const res = await fetch(`${BASE}${url}`, { ...opts, headers });
+  _logTiming(method, url, res.status, performance.now() - t0);
 
   if (res.status === 401) handle401(token);
 
