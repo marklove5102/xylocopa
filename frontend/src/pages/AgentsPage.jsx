@@ -275,12 +275,24 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     return () => clearInterval(pollRef.current);
   }, [load, loadUnlinked, visible]);
 
-  // Real-time status updates via WebSocket (agent_update events)
+  // Real-time status updates via WebSocket (agent_update events).
+  // Backend now attaches unread_count / last_message_preview / last_message_at
+  // so the badge and preview update without waiting for the 5s poll tick.
   useWsEvent(useCallback((event) => {
     if (event.type !== "agent_update") return;
-    const { agent_id, status } = event.data;
+    const d = event.data || {};
+    const { agent_id } = d;
+    if (!agent_id) return;
     setAgents((prev) =>
-      prev.map((a) => (a.id === agent_id ? { ...a, status } : a))
+      prev.map((a) => {
+        if (a.id !== agent_id) return a;
+        const next = { ...a };
+        if (d.status !== undefined) next.status = d.status;
+        if (d.unread_count !== undefined) next.unread_count = d.unread_count;
+        if (d.last_message_preview !== undefined) next.last_message_preview = d.last_message_preview;
+        if (d.last_message_at !== undefined) next.last_message_at = d.last_message_at;
+        return next;
+      })
     );
   }, []));
 

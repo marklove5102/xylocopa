@@ -207,6 +207,27 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
         data["insight_status"] = insight_status
     if sync_stale is not None:
         data["sync_stale"] = sync_stale
+    # Attach mutable list-view fields so the AgentsPage badge/preview
+    # update in real-time without a follow-up refetch.  PK lookup is
+    # cheap (<1ms) and always reflects latest committed state.
+    try:
+        from database import SessionLocal
+        from models import Agent
+        _db = SessionLocal()
+        try:
+            _a = _db.get(Agent, agent_id)
+            if _a is not None:
+                data["unread_count"] = _a.unread_count or 0
+                data["last_message_preview"] = _a.last_message_preview or ""
+                data["last_message_at"] = (
+                    _a.last_message_at.isoformat()
+                    if _a.last_message_at else None
+                )
+        finally:
+            _db.close()
+    except Exception:
+        logger.warning("emit_agent_update: agent lookup failed for %s",
+                       agent_id[:8], exc_info=True)
     await ws_manager.broadcast("agent_update", data)
 
 
