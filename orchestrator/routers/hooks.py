@@ -654,11 +654,13 @@ async def hook_agent_tool_activity(request: Request):
         kind = "compact"
         summary = "context compaction"
         await emit_tool_activity(agent_id, tool_name, phase)
-        # /compact skips UserPromptSubmit, so mark delivered + generating here.
-        import slash_commands as _sc
-        _compact_msg_id = _sc.mark_delivered(agent_id, "/compact")
+        # /compact skips UserPromptSubmit.  _start_generating fires now
+        # (UI shows activity); mark_delivered is deferred until AFTER the
+        # drain so the single-check appears once the old session's final
+        # turns have landed in the DB.  PostCompact then flips to double
+        # check when the compact rewrite is fully done.
         if ad:
-            ad._start_generating(agent_id, msg_id=_compact_msg_id or "compact")
+            ad._start_generating(agent_id, msg_id="compact")
             logger.info("PreCompact: started generating for %s", agent_id[:8])
         # Drain the old session's pending JSONL turns into the DB before
         # compact rewrites the file.  Without this, any turn produced in
@@ -672,6 +674,9 @@ async def hook_agent_tool_activity(request: Request):
             await ad._drain_session_sync(agent_id)
             # Now pause sync — JSONL is about to be rewritten
             ad._sync_contexts[agent_id].compact_notified = True
+        # Drain finished — mark /compact delivered (single check in UI).
+        import slash_commands as _sc
+        _sc.mark_delivered(agent_id, "/compact")
     else:
         return {}
 
