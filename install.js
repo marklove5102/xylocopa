@@ -67,6 +67,57 @@ function confirm(question, defaultYes = true) {
 
 const PLATFORM = os.platform();
 
+// ── Package manager detection + install hints ───────────────────────
+
+// Per-dep package names across package managers. Python is the only one
+// that varies meaningfully — tmux/openssl/git have consistent names.
+const DEP_PKGS = {
+  python3: { apt: 'python3 python3-pip python3-venv', dnf: 'python3 python3-pip', pacman: 'python python-pip', zypper: 'python3 python3-pip', apk: 'python3 py3-pip', brew: 'python@3.12' },
+  tmux:    { apt: 'tmux', dnf: 'tmux', pacman: 'tmux', zypper: 'tmux', apk: 'tmux', brew: 'tmux' },
+  openssl: { apt: 'openssl', dnf: 'openssl', pacman: 'openssl', zypper: 'openssl', apk: 'openssl', brew: 'openssl' },
+  git:     { apt: 'git', dnf: 'git', pacman: 'git', zypper: 'git', apk: 'git', brew: 'git' },
+};
+
+const PKG_MGRS = [
+  { key: 'brew',   install: 'brew install',                   platform: 'darwin' },
+  { key: 'apt',    install: 'sudo apt-get install -y',        platform: 'linux'  },
+  { key: 'dnf',    install: 'sudo dnf install -y',            platform: 'linux'  },
+  { key: 'pacman', install: 'sudo pacman -S --noconfirm',     platform: 'linux'  },
+  { key: 'zypper', install: 'sudo zypper install -y',         platform: 'linux'  },
+  { key: 'apk',    install: 'sudo apk add',                   platform: 'linux'  },
+];
+
+function detectPkgMgr() {
+  for (const m of PKG_MGRS) {
+    if (m.platform !== PLATFORM) continue;
+    if (which(m.key)) return m;
+  }
+  return null;
+}
+
+// Print install instructions for the given missing deps and exit.
+function failWithInstallHint(missingCmds) {
+  console.log(`\n  ${YELLOW}Missing:${R} ${missingCmds.join(', ')}\n`);
+  const mgr = detectPkgMgr();
+  if (mgr) {
+    const pkgs = missingCmds.map(c => DEP_PKGS[c][mgr.key]).filter(Boolean).join(' ');
+    console.log(`  To install, run:\n`);
+    console.log(`    ${B}${mgr.install} ${pkgs}${R}\n`);
+    console.log(`  Then re-run this installer.\n`);
+  } else if (PLATFORM === 'darwin') {
+    console.log(`  Homebrew is not installed. Install it first:\n`);
+    console.log(`    ${B}/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"${R}\n`);
+    const pkgs = missingCmds.map(c => DEP_PKGS[c].brew).filter(Boolean).join(' ');
+    console.log(`  Then install the missing packages:\n`);
+    console.log(`    ${B}brew install ${pkgs}${R}\n`);
+    console.log(`  Then re-run this installer.\n`);
+  } else {
+    console.log(`  Could not detect your package manager (checked: apt, dnf, pacman, zypper, apk).`);
+    console.log(`  Please install the missing commands manually, then re-run.\n`);
+  }
+  process.exit(1);
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -98,18 +149,7 @@ async function main() {
     } else {
       if (!which('git')) {
         warn('git is required to clone the repository but was not found');
-        if (await confirm('Install git now?')) {
-          if (PLATFORM === 'darwin') {
-            if (!which('brew')) fail('Homebrew is required on macOS.\n    Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"');
-            run('brew install git');
-          } else {
-            run('sudo apt-get update -qq && sudo apt-get install -y -qq git');
-          }
-          if (!which('git')) fail('git installation did not succeed — please install git manually and re-run.');
-          info('git installed');
-        } else {
-          fail('Cannot clone repository without git. Install git and re-run.');
-        }
+        failWithInstallHint(['git']);
       }
       info(`Cloning Xylocopa to ${ROOT}...`);
       run(`git clone https://github.com/jyao97/xylocopa.git "${ROOT}"`);
@@ -122,28 +162,11 @@ async function main() {
   // ─────────────────────────────────────────────────────────────────
   step(1, 'Checking system dependencies');
 
-  const deps = [
-    { cmd: 'python3', brew: 'python@3.12', apt: 'python3 python3-pip python3-venv' },
-    { cmd: 'tmux',    brew: 'tmux',        apt: 'tmux' },
-    { cmd: 'openssl', brew: 'openssl',     apt: 'openssl' },
-    { cmd: 'git',     brew: 'git',         apt: 'git' },
-  ];
-
-  const missing = deps.filter(d => !which(d.cmd));
+  const depCmds = ['python3', 'tmux', 'openssl', 'git'];
+  const missing = depCmds.filter(cmd => !which(cmd));
 
   if (missing.length) {
-    warn(`Missing: ${missing.map(d => d.cmd).join(', ')}`);
-    if (await confirm('Install them now?')) {
-      if (PLATFORM === 'darwin') {
-        if (!which('brew')) fail('Homebrew is required on macOS.\n    Install: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"');
-        run(`brew install ${missing.map(d => d.brew).join(' ')}`);
-      } else {
-        run(`sudo apt-get update -qq && sudo apt-get install -y -qq ${missing.map(d => d.apt).join(' ')}`);
-      }
-      info('System dependencies installed');
-    } else {
-      fail('Cannot continue without: ' + missing.map(d => d.cmd).join(', '));
-    }
+    failWithInstallHint(missing);
   } else {
     info('python3, tmux, openssl, git — all found');
   }
