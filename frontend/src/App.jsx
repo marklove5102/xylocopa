@@ -4,14 +4,15 @@ import LoginPage from "./pages/LoginPage";
 import CertGuidePage from "./pages/CertGuidePage";
 import ErrorBoundary from "./components/ErrorBoundary";
 import useTheme from "./hooks/useTheme";
-import { authCheck, clearAuthToken, fetchUnreadCount, fetchClaudeMdPending, getAuthToken } from "./lib/api";
+import { authCheck, clearAuthToken, fetchClaudeMdPending, getAuthToken } from "./lib/api";
 import { isPushSupported, setupPushNotifications, reRegisterExistingSubscription } from "./lib/pushNotifications";
 import useIdleLock from "./hooks/useIdleLock";
 import usePageVisible from "./hooks/usePageVisible";
 import { MonitorProvider } from "./contexts/MonitorContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { WebSocketProvider } from "./contexts/WebSocketContext";
-import SplitScreenButton from "./components/SplitScreenButton";
+import { UnreadProvider, useUnread } from "./contexts/UnreadContext";
+import AttentionButton from "./components/AttentionButton";
 import BottomNavBar from "./components/BottomNavBar";
 
 const MODULE_IMPORT_ERROR_PATTERNS = [
@@ -336,14 +337,16 @@ function useDebugLines() {
   return on;
 }
 
-export default function App() {
-  const { theme, toggle } = useTheme();
-  const themeProps = { theme, onToggleTheme: toggle };
+// Inner shell rendered inside the auth-gated providers
+// (WebSocketProvider → UnreadProvider). Owns the BottomNav badge,
+// AttentionButton, and PWA app-badge — all read from useUnread() so
+// they update in the same React render when any agent's unread_count
+// changes via WS.
+function AppChrome({ themeProps }) {
   const location = useLocation();
   const navigate = useNavigate();
   const hideNav = location.pathname.match(/^\/agents\/[^/]+$/) || location.pathname.match(/^\/tasks\/[^/]+$/) || location.pathname === "/login" || location.pathname === "/split";
-  const showDebug = useDebugLines();
-  const [unread, setUnread] = useState(0);
+  const { total: unread } = useUnread();
   const [claudeMdPending, setClaudeMdPending] = useState(0);
   const visible = usePageVisible();
   const pathnameRef = useRef(location.pathname);
@@ -364,19 +367,6 @@ export default function App() {
     if (!visible) return;
     const poll = () => {
       if (pathnameRef.current === "/login" || !getAuthToken()) return;
-      fetchUnreadCount().then((r) => setUnread(r.unread)).catch((err) => {
-        console.warn("Unread count poll failed:", err);
-      });
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible) return;
-    const poll = () => {
-      if (pathnameRef.current === "/login" || !getAuthToken()) return;
       fetchClaudeMdPending().then((r) => setClaudeMdPending(r.count || 0)).catch((err) => {
         console.warn("Claude MD pending poll failed:", err);
       });
@@ -385,6 +375,75 @@ export default function App() {
     const id = setInterval(poll, 30000);
     return () => clearInterval(id);
   }, [visible]);
+
+  // PWA app icon badge — agent unread count
+  useEffect(() => {
+    if (!navigator.setAppBadge) return;
+    if (unread > 0) navigator.setAppBadge(unread).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }, [unread]);
+
+  return (
+    <>
+      <ErrorBoundary>
+        <Suspense fallback={<div className="flex items-center justify-center h-full bg-page"><div className="animate-pulse text-dim text-sm">Loading...</div></div>}>
+          <AppRoutes themeProps={themeProps} />
+        </Suspense>
+      </ErrorBoundary>
+
+      {/* Attention button — FAB shows unread total, long-press opens split screen */}
+      <AttentionButton />
+
+      {/* Bottom tab bar — floating glass pill */}
+      {!hideNav && (
+        <BottomNavBar
+          className="fixed bottom-[13px] left-0 right-0 z-40 flex justify-center px-4"
+          badges={{ agents: unread, projects: claudeMdPending }}
+          onDoubleTap={handleNavDoubleTap}
+          onProjectsTap={(e) => {
+            e.preventDefault();
+            // Double-tap detection for projects
+            const now = Date.now();
+            const prev = lastTapRef.current.projects || 0;
+            lastTapRef.current.projects = now;
+            if (now - prev <= 350) {
+              lastTapRef.current.projects = 0;
+              if (!location.pathname.startsWith("/projects") || location.pathname !== "/projects") {
+                navigate("/projects", { replace: true });
+              }
+              window.dispatchEvent(new CustomEvent("nav-scroll-to-unread", { detail: { tab: "projects" } }));
+              return;
+            }
+            // Already on a /projects route → go to list
+            if (location.pathname.startsWith("/projects")) {
+              navigate("/projects", { replace: true });
+              sessionStorage.removeItem("returnedFrom:projects");
+              return;
+            }
+            const returnedFrom = sessionStorage.getItem("returnedFrom:projects");
+            const lastViewed = localStorage.getItem("lastViewed:projects");
+            if (returnedFrom) {
+              sessionStorage.removeItem("returnedFrom:projects");
+              localStorage.removeItem("lastViewed:projects");
+              navigate("/projects", { replace: true });
+            } else if (lastViewed) {
+              navigate(`/projects/${encodeURIComponent(lastViewed)}`, { replace: true });
+            } else {
+              navigate("/projects", { replace: true });
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+export default function App() {
+  const { theme, toggle } = useTheme();
+  const themeProps = { theme, onToggleTheme: toggle };
+  const location = useLocation();
+  const navigate = useNavigate();
+  const showDebug = useDebugLines();
 
   // Service Worker notification click — split-screen aware navigation
   useEffect(() => {
@@ -401,13 +460,6 @@ export default function App() {
     navigator.serviceWorker?.addEventListener("message", handler);
     return () => navigator.serviceWorker?.removeEventListener("message", handler);
   }, [location.pathname, navigate]);
-
-  // PWA app icon badge — agent unread count
-  useEffect(() => {
-    if (!navigator.setAppBadge) return;
-    if (unread > 0) navigator.setAppBadge(unread).catch(() => {});
-    else navigator.clearAppBadge?.().catch(() => {});
-  }, [unread]);
 
   // Safari iOS: after keyboard dismiss the visual viewport desyncs from
   // the layout viewport.  The ONLY thing that fixes it is an actual
@@ -467,11 +519,9 @@ export default function App() {
               <AuthGuard>
                 <WebSocketProvider>
                 <MonitorProvider>
-                <ErrorBoundary>
-                  <Suspense fallback={<div className="flex items-center justify-center h-full bg-page"><div className="animate-pulse text-dim text-sm">Loading...</div></div>}>
-                  <AppRoutes themeProps={themeProps} />
-                  </Suspense>
-                </ErrorBoundary>
+                <UnreadProvider>
+                  <AppChrome themeProps={themeProps} />
+                </UnreadProvider>
                 </MonitorProvider>
                 </WebSocketProvider>
               </AuthGuard>
@@ -479,51 +529,6 @@ export default function App() {
           />
         </Routes>
       </main>
-
-      {/* Split screen button — large screens only, always visible */}
-      <SplitScreenButton />
-
-      {/* Bottom tab bar — floating glass pill */}
-      {!hideNav && (
-        <BottomNavBar
-          className="fixed bottom-[13px] left-0 right-0 z-40 flex justify-center px-4"
-          badges={{ agents: unread, projects: claudeMdPending }}
-          onDoubleTap={handleNavDoubleTap}
-          onProjectsTap={(e) => {
-            e.preventDefault();
-            // Double-tap detection for projects
-            const now = Date.now();
-            const prev = lastTapRef.current.projects || 0;
-            lastTapRef.current.projects = now;
-            if (now - prev <= 350) {
-              lastTapRef.current.projects = 0;
-              if (!location.pathname.startsWith("/projects") || location.pathname !== "/projects") {
-                navigate("/projects", { replace: true });
-              }
-              window.dispatchEvent(new CustomEvent("nav-scroll-to-unread", { detail: { tab: "projects" } }));
-              return;
-            }
-            // Already on a /projects route → go to list
-            if (location.pathname.startsWith("/projects")) {
-              navigate("/projects", { replace: true });
-              sessionStorage.removeItem("returnedFrom:projects");
-              return;
-            }
-            const returnedFrom = sessionStorage.getItem("returnedFrom:projects");
-            const lastViewed = localStorage.getItem("lastViewed:projects");
-            if (returnedFrom) {
-              sessionStorage.removeItem("returnedFrom:projects");
-              localStorage.removeItem("lastViewed:projects");
-              navigate("/projects", { replace: true });
-            } else if (lastViewed) {
-              navigate(`/projects/${encodeURIComponent(lastViewed)}`, { replace: true });
-            } else {
-              navigate("/projects", { replace: true });
-            }
-          }}
-        />
-      )}
-
     </div>
     </ToastProvider>
     </ErrorBoundary>

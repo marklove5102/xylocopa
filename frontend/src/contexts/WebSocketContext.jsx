@@ -23,12 +23,24 @@ export function WebSocketProvider({ children }) {
   const viewingAgentsRef = useRef(new Set());
   // Subscriber callbacks — called synchronously for every WS event
   const subscribersRef = useRef(new Set());
+  // onOpen callbacks — fired each time the WS successfully opens
+  // (initial connect AND reconnects). Consumers use this to trigger
+  // an HTTP resync so they can catch up on events missed while
+  // disconnected.
+  const openSubscribersRef = useRef(new Set());
 
   // Register a callback that receives every WS event.
   // Returns an unsubscribe function.
   const subscribe = useCallback((handler) => {
     subscribersRef.current.add(handler);
     return () => subscribersRef.current.delete(handler);
+  }, []);
+
+  // Register a callback that fires every time the WS opens
+  // (including reconnects). Returns an unsubscribe function.
+  const onOpen = useCallback((handler) => {
+    openSubscribersRef.current.add(handler);
+    return () => openSubscribersRef.current.delete(handler);
   }, []);
 
   // Send a raw message to the server (if connected)
@@ -72,6 +84,13 @@ export function WebSocketProvider({ children }) {
         setConnected(true);
         reconnectDelay.current = 1000;
         _syncViewing();
+        for (const fn of openSubscribersRef.current) {
+          try {
+            fn();
+          } catch (err) {
+            console.error("WebSocket onOpen subscriber error:", err);
+          }
+        }
       };
 
       ws.onmessage = (e) => {
@@ -175,7 +194,7 @@ export function WebSocketProvider({ children }) {
   }, [_send, _syncViewing]);
 
   return (
-    <WebSocketContext.Provider value={{ subscribe, connected, sendWsMessage }}>
+    <WebSocketContext.Provider value={{ subscribe, onOpen, connected, sendWsMessage }}>
       {children}
     </WebSocketContext.Provider>
   );
@@ -185,6 +204,7 @@ export function WebSocketProvider({ children }) {
 // (e.g. during HMR transitions or stale service-worker cache).
 const _fallback = {
   subscribe: () => () => {},
+  onOpen: () => () => {},
   connected: false,
   sendWsMessage: () => {},
 };

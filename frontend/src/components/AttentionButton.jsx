@@ -1,79 +1,34 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback } from "react";
 import DraggableFab from "./DraggableFab";
-import { fetchUnreadList, getAuthToken } from "../lib/api";
-import { useWebSocketContext } from "../contexts/WebSocketContext";
+import { useUnread } from "../contexts/UnreadContext";
 
 const defaultPos = () => ({
   x: window.innerWidth - 64,
   y: window.innerHeight - 140,
 });
 
-export default function SplitScreenButton() {
+export default function AttentionButton() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [unreadAgents, setUnreadAgents] = useState([]);
-  const pathnameRef = useRef(location.pathname);
-  pathnameRef.current = location.pathname;
-  const { subscribe } = useWebSocketContext();
+  const { list, total } = useUnread();
 
   // Hide on split screen page itself and on login
   const hidden = location.pathname === "/split" || location.pathname === "/login";
 
-  // Event-driven refresh: WebSocket new_message / agent_update fire
-  // almost simultaneously with the backend's unread_count++ and push
-  // notification, so the FAB should update in near-real-time rather
-  // than waiting for the 5s poll tick.  Polling stays as a safety net
-  // for missed events (reconnect gaps, etc.).
-  useEffect(() => {
-    if (hidden) return;
-    let cancelled = false;
-    let debounceTimer = null;
-    const poll = () => {
-      if (!getAuthToken()) return;
-      fetchUnreadList()
-        .then((r) => { if (!cancelled) setUnreadAgents(r.agents || []); })
-        .catch(() => { /* network blips fine — next tick retries */ });
-    };
-    const pollDebounced = () => {
-      if (debounceTimer) return;
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        poll();
-      }, 150);
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    const onDataChanged = () => poll();
-    window.addEventListener("agents-data-changed", onDataChanged);
-    const unsub = subscribe((event) => {
-      if (event.type === "new_message" || event.type === "agent_update") {
-        pollDebounced();
-      }
-    });
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-      if (debounceTimer) clearTimeout(debounceTimer);
-      window.removeEventListener("agents-data-changed", onDataChanged);
-      unsub();
-    };
-  }, [hidden, subscribe]);
-
-  const unreadTotal = unreadAgents.reduce((s, a) => s + (a.unread_count || 0), 0);
-  const hasUnread = unreadAgents.length > 0 && unreadTotal > 0;
+  const hasUnread = total > 0 && list.length > 0;
 
   const handleTap = useCallback(() => {
     if (hasUnread) {
-      // Jump to oldest unread (FIFO — index 0 is oldest per backend sort)
-      const next = unreadAgents[0];
+      // Jump to oldest unread (FIFO — list[0] is oldest)
+      const next = list[0];
       if (next) {
         navigate(`/agents/${next.id}`);
         return;
       }
     }
     navigate("/split", { state: { initialPath: location.pathname } });
-  }, [hasUnread, unreadAgents, navigate, location.pathname]);
+  }, [hasUnread, list, navigate, location.pathname]);
 
   const handleLongPress = useCallback(() => {
     // Always open split-screen, even with unread messages (escape hatch)
@@ -83,7 +38,7 @@ export default function SplitScreenButton() {
   if (hidden) return null;
 
   if (hasUnread) {
-    const label = unreadTotal > 99 ? "99+" : String(unreadTotal);
+    const label = total > 99 ? "99+" : String(total);
     return (
       <DraggableFab
         storageKey="ah:fab-pos-split-v3"

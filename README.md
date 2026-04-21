@@ -53,7 +53,7 @@ Watch everything happen in real time — from your desk or your phone.
 
 - **Mobile-first web UI** — a full PWA you can add to your Home Screen. Works on any device, any screen size.
 - **Split screen** — monitor 2, 3, or 4 agents side by side (2-column, 3-column, 2x2 grid on desktop; stacked on mobile). Each pane navigates independently.
-- **Jump-to-unread FAB** — the split-screen button turns into a cyan unread badge when any agent has new messages. Tap to jump to the oldest unread conversation (FIFO); long-press always opens split screen.
+- **Attention button** — a draggable FAB that turns into a cyan unread badge when any agent has new messages. Tap to jump to the oldest unread conversation (FIFO); long-press always opens split screen.
 - **Rich chat interface** — markdown rendering, inline image and media preview, interactive cards for tool approvals and plan review. Approve, deny, or respond to agents directly in the conversation.
 - **Dual-directional CLI sync** — CLI sessions appear in the web app, web app sessions are resumable from the CLI. Attach to any agent's terminal with `tmux attach -t xy-<agent-id prefix>` (legacy `ah-` sessions still attach for back-compat) and keep working from your keyboard. One conversation history, two interfaces.
 
