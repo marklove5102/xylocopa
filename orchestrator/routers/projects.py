@@ -831,14 +831,6 @@ async def list_all_folders(
 
     db_projects = {p.name: p for p in db.query(Project).all()}
 
-    # Check which projects have active processes
-    active_projects = set()
-    wm = getattr(request.app.state, "worker_manager", None)
-    if wm:
-        for p in wm.list_processes():
-            if p.get("status") == "running" and p.get("project"):
-                active_projects.add(p["project"])
-
     results = []
     for dirname in all_dirs:
         proj = db_projects.get(dirname)
@@ -857,7 +849,6 @@ async def list_all_folders(
             "name": dirname,
             "display_name": proj.display_name if proj else dirname,
             "active": active,
-            "process_running": dirname in active_projects,
             "agent_count": agent_count,
             "last_activity": last_activity,
             "git_remote": proj.git_remote if proj else None,
@@ -1347,11 +1338,6 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
             title=t.title,
         ))
     unassigned_count = len(orphan_tasks)
-
-    # Stop all running subprocess workers for this project
-    wm = getattr(request.app.state, "worker_manager", None)
-    if wm:
-        wm.stop_project_processes(name)
 
     proj.archived = True
     db.commit()
