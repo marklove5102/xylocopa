@@ -505,13 +505,12 @@ function TimeStatsPopover({ onClose, containerRef }) {
       .catch(() => { setDayData({ intervals: [], projects: [], total_seconds: 0 }); setDayLoading(false); });
   }, [dayDate]);
 
-  const W = 300;
   const body = dayDate
     ? <DayView date={dayDate} data={dayData} loading={dayLoading} onBack={() => setDayDate(null)} />
     : <WeekView week={week} onPickDay={setDayDate} />;
 
   return (
-    <div className="absolute right-0 top-full mt-2 z-50" style={{ width: W }}>
+    <div className="absolute right-0 top-full mt-2 z-50" style={{ minWidth: 260 }}>
       <div className="absolute -top-1.5 right-3"
         style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
       <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
@@ -528,22 +527,33 @@ function WeekView({ week, onPickDay }) {
   const total = week.total_seconds || 0;
   const maxDaySecs = Math.max(1, ...days.map((d) => d.seconds || 0));
 
-  // Bar chart dims
-  const BW = 268, BH = 72, BPX = 4, BPY = 6, LH = 14;
+  // Ring shows week total filled toward 40h budget
+  const pctOfBudget = Math.min(1, total / (40 * 3600));
+  const ringColor = "#06b6d4";
+
+  // Bar chart dims (match SR sparkline: 228 wide)
+  const BW = 228, BH = 60, BPX = 4, BPY = 6, LH = 14;
   const nBars = days.length || 1;
   const gap = 4;
-  const barW = Math.max(8, (BW - BPX * 2 - gap * (nBars - 1)) / nBars);
+  const barW = Math.max(6, (BW - BPX * 2 - gap * (nBars - 1)) / nBars);
 
   return (
     <>
-      {/* Header */}
+      {/* Header — ring + title, matches TaskStatsPopover layout */}
       <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-        <div className="w-11 h-11 rounded-lg bg-cyan-500/15 flex items-center justify-center shrink-0">
-          <svg className="w-6 h-6 text-cyan-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <circle cx="12" cy="12" r="9" />
-            <path strokeLinecap="round" d="M12 7v5l3 2" />
-          </svg>
-        </div>
+        <svg width="44" height="44" viewBox="0 0 44 44">
+          <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5" opacity={0.18} />
+          <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeDasharray={2 * Math.PI * 17}
+            strokeDashoffset={2 * Math.PI * 17 * (1 - pctOfBudget)}
+            transform="rotate(-90 22 22)"
+            style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+          <text x="22" y="22" textAnchor="middle" dominantBaseline="central"
+            fill={ringColor} style={{ fontSize: "11px", fontWeight: 700 }}>
+            {formatHoursShort(total)}
+          </text>
+        </svg>
         <div className="flex-1 min-w-0">
           <div className="text-heading text-sm font-semibold">This Week</div>
           <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
@@ -568,7 +578,7 @@ function WeekView({ week, onPickDay }) {
                   fill="transparent" />
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
-                    fill="#22c55e" opacity={0.85}>
+                    fill={ringColor} opacity={0.85}>
                     <title>{d.date}: {formatDuration(secs)}</title>
                   </rect>
                 )}
@@ -615,8 +625,8 @@ function DayView({ date, data, loading, onBack }) {
   const dayStart = new Date(date + "T00:00:00Z").getTime();
   const DAY_MS = 86400000;
 
-  // 24h stacked bar dims
-  const TW = 268, TH = 22;
+  // 24h stacked bar height (width is 100% of container)
+  const TH = 20;
 
   return (
     <>
