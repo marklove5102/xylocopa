@@ -2,9 +2,39 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
 import { useMonitor } from "../contexts/MonitorContext";
-import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings } from "../lib/api";
+import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fetchViewingStatsWeek, fetchViewingStatsDay } from "../lib/api";
 import { isSystemHealthy } from "../lib/constants";
 import { relativeTime, durationDisplay } from "../lib/formatters";
+
+// Stable 8-color palette for projects in viewing-time stats. Assigned by
+// hashing project name so colors stay consistent across reloads.
+const PROJECT_PALETTE = [
+  "#22c55e", "#fb923c", "#f87171", "#f59e0b",
+  "#a78bfa", "#60a5fa", "#2dd4bf", "#f472b6",
+];
+function projectColor(name) {
+  if (!name) return PROJECT_PALETTE[0];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return PROJECT_PALETTE[Math.abs(h) % PROJECT_PALETTE.length];
+}
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
+}
+function formatHoursShort(seconds) {
+  const s = Math.max(0, seconds || 0);
+  if (s < 60) return "0h";
+  const h = s / 3600;
+  if (h < 1) return `${Math.round(s / 60)}m`;
+  if (h < 10) return `${h.toFixed(1)}h`;
+  return `${Math.round(h)}h`;
+}
 
 /* ── Status icon + row for queue items ── */
 function QueueItem({ status, label, sub, dim, onClick }) {
@@ -448,6 +478,236 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
   );
 }
 
+/* ── Viewing Time Stats Popover ── */
+function TimeStatsPopover({ onClose, containerRef }) {
+  const [week, setWeek] = useState(null);
+  const [dayDate, setDayDate] = useState(null); // null = week view; YYYY-MM-DD = day view
+  const [dayData, setDayData] = useState(null);
+  const [dayLoading, setDayLoading] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose, containerRef]);
+
+  useEffect(() => {
+    fetchViewingStatsWeek(7).then(setWeek).catch(() => setWeek({ days: [], projects: [], total_seconds: 0 }));
+  }, []);
+
+  useEffect(() => {
+    if (!dayDate) { setDayData(null); return; }
+    setDayLoading(true);
+    fetchViewingStatsDay(dayDate)
+      .then((d) => { setDayData(d); setDayLoading(false); })
+      .catch(() => { setDayData({ intervals: [], projects: [], total_seconds: 0 }); setDayLoading(false); });
+  }, [dayDate]);
+
+  const W = 300;
+  const body = dayDate
+    ? <DayView date={dayDate} data={dayData} loading={dayLoading} onBack={() => setDayDate(null)} />
+    : <WeekView week={week} onPickDay={setDayDate} />;
+
+  return (
+    <div className="absolute right-0 top-full mt-2 z-50" style={{ width: W }}>
+      <div className="absolute -top-1.5 right-3"
+        style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
+      <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
+        {body}
+      </div>
+    </div>
+  );
+}
+
+function WeekView({ week, onPickDay }) {
+  if (!week) return <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>;
+  const days = week.days || [];
+  const projects = week.projects || [];
+  const total = week.total_seconds || 0;
+  const maxDaySecs = Math.max(1, ...days.map((d) => d.seconds || 0));
+
+  // Bar chart dims
+  const BW = 268, BH = 72, BPX = 4, BPY = 6, LH = 14;
+  const nBars = days.length || 1;
+  const gap = 4;
+  const barW = Math.max(8, (BW - BPX * 2 - gap * (nBars - 1)) / nBars);
+
+  return (
+    <>
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 flex items-center gap-3">
+        <div className="w-11 h-11 rounded-lg bg-cyan-500/15 flex items-center justify-center shrink-0">
+          <svg className="w-6 h-6 text-cyan-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <circle cx="12" cy="12" r="9" />
+            <path strokeLinecap="round" d="M12 7v5l3 2" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-heading text-sm font-semibold">This Week</div>
+          <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
+        </div>
+      </div>
+
+      {/* Daily bar chart */}
+      <div className="border-t border-divider px-4 py-2.5">
+        <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
+        <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full" style={{ maxWidth: BW }}>
+          {days.map((d, i) => {
+            const x = BPX + i * (barW + gap);
+            const secs = d.seconds || 0;
+            const h = secs > 0 ? Math.max(2, ((secs / maxDaySecs) * (BH - BPY * 2))) : 0;
+            const y = BH - BPY - h;
+            const dt = new Date(d.date + "T00:00:00");
+            const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
+            return (
+              <g key={d.date} style={{ cursor: secs > 0 ? "pointer" : "default" }}
+                onClick={() => { if (secs > 0) onPickDay(d.date); }}>
+                <rect x={x} y={BPY} width={barW} height={BH - BPY * 2}
+                  fill="transparent" />
+                {h > 0 && (
+                  <rect x={x} y={y} width={barW} height={h} rx="2"
+                    fill="#22c55e" opacity={0.85}>
+                    <title>{d.date}: {formatDuration(secs)}</title>
+                  </rect>
+                )}
+                <text x={x + barW / 2} y={BH + 10} textAnchor="middle"
+                  fill="var(--color-dim)" style={{ fontSize: "9px" }}>{weekday}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Per-project ranking */}
+      {projects.length > 0 && (
+        <div className="border-t border-divider px-4 py-2.5">
+          <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">By Project</div>
+          <ProjectList projects={projects} totalSecs={Math.max(1, projects[0].seconds)} />
+        </div>
+      )}
+      {projects.length === 0 && (
+        <div className="border-t border-divider px-4 py-4 text-center text-dim text-xs">No viewing time recorded yet</div>
+      )}
+    </>
+  );
+}
+
+function DayView({ date, data, loading, onBack }) {
+  if (loading || !data) return (
+    <>
+      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
+        <button type="button" onClick={onBack}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="text-heading text-sm font-semibold">{formatDayLabel(date)}</div>
+      </div>
+      <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>
+    </>
+  );
+  const intervals = data.intervals || [];
+  const projects = data.projects || [];
+  const total = data.total_seconds || 0;
+  const dayStart = new Date(date + "T00:00:00Z").getTime();
+  const DAY_MS = 86400000;
+
+  // 24h stacked bar dims
+  const TW = 268, TH = 22;
+
+  return (
+    <>
+      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
+        <button type="button" onClick={onBack}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="text-heading text-sm font-semibold">{formatDayLabel(date)}</div>
+          <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
+        </div>
+      </div>
+
+      {/* 24h stacked timeline */}
+      <div className="border-t border-divider px-4 py-2.5">
+        <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Timeline</div>
+        <div className="relative rounded-md overflow-hidden" style={{ width: "100%", height: TH, background: "var(--color-input)" }}>
+          {intervals.map((iv, idx) => {
+            const s = Math.max(0, (new Date(iv.started_at).getTime() - dayStart) / DAY_MS) * 100;
+            const e = Math.min(100, (new Date(iv.ended_at).getTime() - dayStart) / DAY_MS * 100);
+            const w = Math.max(0.5, e - s);
+            return (
+              <div key={idx}
+                style={{
+                  position: "absolute", top: 0, bottom: 0,
+                  left: `${s}%`, width: `${w}%`,
+                  background: projectColor(iv.project),
+                  opacity: 0.9,
+                }}
+                title={`${iv.project} · ${new Date(iv.started_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}–${new Date(iv.ended_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} (${formatDuration(iv.seconds)})`}
+              />
+            );
+          })}
+        </div>
+        <div className="flex justify-between mt-1 text-[9px] text-dim">
+          <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+        </div>
+      </div>
+
+      {/* Per-project for this day */}
+      {projects.length > 0 ? (
+        <div className="border-t border-divider px-4 py-2.5">
+          <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">By Project</div>
+          <ProjectList projects={projects} totalSecs={Math.max(1, projects[0].seconds)} />
+        </div>
+      ) : (
+        <div className="border-t border-divider px-4 py-4 text-center text-dim text-xs">No viewing time this day</div>
+      )}
+    </>
+  );
+}
+
+function ProjectList({ projects, totalSecs }) {
+  return (
+    <div className="space-y-2">
+      {projects.map((p) => {
+        const pct = (p.seconds / totalSecs) * 100;
+        const color = projectColor(p.project);
+        return (
+          <div key={p.project}>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                <span className="text-body truncate">{p.project}</span>
+              </div>
+              <span className="text-heading font-medium tabular-nums shrink-0 ml-2">{formatDuration(p.seconds)}</span>
+            </div>
+            <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: "var(--color-input)" }}>
+              <div style={{ width: `${Math.max(2, pct)}%`, height: "100%", backgroundColor: color, borderRadius: 999 }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatDayLabel(dateStr) {
+  try {
+    const dt = new Date(dateStr + "T00:00:00");
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diffDays = Math.round((today - dt) / 86400000);
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    return dt.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  } catch { return dateStr; }
+}
+
 const SunIcon = (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
@@ -460,19 +720,35 @@ const MoonIcon = (
   </svg>
 );
 
-export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, showQueueButton, hideMonitor, children }) {
+export default function PageHeader({ title, theme, onToggleTheme, actions, selectAction, showTaskRing, showTimeRing, showQueueButton, hideMonitor, children }) {
   const navigate = useNavigate();
   const health = useHealthStatus();
   const { taskStats } = useMonitor();
   const [restarting, setRestarting] = useState(false);
   const [showStatsPopover, setShowStatsPopover] = useState(false);
   const [showQueuePopover, setShowQueuePopover] = useState(false);
+  const [showTimePopover, setShowTimePopover] = useState(false);
+  const [timeWeekTotal, setTimeWeekTotal] = useState(null);
   const ringContainerRef = useRef(null);
   const queueContainerRef = useRef(null);
+  const timeRingContainerRef = useRef(null);
   const pollRef = useRef(null);
   const abortRef = useRef(null);
   const closePopover = useCallback(() => setShowStatsPopover(false), []);
   const closeQueuePopover = useCallback(() => setShowQueuePopover(false), []);
+  const closeTimePopover = useCallback(() => setShowTimePopover(false), []);
+
+  // Poll weekly viewing total for the time ring label
+  useEffect(() => {
+    if (!showTimeRing) return;
+    let cancelled = false;
+    const load = () => fetchViewingStatsWeek(7)
+      .then((r) => { if (!cancelled) setTimeWeekTotal(r.total_seconds || 0); })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [showTimeRing]);
 
   // Cleanup restart polling on unmount
   useEffect(() => {
@@ -522,6 +798,31 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
               </svg>
             </button>
             {showStatsPopover && <TaskStatsPopover taskStats={taskStats} onClose={closePopover} containerRef={ringContainerRef} />}
+          </div>
+        )}
+        {showTimeRing && (
+          <div className="relative" ref={timeRingContainerRef}>
+            <button
+              type="button"
+              onClick={() => setShowTimePopover(v => !v)}
+              title={timeWeekTotal != null ? `This week: ${formatDuration(timeWeekTotal)} viewing` : "Viewing time"}
+              className="shrink-0 flex items-center justify-center w-8 h-8 hover:opacity-80 transition-opacity"
+            >
+              <svg width="26" height="26" viewBox="0 0 26 26">
+                <circle cx="13" cy="13" r="10" fill="transparent" stroke="#06b6d4" strokeWidth="2.5" opacity={0.25} />
+                <circle cx="13" cy="13" r="10" fill="transparent" stroke="#06b6d4" strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeDasharray={2 * Math.PI * 10}
+                  strokeDashoffset={2 * Math.PI * 10 * (1 - Math.min(1, (timeWeekTotal || 0) / (40 * 3600)))}
+                  transform="rotate(-90 13 13)"
+                  style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+                <text x="13" y="13" textAnchor="middle" dominantBaseline="central"
+                  fill="#06b6d4" style={{ fontSize: "8px", fontWeight: 700 }}>
+                  {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
+                </text>
+              </svg>
+            </button>
+            {showTimePopover && <TimeStatsPopover onClose={closeTimePopover} containerRef={timeRingContainerRef} />}
           </div>
         )}
         {!hideMonitor && (

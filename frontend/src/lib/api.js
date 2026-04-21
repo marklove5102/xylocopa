@@ -502,3 +502,11 @@ export async function generateWorktreeName(prompt) {
   const data = await res.json();
   return data.name || null;
 }
+
+// ---- Session viewing time statistics ----
+
+export const fetchViewingStatsWeek = (days = 7) =>
+  request(`/api/stats/viewing/week?days=${days}`);
+
+export const fetchViewingStatsDay = (date) =>
+  request(`/api/stats/viewing/day?date=${encodeURIComponent(date)}`);

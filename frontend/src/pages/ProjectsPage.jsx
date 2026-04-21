@@ -423,7 +423,7 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} showTaskRing hideMonitor actions={headerButtons}>
+      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} showTimeRing hideMonitor actions={headerButtons}>
         <div className="flex items-center px-4 pb-3 gap-1.5">
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0">
             {FILTER_TABS.map((tab) => {

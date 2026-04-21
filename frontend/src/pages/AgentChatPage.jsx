@@ -69,7 +69,7 @@ import { DATE_SHORT, TIME_SHORT } from "../lib/formatters";
 import VoiceRecorder from "../components/VoiceRecorder";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
-import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing } from "../hooks/useWebSocket";
+import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing, touchAgentInteraction } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
@@ -2584,6 +2584,35 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     return () => { abortRef.current?.abort(); unregisterViewing(id); };
   }, [loadData, id]);
 
+  // Track per-pane user interaction for time-accounting. In split-screen
+  // multiple AgentChatPage instances share one WS, so the backend can't
+  // tell which pane the user is actually using — we update a per-agent
+  // interaction timestamp here and the WS context picks the freshest one
+  // as the "primary" view.
+  useEffect(() => {
+    const el = kbContainerRef.current;
+    if (!el || !id) return;
+    let lastCallAt = 0;
+    const onAct = () => {
+      const now = Date.now();
+      if (now - lastCallAt < 1500) return;
+      lastCallAt = now;
+      touchAgentInteraction(id);
+    };
+    el.addEventListener("mousemove", onAct, { passive: true });
+    el.addEventListener("keydown", onAct, { passive: true });
+    el.addEventListener("wheel", onAct, { passive: true });
+    el.addEventListener("touchstart", onAct, { passive: true });
+    el.addEventListener("pointerdown", onAct, { passive: true });
+    return () => {
+      el.removeEventListener("mousemove", onAct);
+      el.removeEventListener("keydown", onAct);
+      el.removeEventListener("wheel", onAct);
+      el.removeEventListener("touchstart", onAct);
+      el.removeEventListener("pointerdown", onAct);
+    };
+  }, [id]);
+
   // Check if any interactive cards are waiting for an answer
   // (must be before polling useEffect which depends on it)
   const hasPendingInteractive = useMemo(() => {
@@ -3102,7 +3131,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
 
     if (event.type === "message_delivered") {
-      console.log('[ws] message_delivered', event.data);
       pushWsEvent('message_delivered', event.data);
       const { message_id, delivered_at } = event.data;
       setMessages((prev) => {

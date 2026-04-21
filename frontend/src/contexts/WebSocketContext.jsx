@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
 import { getAuthToken } from "../lib/api";
 import { calibrate } from "../lib/serverTime";
+import { pickPrimaryAgent } from "../lib/notifications";
 
 const WebSocketContext = createContext(null);
 
@@ -37,11 +38,20 @@ export function WebSocketProvider({ children }) {
     }
   }, []);
 
-  // Sync the backend about which agents are currently being viewed
+  // Sync the backend about which agents are currently being viewed.
+  // `primary_agent_id` is the single pane the user is actively interacting
+  // with (for time-tracking); may be null when all panes are idle.
   const _syncViewing = useCallback(() => {
     const agents = viewingAgentsRef.current;
-    const ids = document.visibilityState === "visible" ? [...agents] : [];
-    _send({ type: "viewing", agent_ids: ids, has_focus: document.hasFocus() });
+    const visible = document.visibilityState === "visible";
+    const ids = visible ? [...agents] : [];
+    const primary = visible ? pickPrimaryAgent(agents) : null;
+    _send({
+      type: "viewing",
+      agent_ids: ids,
+      has_focus: document.hasFocus(),
+      primary_agent_id: primary,
+    });
   }, [_send]);
 
   const connect = useCallback(() => {
@@ -112,6 +122,15 @@ export function WebSocketProvider({ children }) {
       }
     }, 30000);
 
+    // Periodic viewing resync so the backend picks up:
+    //  (a) switches between split-screen panes via mouse/keyboard
+    //  (b) idle-threshold transitions when the user stops interacting
+    // Interval half of backend tick (10s) so the primary is fresh by the
+    // time the next tick fires.
+    const viewingResyncInterval = setInterval(() => {
+      _syncViewing();
+    }, 5000);
+
     const onVisibilityChange = () => {
       _syncViewing();
     };
@@ -124,6 +143,7 @@ export function WebSocketProvider({ children }) {
 
     return () => {
       clearInterval(pingInterval);
+      clearInterval(viewingResyncInterval);
       clearTimeout(reconnectTimer.current);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onFocusChange);
