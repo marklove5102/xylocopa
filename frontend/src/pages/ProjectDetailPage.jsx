@@ -119,7 +119,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
               strokeLinecap="round" strokeDasharray={2 * Math.PI * 17} strokeDashoffset={2 * Math.PI * 17 * (1 - wPct / 100)}
               transform="rotate(-90 22 22)" style={{ transition: "stroke-dashoffset 0.6s ease" }} />
             <text x="22" y="22" textAnchor="middle" dominantBaseline="central"
-              fill={ringColor} style={{ fontSize: "12px", fontWeight: 700 }}>{wPct}%</text>
+              fill={ringColor} style={{ fontSize: "12px", fontWeight: 700 }}>{wPct}</text>
           </svg>
           <div>
             <div className="text-heading text-sm font-semibold">Weekly Success Rate</div>
@@ -197,7 +197,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
                 ))}
                 {validPts.map((p, i) => (
                   <text key={`lbl${i}`} x={p.x} y={yOf(p.pct) - 5} textAnchor="middle" fill="var(--color-heading)"
-                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}%</text>
+                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}</text>
                 ))}
                 {points.map((p, i) => (
                   <text key={`day${i}`} x={p.x} y={H + 10} textAnchor="middle" fill="var(--color-dim)"
