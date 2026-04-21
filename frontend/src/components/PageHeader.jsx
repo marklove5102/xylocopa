@@ -309,7 +309,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
         style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
       {/* Card */}
       <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
-        {/* Header — big ring (percentage text omitted; shown on the outside pill) */}
+        {/* Header — big ring with bare number (no percent sign) */}
         <div className="px-4 pt-4 pb-3 flex items-center gap-3">
           <svg width="44" height="44" viewBox="0 0 44 44">
             <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5" opacity={0.18} />
@@ -319,6 +319,10 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
               strokeDashoffset={2 * Math.PI * 17 * (1 - wPct / 100)}
               transform="rotate(-90 22 22)"
               style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+            <text x="22" y="22" textAnchor="middle" dominantBaseline="central"
+              fill={ringColor} style={{ fontSize: "12px", fontWeight: 700 }}>
+              {wPct}
+            </text>
           </svg>
           <div>
             <div className="text-heading text-sm font-semibold">Weekly Success Rate</div>
@@ -366,7 +370,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           <div className="border-t border-divider px-4 py-2.5 flex items-center justify-between">
             <div className="text-xs text-dim">First-attempt success</div>
             <div className="text-xs font-medium tabular-nums" style={{ color: wFirstAttemptPct >= 80 ? "#22c55e" : wFirstAttemptPct >= 50 ? "#eab308" : "#f87171" }}>
-              {wFirstAttempt}/{wCompleted} ({wFirstAttemptPct}%)
+              {wFirstAttempt}/{wCompleted} ({wFirstAttemptPct})
             </div>
           </div>
         )}
@@ -430,7 +434,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
                 {/* Percentage labels on dots */}
                 {validPts.map((p, i) => (
                   <text key={`lbl${i}`} x={p.x} y={yOf(p.pct) - 5} textAnchor="middle" fill="var(--color-heading)"
-                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}%</text>
+                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}</text>
                 ))}
                 {/* Day labels */}
                 {points.map((p, i) => (
