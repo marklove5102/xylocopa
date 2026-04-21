@@ -450,25 +450,6 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           );
         })()}
 
-        {/* Perspective counts */}
-        <div className="border-t border-divider px-4 py-2.5">
-          <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">All Tasks</div>
-          <div className="grid grid-cols-3 gap-y-1.5 gap-x-3 text-xs">
-            {[
-              { label: "Inbox", val: taskStats?.INBOX },
-              { label: "Queue", val: taskStats?.QUEUE },
-              { label: "Active", val: taskStats?.ACTIVE },
-              { label: "Review", val: taskStats?.REVIEW },
-              { label: "Done", val: taskStats?.DONE },
-            ].filter(r => r.val != null).map(r => (
-              <div key={r.label} className="flex items-center justify-between">
-                <span className="text-dim">{r.label}</span>
-                <span className="text-heading font-medium tabular-nums">{r.val}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
       </div>
     </div>
   );
