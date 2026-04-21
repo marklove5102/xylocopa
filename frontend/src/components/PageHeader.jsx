@@ -558,7 +558,7 @@ function WeekView({ week }) {
         style={{ userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
         <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
         <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full"
-          style={{ maxWidth: BW, touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
+          style={{ maxWidth: BW, touchAction: "none", WebkitTapHighlightColor: "transparent", overflow: "visible" }}>
           {days.map((d, i) => {
             const x = BPX + i * (barW + gap);
             const secs = d.seconds || 0;
@@ -590,25 +590,21 @@ function WeekView({ week }) {
               </g>
             );
           })}
-          {/* Tooltip bubble for the pressed bar */}
+          {/* Tooltip label for the pressed bar — plain text, no bubble */}
           {activeIdx != null && days[activeIdx] && days[activeIdx].seconds > 0 && (() => {
             const d = days[activeIdx];
             const bx = BPX + activeIdx * (barW + gap) + barW / 2;
             const bh = Math.max(2, (d.seconds / maxDaySecs) * (BH - BPY * 2));
             const by = BH - BPY - bh;
             const label = formatDuration(d.seconds);
-            const bubbleH = 18;
-            const bubbleW = Math.max(34, label.length * 6.5 + 14);
-            const tx = Math.max(bubbleW / 2 + 1, Math.min(BW - bubbleW / 2 - 1, bx));
-            const ty = Math.max(bubbleH + 2, by - 5); // tooltip bottom edge
+            const labelW = label.length * 6.5 + 4;
+            const tx = Math.max(labelW / 2, Math.min(BW - labelW / 2, bx));
+            const ty = by - 6; // text baseline, 6px above bar top (SVG has overflow:visible so it's never clipped)
             return (
-              <g pointerEvents="none">
-                <rect x={tx - bubbleW / 2} y={ty - bubbleH} width={bubbleW} height={bubbleH} rx="5"
-                  fill="var(--color-heading)" opacity={0.94} />
-                <text x={tx} y={ty - bubbleH / 2} textAnchor="middle" dominantBaseline="central"
-                  fill="var(--color-surface)"
-                  style={{ fontSize: "11px", fontWeight: 600 }}>{label}</text>
-              </g>
+              <text x={tx} y={ty} textAnchor="middle"
+                fill="var(--color-heading)"
+                style={{ fontSize: "11px", fontWeight: 700 }}
+                pointerEvents="none">{label}</text>
             );
           })()}
         </svg>
