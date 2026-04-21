@@ -502,6 +502,18 @@ function TimeStatsPopover({ onClose, containerRef }) {
 }
 
 function WeekView({ week }) {
+  const [activeIdx, setActiveIdx] = useState(null);
+
+  useEffect(() => {
+    const clear = () => setActiveIdx(null);
+    window.addEventListener("pointerup", clear);
+    window.addEventListener("pointercancel", clear);
+    return () => {
+      window.removeEventListener("pointerup", clear);
+      window.removeEventListener("pointercancel", clear);
+    };
+  }, []);
+
   if (!week) return <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>;
   const days = week.days || [];
   const projects = week.projects || [];
@@ -541,10 +553,11 @@ function WeekView({ week }) {
         </div>
       </div>
 
-      {/* Daily bar chart */}
+      {/* Daily bar chart — press-hold a bar to see its duration */}
       <div className="border-t border-divider px-4 py-2.5">
         <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
-        <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full" style={{ maxWidth: BW }}>
+        <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full"
+          style={{ maxWidth: BW, touchAction: "none" }}>
           {days.map((d, i) => {
             const x = BPX + i * (barW + gap);
             const secs = d.seconds || 0;
@@ -552,19 +565,50 @@ function WeekView({ week }) {
             const y = BH - BPY - h;
             const dt = new Date(d.date + "T00:00:00");
             const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
+            const isActive = activeIdx === i;
+            // Hit area = full column (so tiny bars are still easy to grab)
+            const hitX = x - gap / 2;
+            const hitW = barW + gap;
             return (
               <g key={d.date}>
+                <rect x={hitX} y={0} width={hitW} height={BH}
+                  fill="transparent"
+                  style={{ cursor: secs > 0 ? "pointer" : "default" }}
+                  onPointerDown={(e) => { if (secs > 0) { e.preventDefault(); setActiveIdx(i); } }}
+                  onPointerEnter={(e) => { if (secs > 0 && e.buttons) setActiveIdx(i); }}
+                />
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
-                    fill={ringColor} opacity={0.85}>
-                    <title>{d.date}: {formatDuration(secs)}</title>
-                  </rect>
+                    fill={ringColor} opacity={isActive ? 1 : 0.85}
+                    pointerEvents="none" />
                 )}
                 <text x={x + barW / 2} y={BH + 10} textAnchor="middle"
-                  fill="var(--color-dim)" style={{ fontSize: "9px" }}>{weekday}</text>
+                  fill={isActive ? ringColor : "var(--color-dim)"}
+                  style={{ fontSize: "9px", fontWeight: isActive ? 700 : 400 }}
+                  pointerEvents="none">{weekday}</text>
               </g>
             );
           })}
+          {/* Tooltip bubble for the pressed bar */}
+          {activeIdx != null && days[activeIdx] && days[activeIdx].seconds > 0 && (() => {
+            const d = days[activeIdx];
+            const bx = BPX + activeIdx * (barW + gap) + barW / 2;
+            const bh = Math.max(2, (d.seconds / maxDaySecs) * (BH - BPY * 2));
+            const by = BH - BPY - bh;
+            const label = formatDuration(d.seconds);
+            const textW = Math.max(22, label.length * 5.5 + 10);
+            const tx = Math.max(textW / 2 + 1, Math.min(BW - textW / 2 - 1, bx));
+            const ty = Math.max(9, by - 4);
+            return (
+              <g pointerEvents="none">
+                <rect x={tx - textW / 2} y={ty - 9} width={textW} height={12} rx="3"
+                  fill="var(--color-heading)" opacity={0.92} />
+                <text x={tx} y={ty - 1} textAnchor="middle"
+                  fill="var(--color-surface)"
+                  style={{ fontSize: "9px", fontWeight: 700 }}>{label}</text>
+              </g>
+            );
+          })()}
         </svg>
       </div>
 
