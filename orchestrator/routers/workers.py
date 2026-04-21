@@ -24,7 +24,7 @@ async def list_tracked_processes(request: Request):
     wm = getattr(request.app.state, "worker_manager", None)
     if not wm:
         return []
-    return wm.list_workers()
+    return wm.list_processes()
 
 
 @router.get("/api/projects/{project_name}/worktrees")
