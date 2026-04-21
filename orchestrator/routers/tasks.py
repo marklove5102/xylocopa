@@ -125,7 +125,14 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
 
     from routers.agents import _preflight_claude_project, _launch_tmux_background
     _preflight_claude_project(proj.path)
-    pane_id = create_tmux_claude_session(tmux_session, proj.path, claude_cmd, agent_id=agent_hex)
+    from auth import create_agent_token
+    from agent_dispatcher import register_agent_token
+    _agent_tok = create_agent_token(db)
+    register_agent_token(agent_hex, _agent_tok)
+    pane_id = create_tmux_claude_session(
+        tmux_session, proj.path, claude_cmd,
+        agent_id=agent_hex, agent_token=_agent_tok,
+    )
 
     # Create Agent record
     agent = Agent(
@@ -597,15 +604,20 @@ AVAILABLE PROJECTS:
 INBOX TASKS:
 {json.dumps(tasks_data, ensure_ascii=False, indent=2)}
 
+AUTHENTICATION:
+- The orchestrator has already injected a short-lived API token into your environment as $XYLOCOPA_AGENT_TOKEN. Attach it to every API call: -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN"
+- Do NOT read the database to extract jwt_secret, do NOT attempt to sign tokens yourself, and do NOT try to discover or create any other credential. The env token is the only supported path.
+
 HOW TO UPDATE:
-- Update a task: curl -s -X PUT {api_base}/api/v2/tasks/TASK_ID -H "Content-Type: application/json" -d '<JSON>'
+- Update a task: curl -s -X PUT {api_base}/api/v2/tasks/TASK_ID -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN" -H "Content-Type: application/json" -d '<JSON>'
   The JSON body MUST include: title, description, project_name (your changes) + ALL fields from the task's `config` object merged in verbatim. Never drop or override any config field — the task owner already configured them.
-- Dispatch for execution: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/dispatch
+- Dispatch for execution: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/dispatch -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN"
 
 SAFETY RULES:
 - You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/dispatch (start execution)
 - Do NOT call any other endpoints (no /api/agents/*, /api/git/*, /api/projects/*, DELETE endpoints, etc.)
 - Do NOT write to memory files (.claude/memory/, MEMORY.md) or modify CLAUDE.md
+- Do NOT `echo`, `env`, or otherwise print $XYLOCOPA_AGENT_TOKEN. Treat it as a secret — reference it only by name.
 
 INSTRUCTIONS:
 1. First, analyze all tasks and present a summary table of your proposed changes (title, project assignment, ready status)

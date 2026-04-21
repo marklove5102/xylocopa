@@ -646,7 +646,14 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
 
         _preflight_claude_project(project.path)
-        pane_id = _create_tmux_claude_session(tmux_session, project.path, claude_cmd, agent_id=agent_id)
+        from auth import create_agent_token
+        from agent_dispatcher import register_agent_token
+        _agent_tok = create_agent_token(db)
+        register_agent_token(agent_id, _agent_tok)
+        pane_id = _create_tmux_claude_session(
+            tmux_session, project.path, claude_cmd,
+            agent_id=agent_id, agent_token=_agent_tok,
+        )
         agent.tmux_pane = pane_id
 
         # Create the initial user message
@@ -796,7 +803,14 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # directory that hasn't been explicitly trusted yet.
     _preflight_claude_project(proj.path)
 
-    pane_id = _create_tmux_claude_session(tmux_session, proj.path, claude_cmd, agent_id=agent_hex)
+    from auth import create_agent_token
+    from agent_dispatcher import register_agent_token
+    _agent_tok = create_agent_token(db)
+    register_agent_token(agent_hex, _agent_tok)
+    pane_id = _create_tmux_claude_session(
+        tmux_session, proj.path, claude_cmd,
+        agent_id=agent_hex, agent_token=_agent_tok,
+    )
 
     # Create Agent record immediately so the frontend can navigate to it.
     agent_name = (prompt or "CLI session")[:80]
@@ -2202,7 +2216,14 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
         tmux_session = tmux_session_name(agent.id)
         _preflight_claude_project(project.path)
 
-        pane_id = _create_tmux_claude_session(tmux_session, project.path, claude_cmd, agent_id=agent.id)
+        from auth import create_agent_token
+        from agent_dispatcher import register_agent_token
+        _agent_tok = create_agent_token(db)
+        register_agent_token(agent.id, _agent_tok)
+        pane_id = _create_tmux_claude_session(
+            tmux_session, project.path, claude_cmd,
+            agent_id=agent.id, agent_token=_agent_tok,
+        )
 
         agent.tmux_pane = pane_id
         agent.status = AgentStatus.IDLE

@@ -95,6 +95,17 @@ def create_token(jwt_secret: str, expires_minutes: int | None = None) -> str:
     return payload_bytes.decode() + "." + sig_bytes.decode()
 
 
+def create_agent_token(db_session, expires_minutes: int = 240) -> str:
+    """Mint a short-TTL API token for a spawned agent subprocess.
+
+    Defaults to a 4h TTL — approximates expected agent lifetime while
+    limiting blast radius if the token leaks. Not persisted anywhere;
+    caller is responsible for injecting it into the agent's environment.
+    """
+    secret = get_jwt_secret(db_session)
+    return create_token(secret, expires_minutes=expires_minutes)
+
+
 def verify_token(token: str, jwt_secret: str) -> bool:
     """Verify token signature and check expiry."""
     try:
