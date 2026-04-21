@@ -383,7 +383,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           const hasData = daily.some(d => d.total > 0);
           if (!hasData) return null;
 
-          const W = 228, H = 68, PX = 8, PY = 10;
+          const W = 228, H = 72, PX = 8, PY = 14;
           const plotW = W - PX * 2, plotH = H - PY * 2;
           // Points with data
           const points = daily.map((d, i) => ({

@@ -163,7 +163,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
 
         {/* Daily sparkline */}
         {hasDaily && (() => {
-          const W = 228, H = 68, PX = 8, PY = 10;
+          const W = 228, H = 72, PX = 8, PY = 14;
           const plotW = W - PX * 2, plotH = H - PY * 2;
           const points = daily.map((d, i) => ({
             x: PX + (i / Math.max(daily.length - 1, 1)) * plotW,
