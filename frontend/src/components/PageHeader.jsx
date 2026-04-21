@@ -6,17 +6,13 @@ import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fe
 import { isSystemHealthy } from "../lib/constants";
 import { relativeTime, durationDisplay } from "../lib/formatters";
 
-// Stable 8-color palette for projects in viewing-time stats. Assigned by
-// hashing project name so colors stay consistent across reloads.
-const PROJECT_PALETTE = [
-  "#22c55e", "#fb923c", "#f87171", "#f59e0b",
-  "#a78bfa", "#60a5fa", "#2dd4bf", "#f472b6",
-];
-function projectColor(name) {
-  if (!name) return PROJECT_PALETTE[0];
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-  return PROJECT_PALETTE[Math.abs(h) % PROJECT_PALETTE.length];
+// Project bars/dots in the viewing-time popover use cyan (the app's accent)
+// with decreasing opacity by rank, so the top project reads as primary and
+// the tail fades out. Avoids rainbow palettes that clash with the rest of
+// the UI, which never differentiates projects by hue.
+const RANK_OPACITY = [1.0, 0.75, 0.55, 0.4, 0.3, 0.22, 0.18, 0.15];
+function rankOpacity(i) {
+  return RANK_OPACITY[Math.min(i, RANK_OPACITY.length - 1)];
 }
 function formatDuration(seconds) {
   const s = Math.max(0, Math.round(seconds || 0));
@@ -587,22 +583,23 @@ function WeekView({ week }) {
 }
 
 function ProjectList({ projects, totalSecs }) {
+  const accent = "#06b6d4";
   return (
     <div className="space-y-2">
-      {projects.map((p) => {
+      {projects.map((p, i) => {
         const pct = (p.seconds / totalSecs) * 100;
-        const color = projectColor(p.project);
+        const op = rankOpacity(i);
         return (
           <div key={p.project}>
             <div className="flex items-center justify-between text-xs mb-1">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: accent, opacity: op }} />
                 <span className="text-body truncate">{p.project}</span>
               </div>
               <span className="text-heading font-medium tabular-nums shrink-0 ml-2">{formatDuration(p.seconds)}</span>
             </div>
             <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: "var(--color-input)" }}>
-              <div style={{ width: `${Math.max(2, pct)}%`, height: "100%", backgroundColor: color, borderRadius: 999 }} />
+              <div style={{ width: `${Math.max(2, pct)}%`, height: "100%", backgroundColor: accent, opacity: op, borderRadius: 999 }} />
             </div>
           </div>
         );
