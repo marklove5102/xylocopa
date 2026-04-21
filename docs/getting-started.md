@@ -101,7 +101,7 @@ Back on the Inbox tab, tap the `+` button (short press this time — long-press 
 
 The six buttons on the input bar (left → right):
 
-<p align="center"><img src="getting-started/01-input-bar-annotated.png" alt="Input-bar buttons, annotated" width="520"></p>
+<p align="center"><img src="getting-started/01-input-bar-annotated-en.png" alt="Input-bar buttons, annotated" width="520"></p>
 
 | Icon | Name | What it does |
 |---|---|---|
