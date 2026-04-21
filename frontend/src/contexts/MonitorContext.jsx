@@ -2,7 +2,6 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import {
   fetchHealth as apiFetchHealth,
   fetchAgents as apiFetchAgents,
-  fetchProcesses as apiFetchProcesses,
   fetchSystemStats,
   fetchStorageStats,
   fetchTokenUsage,
@@ -20,7 +19,6 @@ export function MonitorProvider({ children }) {
   const [healthError, setHealthError] = useState(false);
   const [agents, setAgents] = useState([]);
   const [agentCounts, setAgentCounts] = useState({});
-  const [processes, setProcesses] = useState([]);
   const [sysStats, setSysStats] = useState(null);
   const [tokenUsage, setTokenUsage] = useState(null);
   const [storageStats, setStorageStats] = useState(null);
@@ -47,14 +45,6 @@ export function MonitorProvider({ children }) {
       setAgentCounts(counts);
     } catch (err) {
       console.error("MonitorContext: failed to fetch agents:", err);
-    }
-  }, []);
-
-  const fetchProcesses = useCallback(async () => {
-    try {
-      setProcesses(await apiFetchProcesses());
-    } catch (err) {
-      console.error("MonitorContext: failed to fetch processes:", err);
     }
   }, []);
 
@@ -95,10 +85,10 @@ export function MonitorProvider({ children }) {
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
-      fetchHealth(), fetchAgents(), fetchProcesses(),
+      fetchHealth(), fetchAgents(),
       fetchSysStats(), fetchStorage(), fetchTasks(),
     ]);
-  }, [fetchHealth, fetchAgents, fetchProcesses, fetchSysStats, fetchStorage, fetchTasks]);
+  }, [fetchHealth, fetchAgents, fetchSysStats, fetchStorage, fetchTasks]);
 
   // Initial fetch + background poll only when MonitorPage is active
   useEffect(() => {
@@ -111,9 +101,9 @@ export function MonitorProvider({ children }) {
   // Fast polling when MonitorPage is active and tab is visible
   useEffect(() => {
     if (!visible || !monitorActive) return;
-    // Agents, processes, sysStats: every 5s
+    // Agents, sysStats: every 5s
     const fastId = setInterval(() => {
-      fetchAgents(); fetchProcesses(); fetchSysStats();
+      fetchAgents(); fetchSysStats();
     }, 5000);
     // Health: every 10s
     const healthId = setInterval(fetchHealth, 10000);
@@ -129,14 +119,14 @@ export function MonitorProvider({ children }) {
       clearInterval(slowId);
       clearInterval(usageId);
     };
-  }, [visible, monitorActive, fetchAgents, fetchProcesses, fetchSysStats, fetchHealth, fetchStorage, fetchTasks, fetchUsage]);
+  }, [visible, monitorActive, fetchAgents, fetchSysStats, fetchHealth, fetchStorage, fetchTasks, fetchUsage]);
 
   const activate = useCallback(() => setMonitorActive(true), []);
   const deactivate = useCallback(() => setMonitorActive(false), []);
 
   return (
     <MonitorContext.Provider value={{
-      health, healthError, agents, agentCounts, processes, sysStats, tokenUsage, storageStats, taskStats,
+      health, healthError, agents, agentCounts, sysStats, tokenUsage, storageStats, taskStats,
       refresh: refreshAll, refreshTokenUsage: fetchUsage, activate, deactivate,
     }}>
       {children}

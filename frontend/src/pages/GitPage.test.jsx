@@ -25,7 +25,6 @@ vi.mock("../lib/api", () => ({
   // MonitorProvider deps (called on mount; resolved values are unused by GitPage tests)
   fetchHealth: vi.fn().mockResolvedValue({}),
   fetchAgents: vi.fn().mockResolvedValue([]),
-  fetchProcesses: vi.fn().mockResolvedValue([]),
   fetchSystemStats: vi.fn().mockResolvedValue({}),
   fetchStorageStats: vi.fn().mockResolvedValue({}),
   fetchTokenUsage: vi.fn().mockResolvedValue({}),

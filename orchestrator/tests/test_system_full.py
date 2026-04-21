@@ -237,23 +237,3 @@ async def test_logs_endpoint(client):
     assert isinstance(data["lines"], list)
 
 
-# ---------------------------------------------------------------------------
-# Processes / Workers
-# ---------------------------------------------------------------------------
-
-@pytest.mark.anyio
-async def test_processes_endpoint(client):
-    """GET /api/processes should return a list."""
-    resp = await client.get("/api/processes")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-
-
-@pytest.mark.anyio
-async def test_workers_endpoint(client):
-    """GET /api/workers should return a list."""
-    resp = await client.get("/api/workers")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)

@@ -1755,10 +1755,6 @@ class AgentDispatcher:
         finally:
             db.close()
 
-    def get_active_processes(self) -> list[dict]:
-        """Return info about currently running Claude processes."""
-        return []
-
     async def run(self):
         """Start the agent dispatcher loop."""
         self.running = True

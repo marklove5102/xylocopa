@@ -244,7 +244,7 @@ function TokenUsageSection({ tokenUsage, onRefresh }) {
 export default function MonitorPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const {
-    health, healthError, agents, processes, sysStats, tokenUsage, storageStats,
+    health, healthError, agents, sysStats, tokenUsage, storageStats,
     refresh, refreshTokenUsage, activate, deactivate,
   } = useMonitor();
   const [refreshing, setRefreshing] = useState(false);
@@ -691,48 +691,6 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                 ? orphanResult.message
                 : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs)`}
           </p>
-        )}
-
-        {/* Running Processes */}
-        {processes.length > 0 && (
-          <section>
-            <h2 className="text-xs font-semibold text-dim uppercase tracking-wider mb-2">
-              Running Processes ({processes.length})
-            </h2>
-            <div className="space-y-2">
-              {processes.map((proc) => {
-                const agent = agents.find((a) => a.id === proc.agent_id);
-                const elapsed = proc.elapsed_seconds;
-                const elapsedStr = elapsed != null
-                  ? elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-                  : "--";
-                return (
-                  <button
-                    key={proc.agent_id}
-                    type="button"
-                    onClick={() => navigate(`/agents/${proc.agent_id}`)}
-                    className="w-full text-left rounded-xl bg-surface shadow-card p-3 border-l-2 border-cyan-500/40 flex items-center gap-3 transition-colors active:bg-input hover:ring-1 hover:ring-ring-hover"
-                  >
-                    <div className="shrink-0">
-                      <span className="inline-block w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-heading truncate">
-                        {agent ? agent.name : proc.agent_id}
-                      </p>
-                      <p className="text-xs text-dim mt-0.5">
-                        {proc.type === "planner" ? "Planning..." : "Executing..."}{" "}
-                        {agent && <span className="text-label">{agent.project}</span>}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-sm font-mono text-cyan-400">{elapsedStr}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
         )}
 
         {/* Active Agents */}

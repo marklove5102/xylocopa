@@ -401,7 +401,6 @@ export const importBackup = (file) => {
   return formDataRequest("/api/system/backup/import", fd, "Import backup");
 };
 export const downloadBackupUrl = (name) => `/api/system/backup/${name}/download`;
-export const fetchProcesses = () => request("/api/processes");
 
 // --- Notification Settings ---
 export const fetchNotificationSettings = () => request("/api/settings/notifications");
