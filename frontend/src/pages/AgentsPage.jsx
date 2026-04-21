@@ -76,10 +76,17 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
             {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
           </span>
         </div>
-        {/* Preview */}
-        <p className="text-sm text-dim mt-1 truncate">
-          {agent.last_message_preview || "No messages yet"}
-        </p>
+        {/* Preview + unread badge */}
+        <div className="flex items-center gap-2 mt-1">
+          <p className="text-sm text-dim truncate min-w-0 flex-1">
+            {agent.last_message_preview || "No messages yet"}
+          </p>
+          {agent.unread_count > 0 && (
+            <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
+              {agent.unread_count}
+            </span>
+          )}
+        </div>
         {/* Tags — same order as InboxCard, status shown by left strip */}
         <div className="flex flex-wrap items-center gap-1 mt-1.5">
           <span
@@ -125,11 +132,6 @@ const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, o
       {agent.has_pending_suggestions && (
         <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
           insights
-        </span>
-      )}
-      {agent.unread_count > 0 && (
-        <span className="shrink-0 self-center inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
-          {agent.unread_count}
         </span>
       )}
       </div>
