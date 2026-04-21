@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
 import { useMonitor } from "../contexts/MonitorContext";
-import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fetchViewingStatsWeek, fetchViewingStatsDay } from "../lib/api";
+import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fetchViewingStatsWeek } from "../lib/api";
 import { isSystemHealthy } from "../lib/constants";
 import { relativeTime, durationDisplay } from "../lib/formatters";
 
@@ -481,9 +481,6 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
 /* ── Viewing Time Stats Popover ── */
 function TimeStatsPopover({ onClose, containerRef }) {
   const [week, setWeek] = useState(null);
-  const [dayDate, setDayDate] = useState(null); // null = week view; YYYY-MM-DD = day view
-  const [dayData, setDayData] = useState(null);
-  const [dayLoading, setDayLoading] = useState(false);
 
   useEffect(() => {
     const handler = (e) => {
@@ -497,30 +494,18 @@ function TimeStatsPopover({ onClose, containerRef }) {
     fetchViewingStatsWeek(7).then(setWeek).catch(() => setWeek({ days: [], projects: [], total_seconds: 0 }));
   }, []);
 
-  useEffect(() => {
-    if (!dayDate) { setDayData(null); return; }
-    setDayLoading(true);
-    fetchViewingStatsDay(dayDate)
-      .then((d) => { setDayData(d); setDayLoading(false); })
-      .catch(() => { setDayData({ intervals: [], projects: [], total_seconds: 0 }); setDayLoading(false); });
-  }, [dayDate]);
-
-  const body = dayDate
-    ? <DayView date={dayDate} data={dayData} loading={dayLoading} onBack={() => setDayDate(null)} />
-    : <WeekView week={week} onPickDay={setDayDate} />;
-
   return (
     <div className="absolute right-0 top-full mt-2 z-50" style={{ minWidth: 260 }}>
       <div className="absolute -top-1.5 right-3"
         style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
       <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
-        {body}
+        <WeekView week={week} />
       </div>
     </div>
   );
 }
 
-function WeekView({ week, onPickDay }) {
+function WeekView({ week }) {
   if (!week) return <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>;
   const days = week.days || [];
   const projects = week.projects || [];
@@ -572,10 +557,7 @@ function WeekView({ week, onPickDay }) {
             const dt = new Date(d.date + "T00:00:00");
             const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
             return (
-              <g key={d.date} style={{ cursor: secs > 0 ? "pointer" : "default" }}
-                onClick={() => { if (secs > 0) onPickDay(d.date); }}>
-                <rect x={x} y={BPY} width={barW} height={BH - BPY * 2}
-                  fill="transparent" />
+              <g key={d.date}>
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
                     fill={ringColor} opacity={0.85}>
@@ -604,84 +586,6 @@ function WeekView({ week, onPickDay }) {
   );
 }
 
-function DayView({ date, data, loading, onBack }) {
-  if (loading || !data) return (
-    <>
-      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
-        <button type="button" onClick={onBack}
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div className="text-heading text-sm font-semibold">{formatDayLabel(date)}</div>
-      </div>
-      <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>
-    </>
-  );
-  const intervals = data.intervals || [];
-  const projects = data.projects || [];
-  const total = data.total_seconds || 0;
-  const dayStart = new Date(date + "T00:00:00Z").getTime();
-  const DAY_MS = 86400000;
-
-  // 24h stacked bar height (width is 100% of container)
-  const TH = 20;
-
-  return (
-    <>
-      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
-        <button type="button" onClick={onBack}
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="text-heading text-sm font-semibold">{formatDayLabel(date)}</div>
-          <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
-        </div>
-      </div>
-
-      {/* 24h stacked timeline */}
-      <div className="border-t border-divider px-4 py-2.5">
-        <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Timeline</div>
-        <div className="relative rounded-md overflow-hidden" style={{ width: "100%", height: TH, background: "var(--color-input)" }}>
-          {intervals.map((iv, idx) => {
-            const s = Math.max(0, (new Date(iv.started_at).getTime() - dayStart) / DAY_MS) * 100;
-            const e = Math.min(100, (new Date(iv.ended_at).getTime() - dayStart) / DAY_MS * 100);
-            const w = Math.max(0.5, e - s);
-            return (
-              <div key={idx}
-                style={{
-                  position: "absolute", top: 0, bottom: 0,
-                  left: `${s}%`, width: `${w}%`,
-                  background: projectColor(iv.project),
-                  opacity: 0.9,
-                }}
-                title={`${iv.project} · ${new Date(iv.started_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}–${new Date(iv.ended_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} (${formatDuration(iv.seconds)})`}
-              />
-            );
-          })}
-        </div>
-        <div className="flex justify-between mt-1 text-[9px] text-dim">
-          <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
-        </div>
-      </div>
-
-      {/* Per-project for this day */}
-      {projects.length > 0 ? (
-        <div className="border-t border-divider px-4 py-2.5">
-          <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">By Project</div>
-          <ProjectList projects={projects} totalSecs={Math.max(1, projects[0].seconds)} />
-        </div>
-      ) : (
-        <div className="border-t border-divider px-4 py-4 text-center text-dim text-xs">No viewing time this day</div>
-      )}
-    </>
-  );
-}
-
 function ProjectList({ projects, totalSecs }) {
   return (
     <div className="space-y-2">
@@ -705,17 +609,6 @@ function ProjectList({ projects, totalSecs }) {
       })}
     </div>
   );
-}
-
-function formatDayLabel(dateStr) {
-  try {
-    const dt = new Date(dateStr + "T00:00:00");
-    const today = new Date(); today.setHours(0,0,0,0);
-    const diffDays = Math.round((today - dt) / 86400000);
-    if (diffDays === 0) return "Today";
-    if (diffDays === 1) return "Yesterday";
-    return dt.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-  } catch { return dateStr; }
 }
 
 const SunIcon = (
