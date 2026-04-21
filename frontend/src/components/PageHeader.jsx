@@ -370,7 +370,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
           <div className="border-t border-divider px-4 py-2.5 flex items-center justify-between">
             <div className="text-xs text-dim">First-attempt success</div>
             <div className="text-xs font-medium tabular-nums" style={{ color: wFirstAttemptPct >= 80 ? "#22c55e" : wFirstAttemptPct >= 50 ? "#eab308" : "#f87171" }}>
-              {wFirstAttempt}/{wCompleted} ({wFirstAttemptPct})
+              {wFirstAttempt}/{wCompleted} ({wFirstAttemptPct}%)
             </div>
           </div>
         )}
@@ -434,7 +434,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
                 {/* Percentage labels on dots */}
                 {validPts.map((p, i) => (
                   <text key={`lbl${i}`} x={p.x} y={yOf(p.pct) - 5} textAnchor="middle" fill="var(--color-heading)"
-                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}</text>
+                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}%</text>
                 ))}
                 {/* Day labels */}
                 {points.map((p, i) => (

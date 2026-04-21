@@ -197,7 +197,7 @@ function ProjectStatsPopover({ stats, onClose, containerRef }) {
                 ))}
                 {validPts.map((p, i) => (
                   <text key={`lbl${i}`} x={p.x} y={yOf(p.pct) - 5} textAnchor="middle" fill="var(--color-heading)"
-                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}</text>
+                    style={{ fontSize: "9px", fontWeight: 600 }}>{p.pct}%</text>
                 ))}
                 {points.map((p, i) => (
                   <text key={`day${i}`} x={p.x} y={H + 10} textAnchor="middle" fill="var(--color-dim)"
