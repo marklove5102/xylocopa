@@ -58,6 +58,11 @@
   --color-glass-edge: rgba(255,255,255,0.22);
 }
 
+/* SVG <text> doesn't inherit font-family by default in several browsers
+   (notably Safari, which falls back to Times). Force inheritance so
+   inline SVG labels match the rest of the UI's system-ui stack. */
+svg text { font-family: inherit; }
+
 /* ── Semantic Utility Classes ── */
 @layer utilities {
   /* Backgrounds */
