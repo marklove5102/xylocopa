@@ -518,18 +518,10 @@ function WeekView({ week }) {
 
   return (
     <>
-      {/* Header — clock icon tile + title */}
-      <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-        <div className="w-11 h-11 rounded-lg bg-cyan-500/15 flex items-center justify-center shrink-0">
-          <svg className="w-6 h-6 text-cyan-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-            <circle cx="12" cy="12" r="9" />
-            <path strokeLinecap="round" d="M12 7v5l3 2" />
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-heading text-sm font-semibold">This Week</div>
-          <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
-        </div>
+      {/* Header — title only */}
+      <div className="px-4 pt-4 pb-3">
+        <div className="text-heading text-sm font-semibold">This Week</div>
+        <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
       </div>
 
       {/* Daily bar chart — each bar shows its duration above in dim text */}
@@ -703,8 +695,12 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
               type="button"
               onClick={() => setShowTimePopover(v => !v)}
               title={timeWeekTotal != null ? `This week: ${formatDuration(timeWeekTotal)} viewing` : "Viewing time"}
-              className="shrink-0 inline-flex items-center px-2.5 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
+              className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
             >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+                <circle cx="12" cy="12" r="9" />
+                <path strokeLinecap="round" d="M12 7v5l3 2" />
+              </svg>
               <span className="text-[11px] font-semibold tabular-nums leading-none">
                 {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
               </span>
