@@ -554,10 +554,11 @@ function WeekView({ week }) {
       </div>
 
       {/* Daily bar chart — press-hold a bar to see its duration */}
-      <div className="border-t border-divider px-4 py-2.5">
+      <div className="border-t border-divider px-4 py-2.5"
+        style={{ userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
         <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
         <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full"
-          style={{ maxWidth: BW, touchAction: "none" }}>
+          style={{ maxWidth: BW, touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
           {days.map((d, i) => {
             const x = BPX + i * (barW + gap);
             const secs = d.seconds || 0;
@@ -596,16 +597,17 @@ function WeekView({ week }) {
             const bh = Math.max(2, (d.seconds / maxDaySecs) * (BH - BPY * 2));
             const by = BH - BPY - bh;
             const label = formatDuration(d.seconds);
-            const textW = Math.max(22, label.length * 5.5 + 10);
-            const tx = Math.max(textW / 2 + 1, Math.min(BW - textW / 2 - 1, bx));
-            const ty = Math.max(9, by - 4);
+            const bubbleH = 18;
+            const bubbleW = Math.max(34, label.length * 6.5 + 14);
+            const tx = Math.max(bubbleW / 2 + 1, Math.min(BW - bubbleW / 2 - 1, bx));
+            const ty = Math.max(bubbleH + 2, by - 5); // tooltip bottom edge
             return (
               <g pointerEvents="none">
-                <rect x={tx - textW / 2} y={ty - 9} width={textW} height={12} rx="3"
-                  fill="var(--color-heading)" opacity={0.92} />
-                <text x={tx} y={ty - 1} textAnchor="middle"
+                <rect x={tx - bubbleW / 2} y={ty - bubbleH} width={bubbleW} height={bubbleH} rx="5"
+                  fill="var(--color-heading)" opacity={0.94} />
+                <text x={tx} y={ty - bubbleH / 2} textAnchor="middle" dominantBaseline="central"
                   fill="var(--color-surface)"
-                  style={{ fontSize: "9px", fontWeight: 700 }}>{label}</text>
+                  style={{ fontSize: "11px", fontWeight: 600 }}>{label}</text>
               </g>
             );
           })()}
