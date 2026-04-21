@@ -1302,8 +1302,8 @@ async def rename_project(name: str, body: ProjectRename, request: Request, db: S
 
 @router.post("/api/projects/{name}/archive", status_code=200)
 async def archive_project(name: str, request: Request, db: Session = Depends(get_db)):
-    """Archive a project — stops agents, marks archived. Keeps all data."""
-    from websocket import emit_task_update, emit_agent_update
+    """Archive a project — blocks if active agents exist, unassigns remaining tasks."""
+    from websocket import emit_task_update
 
     proj = db.get(Project, name)
     if not proj:
@@ -1311,52 +1311,42 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
     if proj.archived:
         raise HTTPException(status_code=400, detail="Project is already archived")
 
-    # Stop all active agents for this project (including IDLE/tmux agents)
+    # Guard: block archive if project has any active agents (sessions in flight)
     active_agents = (
         db.query(Agent)
-        .filter(
-            Agent.project == name,
-            Agent.status.notin_(TERMINAL_STATUSES),
-        )
+        .filter(Agent.project == name, Agent.status.in_(ACTIVE_STATUSES))
         .all()
     )
-    ad = getattr(request.app.state, "agent_dispatcher", None)
-    for agent in active_agents:
-        # Kill tmux pane if active
-        if agent.tmux_pane:
-            graceful_kill_tmux_agent(agent.tmux_pane, agent.id)
-        if ad:
-            ad.stop_agent_cleanup(db, agent, "Agent stopped — project archived",
-                                  kill_tmux=False, emit=True)
-        else:
-            agent.status = AgentStatus.STOPPED
-            agent.tmux_pane = None
-            db.add(Message(
-                agent_id=agent.id,
-                role=MessageRole.SYSTEM,
-                content="Agent stopped — project archived",
-                status=MessageStatus.COMPLETED,
-                delivered_at=_utcnow(),
-            ))
-            asyncio.ensure_future(emit_agent_update(agent.id, "STOPPED", agent.project))
-    stopped_count = len(active_agents)
+    if active_agents:
+        names = ", ".join(f"{a.name} ({a.status.value})" for a in active_agents[:5])
+        more = "" if len(active_agents) <= 5 else f" (+{len(active_agents) - 5} more)"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot archive '{name}' — {len(active_agents)} active session(s): "
+                f"{names}{more}. Stop them first, then retry."
+            ),
+        )
 
-    # Cancel all non-terminal tasks for this project
-    from models import Task
+    # Unassign all non-terminal tasks (move to "no project") — keep data, don't cancel
     from task_state_machine import TERMINAL_STATES
-    from task_state import TaskStateMachine
     orphan_tasks = (
         db.query(Task)
         .filter(Task.project_name == name, Task.status.notin_(TERMINAL_STATES))
         .all()
     )
     for t in orphan_tasks:
-        TaskStateMachine.transition(t, TaskStatus.CANCELLED, strict=False)
+        # Statuses that only make sense while a project+agent is present → reset to INBOX
+        if t.status not in (TaskStatus.INBOX, TaskStatus.PENDING):
+            t.status = TaskStatus.INBOX
+        t.project_name = None
+        t.project = ""  # legacy v1 column (NOT NULL)
+        t.agent_id = None
         asyncio.ensure_future(emit_task_update(
-            t.id, t.status.value, t.project_name or "",
+            t.id, t.status.value, "",
             title=t.title,
         ))
-    cancelled_count = len(orphan_tasks)
+    unassigned_count = len(orphan_tasks)
 
     # Stop all running subprocess workers for this project
     wm = getattr(request.app.state, "worker_manager", None)
@@ -1366,8 +1356,8 @@ async def archive_project(name: str, request: Request, db: Session = Depends(get
     proj.archived = True
     db.commit()
     _remove_from_registry(name)
-    logger.info("Project '%s' archived (stopped %d agents, cancelled %d tasks)", name, stopped_count, cancelled_count)
-    return {"detail": f"Project '{name}' archived — {stopped_count} agent(s) stopped, {cancelled_count} task(s) cancelled"}
+    logger.info("Project '%s' archived (unassigned %d task(s))", name, unassigned_count)
+    return {"detail": f"Project '{name}' archived — {unassigned_count} task(s) moved to no-project"}
 
 
 @router.delete("/api/projects/{name}", status_code=200)
