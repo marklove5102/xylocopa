@@ -245,7 +245,7 @@ def mark_delivered(agent_id: str, content: str) -> str | None:
     Returns the message ID if found, None otherwise.
     """
     from database import SessionLocal
-    from models import Message, MessageRole
+    from models import Message, MessageRole, MessageStatus
 
     cmd, _ = parse(content)
     if not cmd:
@@ -271,13 +271,19 @@ def mark_delivered(agent_id: str, content: str) -> str | None:
 
         now = _utcnow()
         msg.delivered_at = now
+        # Transition QUEUED → EXECUTING so the UI drops the "pending" muted
+        # styling and the single-check delivered state becomes visible against
+        # the saturated bubble.  completion happens later (PostCompact etc.).
+        if msg.status == MessageStatus.QUEUED:
+            msg.status = MessageStatus.EXECUTING
         db.commit()
 
         from display_writer import update_last
         update_last(agent_id, msg.id)
 
-        from websocket import emit_message_delivered
+        from websocket import emit_message_delivered, emit_message_update
         asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
+        asyncio.ensure_future(emit_message_update(agent_id, msg.id, msg.status.value))
         logger.info("slash_commands: %s delivered for %s (msg=%s)", cmd, agent_id[:8], msg.id)
         return msg.id
     finally:
