@@ -502,18 +502,6 @@ function TimeStatsPopover({ onClose, containerRef }) {
 }
 
 function WeekView({ week }) {
-  const [activeIdx, setActiveIdx] = useState(null);
-
-  useEffect(() => {
-    const clear = () => setActiveIdx(null);
-    window.addEventListener("pointerup", clear);
-    window.addEventListener("pointercancel", clear);
-    return () => {
-      window.removeEventListener("pointerup", clear);
-      window.removeEventListener("pointercancel", clear);
-    };
-  }, []);
-
   if (!week) return <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>;
   const days = week.days || [];
   const projects = week.projects || [];
@@ -544,12 +532,11 @@ function WeekView({ week }) {
         </div>
       </div>
 
-      {/* Daily bar chart — press-hold a bar to see its duration */}
-      <div className="border-t border-divider px-4 py-2.5"
-        style={{ userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
+      {/* Daily bar chart — each bar shows its duration above in dim text */}
+      <div className="border-t border-divider px-4 py-2.5">
         <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
         <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full"
-          style={{ maxWidth: BW, touchAction: "none", WebkitTapHighlightColor: "transparent", overflow: "visible" }}>
+          style={{ maxWidth: BW, overflow: "visible" }}>
           {days.map((d, i) => {
             const x = BPX + i * (barW + gap);
             const secs = d.seconds || 0;
@@ -557,47 +544,24 @@ function WeekView({ week }) {
             const y = BH - BPY - h;
             const dt = new Date(d.date + "T00:00:00");
             const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
-            const isActive = activeIdx === i;
-            // Hit area = full column (so tiny bars are still easy to grab)
-            const hitX = x - gap / 2;
-            const hitW = barW + gap;
             return (
               <g key={d.date}>
-                <rect x={hitX} y={0} width={hitW} height={BH}
-                  fill="transparent"
-                  style={{ cursor: secs > 0 ? "pointer" : "default" }}
-                  onPointerDown={(e) => { if (secs > 0) { e.preventDefault(); setActiveIdx(i); } }}
-                  onPointerEnter={(e) => { if (secs > 0 && e.buttons) setActiveIdx(i); }}
-                />
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
-                    fill={accent} opacity={isActive ? 1 : 0.85}
-                    pointerEvents="none" />
+                    fill={accent} opacity={0.85} />
+                )}
+                {secs > 0 && (
+                  <text x={x + barW / 2} y={y - 4} textAnchor="middle"
+                    fill="var(--color-faint)"
+                    style={{ fontSize: "9px", fontWeight: 500 }}>
+                    {formatHoursShort(secs)}
+                  </text>
                 )}
                 <text x={x + barW / 2} y={BH + 10} textAnchor="middle"
-                  fill={isActive ? accent : "var(--color-dim)"}
-                  style={{ fontSize: "9px", fontWeight: isActive ? 700 : 400 }}
-                  pointerEvents="none">{weekday}</text>
+                  fill="var(--color-dim)" style={{ fontSize: "9px" }}>{weekday}</text>
               </g>
             );
           })}
-          {/* Tooltip label for the pressed bar — plain text, no bubble */}
-          {activeIdx != null && days[activeIdx] && days[activeIdx].seconds > 0 && (() => {
-            const d = days[activeIdx];
-            const bx = BPX + activeIdx * (barW + gap) + barW / 2;
-            const bh = Math.max(2, (d.seconds / maxDaySecs) * (BH - BPY * 2));
-            const by = BH - BPY - bh;
-            const label = formatDuration(d.seconds);
-            const labelW = label.length * 6.5 + 4;
-            const tx = Math.max(labelW / 2, Math.min(BW - labelW / 2, bx));
-            const ty = by - 6; // text baseline, 6px above bar top (SVG has overflow:visible so it's never clipped)
-            return (
-              <text x={tx} y={ty} textAnchor="middle"
-                fill="var(--color-heading)"
-                style={{ fontSize: "11px", fontWeight: 700 }}
-                pointerEvents="none">{label}</text>
-            );
-          })()}
         </svg>
       </div>
 
