@@ -703,12 +703,8 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
               type="button"
               onClick={() => setShowTimePopover(v => !v)}
               title={timeWeekTotal != null ? `This week: ${formatDuration(timeWeekTotal)} viewing` : "Viewing time"}
-              className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
+              className="shrink-0 inline-flex items-center px-2.5 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
             >
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
-                <circle cx="12" cy="12" r="9" />
-                <path strokeLinecap="round" d="M12 7v5l3 2" />
-              </svg>
               <span className="text-[11px] font-semibold tabular-nums leading-none">
                 {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
               </span>
