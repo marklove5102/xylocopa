@@ -520,9 +520,7 @@ function WeekView({ week }) {
   const total = week.total_seconds || 0;
   const maxDaySecs = Math.max(1, ...days.map((d) => d.seconds || 0));
 
-  // Ring shows week total filled toward 40h budget
-  const pctOfBudget = Math.min(1, total / (40 * 3600));
-  const ringColor = "#06b6d4";
+  const accent = "#06b6d4";
 
   // Bar chart dims (match SR sparkline: 228 wide)
   const BW = 228, BH = 60, BPX = 4, BPY = 6, LH = 14;
@@ -532,21 +530,14 @@ function WeekView({ week }) {
 
   return (
     <>
-      {/* Header — ring + title, matches TaskStatsPopover layout */}
+      {/* Header — clock icon tile + title */}
       <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-        <svg width="44" height="44" viewBox="0 0 44 44">
-          <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5" opacity={0.18} />
-          <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeDasharray={2 * Math.PI * 17}
-            strokeDashoffset={2 * Math.PI * 17 * (1 - pctOfBudget)}
-            transform="rotate(-90 22 22)"
-            style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-          <text x="22" y="22" textAnchor="middle" dominantBaseline="central"
-            fill={ringColor} style={{ fontSize: "11px", fontWeight: 700 }}>
-            {formatHoursShort(total)}
-          </text>
-        </svg>
+        <div className="w-11 h-11 rounded-lg bg-cyan-500/15 flex items-center justify-center shrink-0">
+          <svg className="w-6 h-6 text-cyan-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <circle cx="12" cy="12" r="9" />
+            <path strokeLinecap="round" d="M12 7v5l3 2" />
+          </svg>
+        </div>
         <div className="flex-1 min-w-0">
           <div className="text-heading text-sm font-semibold">This Week</div>
           <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
@@ -580,11 +571,11 @@ function WeekView({ week }) {
                 />
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
-                    fill={ringColor} opacity={isActive ? 1 : 0.85}
+                    fill={accent} opacity={isActive ? 1 : 0.85}
                     pointerEvents="none" />
                 )}
                 <text x={x + barW / 2} y={BH + 10} textAnchor="middle"
-                  fill={isActive ? ringColor : "var(--color-dim)"}
+                  fill={isActive ? accent : "var(--color-dim)"}
                   style={{ fontSize: "9px", fontWeight: isActive ? 700 : 400 }}
                   pointerEvents="none">{weekday}</text>
               </g>
@@ -748,21 +739,15 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
               type="button"
               onClick={() => setShowTimePopover(v => !v)}
               title={timeWeekTotal != null ? `This week: ${formatDuration(timeWeekTotal)} viewing` : "Viewing time"}
-              className="shrink-0 flex items-center justify-center w-8 h-8 hover:opacity-80 transition-opacity"
+              className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
             >
-              <svg width="26" height="26" viewBox="0 0 26 26">
-                <circle cx="13" cy="13" r="10" fill="transparent" stroke="#06b6d4" strokeWidth="2.5" opacity={0.25} />
-                <circle cx="13" cy="13" r="10" fill="transparent" stroke="#06b6d4" strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeDasharray={2 * Math.PI * 10}
-                  strokeDashoffset={2 * Math.PI * 10 * (1 - Math.min(1, (timeWeekTotal || 0) / (40 * 3600)))}
-                  transform="rotate(-90 13 13)"
-                  style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-                <text x="13" y="13" textAnchor="middle" dominantBaseline="central"
-                  fill="#06b6d4" style={{ fontSize: "8px", fontWeight: 700 }}>
-                  {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
-                </text>
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+                <circle cx="12" cy="12" r="9" />
+                <path strokeLinecap="round" d="M12 7v5l3 2" />
               </svg>
+              <span className="text-[11px] font-semibold tabular-nums leading-none">
+                {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
+              </span>
             </button>
             {showTimePopover && <TimeStatsPopover onClose={closeTimePopover} containerRef={timeRingContainerRef} />}
           </div>
