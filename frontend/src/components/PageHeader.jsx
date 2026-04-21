@@ -309,7 +309,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
         style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
       {/* Card */}
       <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
-        {/* Header — big ring + percentage */}
+        {/* Header — big ring (percentage text omitted; shown on the outside pill) */}
         <div className="px-4 pt-4 pb-3 flex items-center gap-3">
           <svg width="44" height="44" viewBox="0 0 44 44">
             <circle cx="22" cy="22" r="17" fill="transparent" stroke={ringColor} strokeWidth="3.5" opacity={0.18} />
@@ -319,10 +319,6 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
               strokeDashoffset={2 * Math.PI * 17 * (1 - wPct / 100)}
               transform="rotate(-90 22 22)"
               style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-            <text x="22" y="22" textAnchor="middle" dominantBaseline="central"
-              fill={ringColor} style={{ fontSize: "12px", fontWeight: 700 }}>
-              {wPct}%
-            </text>
           </svg>
           <div>
             <div className="text-heading text-sm font-semibold">Weekly Success Rate</div>
