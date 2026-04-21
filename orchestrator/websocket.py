@@ -233,8 +233,7 @@ async def emit_system_alert(message: str, level: str = "warning"):
 
 
 async def emit_agent_update(agent_id: str, status: str, project: str,
-                            insight_status: str | None = None,
-                            sync_stale: bool | None = None):
+                            insight_status: str | None = None):
     data = {
         "agent_id": agent_id,
         "status": status,
@@ -242,8 +241,6 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
     }
     if insight_status is not None:
         data["insight_status"] = insight_status
-    if sync_stale is not None:
-        data["sync_stale"] = sync_stale
     # Attach mutable list-view fields so the AgentsPage badge/preview
     # update in real-time without a follow-up refetch.  PK lookup is
     # cheap (<1ms) and always reflects latest committed state.

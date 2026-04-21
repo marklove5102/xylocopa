@@ -539,8 +539,6 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             )
             agent.last_message_preview = (_preview_turn[1] or "")[:200]
             agent.last_message_at = _utcnow()
-            if agent.sync_stale:
-                agent.sync_stale = False
 
         try:
             db.commit()
