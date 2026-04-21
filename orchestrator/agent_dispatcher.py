@@ -1781,20 +1781,9 @@ class AgentDispatcher:
                 try:
                     self._tick(db)
 
-                    # Daily PROGRESS.md summary auto-trigger (once per day, persisted in DB)
-                    # Summarize *yesterday* — triggered after midnight UTC so the full
-                    # previous day's sessions are available.
-                    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    last_row = db.get(SystemConfig, "auto_summary_last_date")
-                    last_date = last_row.value if last_row else None
-                    if last_date != today_str:
-                        if last_row:
-                            last_row.value = today_str
-                        else:
-                            db.add(SystemConfig(key="auto_summary_last_date", value=today_str))
-                        db.commit()
-                        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-                        self._trigger_daily_progress_summaries(db, target_date=yesterday)
+                    # Daily PROGRESS.md summary auto-trigger — disabled
+                    # (kept for reference; manual & per-agent summaries still work)
+                    pass
                 finally:
                     db.close()
                 _consecutive_failures = 0
