@@ -491,8 +491,10 @@ function WeekView({ week }) {
 
   const accent = "#06b6d4";
 
-  // Bar chart dims (match SR sparkline: 228 wide)
-  const BW = 228, BH = 60, BPX = 4, BPY = 6, LH = 14;
+  // Bar chart dims (match SR sparkline: 228 wide).
+  // BPT reserves room above the tallest bar for its duration label so the
+  // label never clips against the popover's rounded-card top edge.
+  const BW = 228, BH = 72, BPX = 4, BPT = 14, BPB = 6, LH = 14;
   const nBars = days.length || 1;
   const gap = 4;
   const barW = Math.max(6, (BW - BPX * 2 - gap * (nBars - 1)) / nBars);
@@ -509,12 +511,12 @@ function WeekView({ week }) {
       <div className="border-t border-divider px-4 py-2.5">
         <div className="text-faint text-[10px] uppercase tracking-wider font-medium mb-1.5">Daily</div>
         <svg width={BW} height={BH + LH} viewBox={`0 0 ${BW} ${BH + LH}`} className="w-full"
-          style={{ maxWidth: BW, overflow: "visible" }}>
+          style={{ maxWidth: BW }}>
           {days.map((d, i) => {
             const x = BPX + i * (barW + gap);
             const secs = d.seconds || 0;
-            const h = secs > 0 ? Math.max(2, ((secs / maxDaySecs) * (BH - BPY * 2))) : 0;
-            const y = BH - BPY - h;
+            const h = secs > 0 ? Math.max(2, ((secs / maxDaySecs) * (BH - BPT - BPB))) : 0;
+            const y = BH - BPB - h;
             const dt = new Date(d.date + "T00:00:00");
             const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
             return (
