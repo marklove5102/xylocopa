@@ -409,17 +409,25 @@ export const updateNotificationSettings = (data) =>
   request("/api/settings/notifications", { method: "PUT", body: JSON.stringify(data) });
 
 // --- FormData helper (shared by voice + upload) ---
-async function formDataRequest(url, formData, errorLabel = "Request") {
+async function formDataRequest(url, formData, errorLabel = "Request", opts = {}) {
   const headers = {};
   const token = getAuthToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-  const res = await fetch(`${BASE}${url}`, {
-    method: "POST",
-    body: formData,
-    headers,
-  });
+  const fetchOpts = { method: "POST", body: formData, headers, ...opts };
+  let res;
+  try {
+    res = await fetch(`${BASE}${url}`, fetchOpts);
+  } catch (e) {
+    // keepalive has a 64 KB body-size limit — retry without it on TypeError
+    if (opts.keepalive && e instanceof TypeError) {
+      const { keepalive: _, ...rest } = fetchOpts;
+      res = await fetch(`${BASE}${url}`, rest);
+    } else {
+      throw e;
+    }
+  }
   if (res.status === 401) handle401(token);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -436,11 +444,11 @@ export async function transcribeVoice(audioBlob, mimeType) {
     : "webm";
   const formData = new FormData();
   formData.append("file", audioBlob, `recording.${ext}`);
-  return formDataRequest("/api/voice", formData, "Voice API error");
+  return formDataRequest("/api/voice", formData, "Voice API error", { keepalive: true });
 }
 
 export const refineVoiceText = (text) =>
-  request("/api/voice/refine", { method: "POST", body: JSON.stringify({ text }) });
+  request("/api/voice/refine", { method: "POST", body: JSON.stringify({ text }), keepalive: true });
 
 export async function uploadFile(file) {
   const formData = new FormData();
