@@ -281,3 +281,24 @@ class SystemConfig(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SessionViewEvent(Base):
+    """A single continuous interval during which a user was actively
+    viewing one agent session. Written by the view-tracking tick loop.
+    """
+    __tablename__ = "session_view_events"
+    __table_args__ = (
+        Index("ix_view_events_started", "started_at"),
+        Index("ix_view_events_project_started", "project", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    project: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    seconds: Mapped[int] = mapped_column(Integer, nullable=False)

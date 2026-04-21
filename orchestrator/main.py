@@ -269,10 +269,14 @@ async def lifespan(app: FastAPI):
 
     ws_prune_task = asyncio.create_task(_ws_prune_loop())
 
+    # Start session-viewing time-tracking loop
+    from view_tracking import run_tick_loop as _view_tick
+    view_track_task = asyncio.create_task(_view_tick())
+
     yield
 
     # Shutdown
-    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task):
+    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task, view_track_task):
         if task:
             task.cancel()
             try:
@@ -458,6 +462,7 @@ from routers.push import router as push_router
 from routers.workers import router as workers_router
 from routers.logs import router as logs_router
 from routers.skills import router as skills_router
+from routers.stats import router as stats_router
 
 app.include_router(auth_router)
 app.include_router(system_router)
@@ -471,3 +476,4 @@ app.include_router(push_router)
 app.include_router(workers_router)
 app.include_router(logs_router)
 app.include_router(skills_router)
+app.include_router(stats_router)

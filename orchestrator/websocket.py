@@ -24,12 +24,17 @@ class ConnectionManager:
         self._viewing: dict[WebSocket, set[str]] = {}
         # Track browser window focus state per client
         self._has_focus: dict[WebSocket, bool] = {}
+        # Track the single "primary" agent per client — the pane/page the
+        # user is actively interacting with. None = idle (no interaction
+        # within the client's idle threshold). Used for time-accounting.
+        self._primary: dict[WebSocket, str | None] = {}
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
         self.active.append(ws)
         self._viewing[ws] = set()
         self._has_focus[ws] = True
+        self._primary[ws] = None
         logger.info("WebSocket client connected (%d total)", len(self.active))
 
     def disconnect(self, ws: WebSocket):
@@ -37,21 +42,26 @@ class ConnectionManager:
             self.active.remove(ws)
         self._viewing.pop(ws, None)
         self._has_focus.pop(ws, None)
+        self._primary.pop(ws, None)
         logger.info("WebSocket client disconnected (%d total)", len(self.active))
 
     def set_viewing(self, ws: WebSocket, agent_ids: set[str],
-                    has_focus: bool | None = None):
+                    has_focus: bool | None = None,
+                    primary_agent_id: str | None | type = ...):
         """Record which agents a client is currently viewing."""
         old = self._viewing.get(ws, set())
         old_focus = self._has_focus.get(ws)
         self._viewing[ws] = agent_ids
         if has_focus is not None:
             self._has_focus[ws] = has_focus
+        if primary_agent_id is not ...:
+            self._primary[ws] = primary_agent_id
         cur_focus = self._has_focus.get(ws)
         if old != agent_ids or old_focus != cur_focus:
             logger.info(
-                "viewing update: agents=%s has_focus=%s (was agents=%s has_focus=%s)",
+                "viewing update: agents=%s has_focus=%s primary=%s (was agents=%s has_focus=%s)",
                 sorted(a[:8] for a in agent_ids), cur_focus,
+                (self._primary.get(ws) or "")[:8] or None,
                 sorted(a[:8] for a in old), old_focus,
             )
 
@@ -62,6 +72,21 @@ class ConnectionManager:
     def is_any_client_focused(self) -> bool:
         """True if any connected client's browser window has focus."""
         return any(self._has_focus.get(ws, False) for ws in self.active)
+
+    def active_primary_agents(self) -> set[str]:
+        """Deduplicated set of agent IDs currently being actively viewed
+        across all focused clients. Empty if no client is focused /
+        interacting. Used by the view-tracking tick loop — the same agent
+        open on multiple devices counts once.
+        """
+        result: set[str] = set()
+        for ws in self.active:
+            if not self._has_focus.get(ws, False):
+                continue
+            pri = self._primary.get(ws)
+            if pri:
+                result.add(pri)
+        return result
 
     async def broadcast(self, event_type: str, data: dict) -> int:
         """Send an event to all connected clients. Returns count of successful sends."""
@@ -150,11 +175,23 @@ async def websocket_endpoint(ws: WebSocket):
                     if msg.get("type") == "viewing":
                         ids = msg.get("agent_ids")
                         has_focus = msg.get("has_focus")
+                        # primary_agent_id may be absent (legacy clients),
+                        # null (explicit idle), or a string.
+                        if "primary_agent_id" in msg:
+                            primary = msg.get("primary_agent_id")
+                        else:
+                            primary = ...  # sentinel: leave unchanged
                         if ids is not None:
-                            ws_manager.set_viewing(ws, set(ids), has_focus)
+                            ws_manager.set_viewing(
+                                ws, set(ids), has_focus,
+                                primary_agent_id=primary,
+                            )
                         else:
                             aid = msg.get("agent_id")
-                            ws_manager.set_viewing(ws, {aid} if aid else set(), has_focus)
+                            ws_manager.set_viewing(
+                                ws, {aid} if aid else set(), has_focus,
+                                primary_agent_id=primary,
+                            )
                 except json.JSONDecodeError:
                     logger.debug("WS received invalid JSON: %s", data[:100])
     except WebSocketDisconnect:
