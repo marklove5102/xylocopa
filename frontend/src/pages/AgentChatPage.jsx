@@ -1334,7 +1334,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           className={`rounded-2xl px-4 py-2.5 ${
             isUser
               ? isCancelled
-                ? "bg-zinc-500/15 dark:bg-zinc-500/20 text-zinc-500 dark:text-white/50 line-through rounded-br-md"
+                ? "bg-zinc-600 text-white/80 line-through rounded-br-md"
                 : isScheduled
                   ? "bg-amber-600/80 text-white rounded-br-md"
                   : isPending
@@ -1397,7 +1397,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           <div className={`text-xs mt-1 flex items-center gap-1.5 ${
             isUser
               ? isCancelled
-                ? "text-zinc-500 dark:text-white/40"
+                ? "text-white/60"
                 : isScheduled ? "text-amber-200" : "text-cyan-200"
               : "text-dim"
           }`}>
@@ -1418,7 +1418,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               </span>
             )}
             {isCancelled && (
-              <span className="text-zinc-500 dark:text-white/40">cancelled</span>
+              <span className="text-white/60">cancelled</span>
             )}
             {message.source && (
               <span className={`px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
