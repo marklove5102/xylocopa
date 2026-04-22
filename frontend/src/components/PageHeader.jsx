@@ -456,7 +456,7 @@ function TaskStatsPopover({ taskStats, onClose, containerRef }) {
 }
 
 /* ── Viewing Time Stats Popover ── */
-function TimeStatsPopover({ onClose, containerRef }) {
+function TimeStatsPopover({ onClose, containerRef, mode, onModeChange }) {
   const [week, setWeek] = useState(null);
 
   useEffect(() => {
@@ -476,18 +476,53 @@ function TimeStatsPopover({ onClose, containerRef }) {
       <div className="absolute -top-1.5 right-3"
         style={{ width: 12, height: 12, transform: "rotate(45deg)", background: "var(--color-surface)", borderTop: "1px solid var(--color-edge)", borderLeft: "1px solid var(--color-edge)" }} />
       <div className="bg-surface border border-edge rounded-xl shadow-lg overflow-hidden" style={{ boxShadow: "0 8px 30px var(--color-shadow)" }}>
-        <WeekView week={week} />
+        <WeekView week={week} mode={mode} onModeChange={onModeChange} />
       </div>
     </div>
   );
 }
 
-function WeekView({ week }) {
+function ModeToggle({ mode, onModeChange }) {
+  const btn = (key, label) => (
+    <button
+      type="button"
+      onClick={() => onModeChange(key)}
+      className={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+        mode === key
+          ? "bg-cyan-500/15 text-cyan-500"
+          : "bg-transparent text-dim hover:bg-input"
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="inline-flex rounded-md border border-edge overflow-hidden">
+      {btn("day", "Day")}
+      {btn("week", "Week")}
+    </div>
+  );
+}
+
+function WeekView({ week, mode, onModeChange }) {
   if (!week) return <div className="px-4 py-6 text-center text-dim text-xs animate-pulse">Loading...</div>;
   const days = week.days || [];
-  const projects = week.projects || [];
-  const total = week.total_seconds || 0;
+  const weekProjects = week.projects || [];
+  const weekTotal = week.total_seconds || 0;
   const maxDaySecs = Math.max(1, ...days.map((d) => d.seconds || 0));
+
+  const todayBucket = days.length ? days[days.length - 1] : null;
+  const todayTotal = todayBucket?.seconds || 0;
+  const todayProjects = todayBucket
+    ? Object.entries(todayBucket.by_project || {})
+        .map(([project, seconds]) => ({ project, seconds }))
+        .sort((a, b) => b.seconds - a.seconds)
+    : [];
+
+  const isDay = mode === "day";
+  const projects = isDay ? todayProjects : weekProjects;
+  const total = isDay ? todayTotal : weekTotal;
+  const title = isDay ? "Today" : "This Week";
 
   const accent = "#06b6d4";
 
@@ -501,10 +536,13 @@ function WeekView({ week }) {
 
   return (
     <>
-      {/* Header — title only */}
-      <div className="px-4 pt-4 pb-3">
-        <div className="text-heading text-sm font-semibold">This Week</div>
-        <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
+      {/* Header — title + day/week toggle */}
+      <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-heading text-sm font-semibold">{title}</div>
+          <div className="text-dim text-xs mt-0.5">{formatDuration(total)} · {projects.length} project{projects.length !== 1 ? "s" : ""}</div>
+        </div>
+        <ModeToggle mode={mode} onModeChange={onModeChange} />
       </div>
 
       {/* Daily bar chart — each bar shows its duration above in dim text */}
@@ -519,11 +557,13 @@ function WeekView({ week }) {
             const y = BH - BPB - h;
             const dt = new Date(d.date + "T00:00:00");
             const weekday = ["S","M","T","W","T","F","S"][dt.getDay()];
+            const isToday = i === days.length - 1;
+            const barOpacity = isDay ? (isToday ? 1 : 0.3) : 0.85;
             return (
               <g key={d.date}>
                 {h > 0 && (
                   <rect x={x} y={y} width={barW} height={h} rx="2"
-                    fill={accent} opacity={0.85} />
+                    fill={accent} opacity={barOpacity} />
                 )}
                 {secs > 0 && (
                   <text x={x + barW / 2} y={y - 4} textAnchor="middle"
@@ -548,7 +588,9 @@ function WeekView({ week }) {
         </div>
       )}
       {projects.length === 0 && (
-        <div className="border-t border-divider px-4 py-4 text-center text-dim text-xs">No viewing time recorded yet</div>
+        <div className="border-t border-divider px-4 py-4 text-center text-dim text-xs">
+          {isDay ? "No viewing time today" : "No viewing time recorded yet"}
+        </div>
       )}
     </>
   );
@@ -601,6 +643,15 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
   const [showQueuePopover, setShowQueuePopover] = useState(false);
   const [showTimePopover, setShowTimePopover] = useState(false);
   const [timeWeekTotal, setTimeWeekTotal] = useState(null);
+  const [timeDayTotal, setTimeDayTotal] = useState(null);
+  const [timeMode, setTimeMode] = useState(() => {
+    try { return localStorage.getItem("pref:time-badge:mode") === "day" ? "day" : "week"; }
+    catch { return "week"; }
+  });
+  const onTimeModeChange = useCallback((m) => {
+    setTimeMode(m);
+    try { localStorage.setItem("pref:time-badge:mode", m); } catch { /* ignore */ }
+  }, []);
   const ringContainerRef = useRef(null);
   const queueContainerRef = useRef(null);
   const timeRingContainerRef = useRef(null);
@@ -615,7 +666,12 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
     if (!showTimeRing) return;
     let cancelled = false;
     const load = () => fetchViewingStatsWeek(7)
-      .then((r) => { if (!cancelled) setTimeWeekTotal(r.total_seconds || 0); })
+      .then((r) => {
+        if (cancelled) return;
+        setTimeWeekTotal(r.total_seconds || 0);
+        const days = r.days || [];
+        setTimeDayTotal(days.length ? (days[days.length - 1].seconds || 0) : 0);
+      })
       .catch(() => {});
     load();
     const id = setInterval(load, 60000);
@@ -672,25 +728,40 @@ export default function PageHeader({ title, theme, onToggleTheme, actions, selec
             {showStatsPopover && <TaskStatsPopover taskStats={taskStats} onClose={closePopover} containerRef={ringContainerRef} />}
           </div>
         )}
-        {showTimeRing && (
-          <div className="relative" ref={timeRingContainerRef}>
-            <button
-              type="button"
-              onClick={() => setShowTimePopover(v => !v)}
-              title={timeWeekTotal != null ? `This week: ${formatDuration(timeWeekTotal)} viewing` : "Viewing time"}
-              className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
-            >
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
-                <circle cx="12" cy="12" r="9" />
-                <path strokeLinecap="round" d="M12 7v5l3 2" />
-              </svg>
-              <span className="text-[11px] font-semibold tabular-nums leading-none">
-                {timeWeekTotal != null ? formatHoursShort(timeWeekTotal) : "·"}
-              </span>
-            </button>
-            {showTimePopover && <TimeStatsPopover onClose={closeTimePopover} containerRef={timeRingContainerRef} />}
-          </div>
-        )}
+        {showTimeRing && (() => {
+          const badgeSecs = timeMode === "day" ? timeDayTotal : timeWeekTotal;
+          const badgeTitle = badgeSecs != null
+            ? (timeMode === "day"
+                ? `Today: ${formatDuration(badgeSecs)} viewing`
+                : `This week: ${formatDuration(badgeSecs)} viewing`)
+            : "Viewing time";
+          return (
+            <div className="relative" ref={timeRingContainerRef}>
+              <button
+                type="button"
+                onClick={() => setShowTimePopover(v => !v)}
+                title={badgeTitle}
+                className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-full bg-cyan-500/15 text-cyan-500 hover:bg-cyan-500/25 transition-colors"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+                  <circle cx="12" cy="12" r="9" />
+                  <path strokeLinecap="round" d="M12 7v5l3 2" />
+                </svg>
+                <span className="text-[11px] font-semibold tabular-nums leading-none">
+                  {badgeSecs != null ? formatHoursShort(badgeSecs) : "·"}
+                </span>
+              </button>
+              {showTimePopover && (
+                <TimeStatsPopover
+                  onClose={closeTimePopover}
+                  containerRef={timeRingContainerRef}
+                  mode={timeMode}
+                  onModeChange={onTimeModeChange}
+                />
+              )}
+            </div>
+          );
+        })()}
         {!hideMonitor && (
           <button
             type="button"
