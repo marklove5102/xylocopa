@@ -449,8 +449,8 @@ export default function GitPage({ theme, onToggleTheme }) {
                 disabled={mergingAll}
                 className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                   mergingAll
-                    ? "bg-purple-400 text-white cursor-wait dark:bg-purple-700/50 dark:text-purple-300"
-                    : "bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-600 dark:text-white dark:hover:bg-purple-500"
+                    ? "bg-purple-500/10 text-purple-500 cursor-wait dark:bg-purple-500/10 dark:text-purple-400"
+                    : "bg-purple-500/15 text-purple-600 hover:bg-purple-500/25 active:bg-purple-500/30 dark:bg-purple-500/10 dark:text-purple-400 dark:hover:bg-purple-500/20 dark:active:bg-purple-500/25"
                 }`}
               >
                 {mergingAll ? (
@@ -485,8 +485,8 @@ export default function GitPage({ theme, onToggleTheme }) {
                     key={wt.path || idx}
                     className={`flex items-center gap-2 rounded-lg text-sm px-3 py-2 border transition-colors ${
                       isMain
-                        ? "bg-cyan-50 border-cyan-300 text-heading dark:bg-cyan-600/20 dark:border-cyan-500/50 dark:text-cyan-300"
-                        : "bg-purple-50 border-purple-300 text-heading dark:bg-purple-500/10 dark:border-purple-500/30 dark:text-purple-300"
+                        ? "bg-input border-cyan-500/40 text-heading dark:bg-cyan-500/5 dark:border-cyan-500/30 dark:text-cyan-300"
+                        : "bg-input border-purple-500/40 text-heading dark:bg-purple-500/5 dark:border-purple-500/30 dark:text-purple-300"
                     }`}
                   >
                     <svg className="w-3.5 h-3.5 shrink-0 opacity-60" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -494,12 +494,12 @@ export default function GitPage({ theme, onToggleTheme }) {
                     </svg>
                     <span className="font-mono text-xs truncate">{name}</span>
                     {wt.branch && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isMain ? "bg-cyan-600 text-white dark:bg-cyan-600 dark:text-white" : "bg-purple-600 text-white dark:bg-purple-600 dark:text-white"}`}>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isMain ? "bg-cyan-500/15 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300" : "bg-purple-500/15 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300"}`}>
                         {wt.branch}
                       </span>
                     )}
                     {wt.detached && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500 text-white dark:bg-amber-500 dark:text-white">detached</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">detached</span>
                     )}
                     {wt.commit && (
                       <span className="font-mono text-xs text-dim ml-auto">{wt.commit}</span>
@@ -552,7 +552,7 @@ export default function GitPage({ theme, onToggleTheme }) {
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                     cleanupMode
                       ? "bg-gray-500/15 text-body hover:bg-gray-500/25 dark:bg-gray-500/10 dark:hover:bg-gray-500/20"
-                      : "bg-red-500/15 text-red-500 hover:bg-red-500/25 active:bg-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20 dark:active:bg-red-500/25"
+                      : "bg-red-500/15 text-red-600 hover:bg-red-500/25 active:bg-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20 dark:active:bg-red-500/25"
                   }`}
                 >
                   {cleanupMode ? "Cancel" : "Clean"}
@@ -579,9 +579,9 @@ export default function GitPage({ theme, onToggleTheme }) {
                     onDoubleClick={!cleanupMode && !isCurrent ? () => handleCheckout(branch.name) : undefined}
                     className={`flex items-center gap-2 rounded-lg text-sm px-3 py-2 border transition-colors ${
                       cleanupMode && isSelected
-                        ? "bg-red-50 border-red-400 text-heading dark:bg-red-600/15 dark:border-red-500/50 dark:text-red-300"
+                        ? "bg-red-500/10 border-red-500/40 text-heading dark:bg-red-500/5 dark:border-red-500/30 dark:text-red-300"
                         : isCurrent
-                          ? "bg-cyan-50 border-cyan-400 text-heading dark:bg-cyan-600/20 dark:border-cyan-500/50 dark:text-cyan-300"
+                          ? "bg-input border-cyan-500/40 text-heading dark:bg-cyan-500/5 dark:border-cyan-500/30 dark:text-cyan-300"
                           : cleanupMode && !isCurrent
                             ? "bg-input border-edge text-heading cursor-pointer hover:border-red-400/50 dark:hover:border-red-500/30"
                             : "bg-input border-edge text-heading cursor-pointer hover:border-cyan-400/50 dark:hover:border-cyan-500/30"
