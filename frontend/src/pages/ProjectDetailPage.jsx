@@ -32,7 +32,8 @@ import {
 import BotIcon from "../components/BotIcon";
 import EffortSelector from "../components/EffortSelector";
 import ModelSelector from "../components/ModelSelector";
-import FolderIcon from "../components/FolderIcon";
+import ProjectRing from "../components/ProjectRing";
+import EmojiPicker from "../components/EmojiPicker";
 import VoiceRecorder from "../components/VoiceRecorder";
 import SendLaterPicker from "../components/SendLaterPicker";
 import useDraft from "../hooks/useDraft";
@@ -554,6 +555,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const clearAllDrafts = () => { clearPrompt(); };
   const [submitting, setSubmitting] = useState(false);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiAnchorRef = useRef(null);
+  const [emojiAnchorRect, setEmojiAnchorRect] = useState(null);
   const attachmentCacheKey = `draft:project-agent:${name}:attachments`;
   const [attachments, setAttachments] = useState(() => {
     try {
@@ -880,6 +884,33 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     }
   }, [name, showToast]);
 
+  const handleEmojiSelect = useCallback(async (char) => {
+    // Optimistic update
+    setProject((prev) => prev ? { ...prev, emoji: char } : prev);
+    try {
+      await updateProjectSettings(name, { emoji: char });
+      window.dispatchEvent(new CustomEvent("projects-data-changed"));
+    } catch (err) {
+      showToast(err.message || "Failed to save icon", "error");
+    }
+  }, [name, showToast]);
+
+  const handleEmojiClear = useCallback(async () => {
+    setProject((prev) => prev ? { ...prev, emoji: null } : prev);
+    try {
+      await updateProjectSettings(name, { emoji: null });
+      window.dispatchEvent(new CustomEvent("projects-data-changed"));
+    } catch (err) {
+      showToast(err.message || "Failed to reset icon", "error");
+    }
+  }, [name, showToast]);
+
+  const openEmojiPicker = useCallback(() => {
+    const rect = emojiAnchorRef.current?.getBoundingClientRect();
+    if (rect) setEmojiAnchorRect(rect);
+    setShowEmojiPicker(true);
+  }, []);
+
   const [rebuildingInsights, setRebuildingInsights] = useState(false);
   const handleRebuildInsights = useCallback(async () => {
     setRebuildingInsights(true);
@@ -1197,7 +1228,22 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             Projects
           </button>
           <div className="flex items-center gap-3">
-            <FolderIcon state={projectBotState(project)} className="w-10 h-10 shrink-0" />
+            <button
+              ref={emojiAnchorRef}
+              type="button"
+              onClick={openEmojiPicker}
+              title="Change project icon"
+              className="shrink-0 rounded-lg p-1 -m-1 hover:bg-input transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+            >
+              <ProjectRing
+                emoji={project.emoji}
+                hasActiveAgents={(project.agent_active || 0) > 0}
+                hasTasks={(project.task_total || 0) > 0}
+                pct={project.weekly_success_pct}
+                size={40}
+                emojiSize={24}
+              />
+            </button>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 {editingName ? (
@@ -1849,6 +1895,16 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </div>
           </div>
         </div>
+      )}
+
+      {showEmojiPicker && (
+        <EmojiPicker
+          current={project?.emoji || null}
+          anchorRect={emojiAnchorRect}
+          onSelect={handleEmojiSelect}
+          onClear={handleEmojiClear}
+          onClose={() => setShowEmojiPicker(false)}
+        />
       )}
     </div>
   );
