@@ -818,7 +818,12 @@ async def list_all_folders(
     tz_offset: int = Query(default=0, description="Client timezone offset in minutes"),
     db: Session = Depends(get_db),
 ):
-    """List ALL folders in projects dir with activation status and stats."""
+    """List ALL folders in projects dir with activation status and stats.
+
+    Also unions DB projects whose ``path`` is outside ``PROJECTS_DIR`` (external
+    projects such as xylocopa self-hosting) as long as the path still exists on
+    disk. Without this, external projects appear in the picker but not the grid.
+    """
     from config import PROJECTS_DIR
     projects_dir = PROJECTS_DIR or "/projects"
     try:
@@ -830,6 +835,20 @@ async def list_all_folders(
         all_dirs = []
 
     db_projects = {p.name: p for p in db.query(Project).all()}
+
+    # Union: include DB rows whose path is outside PROJECTS_DIR but still exists.
+    # Name-collisions with an existing fs dir are skipped (fs wins).
+    projects_dir_abs = os.path.abspath(projects_dir).rstrip("/") + "/"
+    existing_names = set(all_dirs)
+    for name, proj in db_projects.items():
+        if name in existing_names or not proj.path:
+            continue
+        path_abs = os.path.abspath(proj.path)
+        if path_abs.startswith(projects_dir_abs):
+            continue  # in-tree but fs dir missing — Orphan, not External
+        if os.path.isdir(proj.path):
+            all_dirs.append(name)
+    all_dirs.sort()
 
     results = []
     for dirname in all_dirs:
