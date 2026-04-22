@@ -575,10 +575,22 @@ async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
         }
         tasks_data.append(task_dict)
 
-    # Pick first available project as agent host (prefer cc-orchestrator)
-    host_project = "cc-orchestrator"
-    if not db.get(Project, host_project):
-        host_project = projects[0].name if projects else None
+    # Triage is a meta/global agent — its session should belong to the
+    # self-hosting (Xylocopa) project, not to whichever business project
+    # the dispatcher's cwd happens to sit in.  Resolve the self-project by
+    # matching the orchestrator's install dir against registered project
+    # paths (survives future renames); fall back to an alphabetically
+    # sorted name so at least it's deterministic across restarts.
+    from config import _PROJECT_ROOT
+    _self_root = os.path.realpath(_PROJECT_ROOT)
+    host_project = None
+    for p in projects:
+        if p.path and os.path.realpath(p.path) == _self_root:
+            host_project = p.name
+            break
+    if not host_project:
+        _sorted = sorted(projects, key=lambda p: p.name)
+        host_project = _sorted[0].name if _sorted else None
     if not host_project:
         raise HTTPException(400, "No projects available to host the agent")
 
