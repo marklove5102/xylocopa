@@ -1,7 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS } from "../lib/constants";
 import {
   scanOrphans, cleanOrphans, fetchBackupStatus, purgeBackups,
   triggerBackup, deleteSingleBackup, restoreBackup, updateBackupConfig,
@@ -242,9 +240,8 @@ function TokenUsageSection({ tokenUsage, onRefresh }) {
 }
 
 export default function MonitorPage({ theme, onToggleTheme }) {
-  const navigate = useNavigate();
   const {
-    health, healthError, agents, sysStats, tokenUsage, storageStats,
+    health, healthError, sysStats, tokenUsage, storageStats,
     refresh, refreshTokenUsage, activate, deactivate,
   } = useMonitor();
   const [refreshing, setRefreshing] = useState(false);
@@ -693,46 +690,6 @@ export default function MonitorPage({ theme, onToggleTheme }) {
           </p>
         )}
 
-        {/* Active Agents */}
-        <section>
-          <h2 className="text-xs font-semibold text-dim uppercase tracking-wider mb-2">
-            Active Agents ({agents.filter((a) => a.status !== "STOPPED").length})
-          </h2>
-          {agents.filter((a) => a.status !== "STOPPED").length === 0 ? (
-            <div className="rounded-xl bg-surface shadow-card p-6 text-center">
-              <p className="text-faint text-sm">No active agents</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {agents
-                .filter((a) => a.status !== "STOPPED")
-                .map((agent) => {
-                  const dot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
-                  const textCls = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
-                  return (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      onClick={() => navigate(`/agents/${agent.id}`)}
-                      className="w-full text-left rounded-xl bg-surface shadow-card p-3 flex items-center gap-3 transition-colors active:bg-input hover:ring-1 hover:ring-ring-hover"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-heading truncate">{agent.name}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} />
-                          <span className={`text-xs ${textCls}`}>{agent.status.toLowerCase().replace("_", " ")}</span>
-                          <span className="text-xs text-dim ml-1">{agent.project}</span>
-                        </div>
-                      </div>
-                      <svg className="w-4 h-4 text-faint shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  );
-                })}
-            </div>
-          )}
-        </section>
       </div>
       </div>
     </div>
