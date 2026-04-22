@@ -23,6 +23,9 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
   const startingRef = useRef(false);
   const wakeLockRef = useRef(null);
 
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
   const onTranscriptRef = useRef(onTranscript);
   const onErrorRef = useRef(onError);
   const limitRef = useRef(limit);
@@ -93,11 +96,16 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
     }
 
     // Step 3 — persist final result, then deliver
+    // Save "done" before attempting delivery so recovery can pick it up
+    // if the component unmounted while the pipeline was in-flight.
     if (key) {
       await saveVoiceJob(key, { status: "done", text: finalText }).catch(() => {});
     }
     onTranscriptRef.current?.(finalText);
-    if (key) deleteVoiceJob(key).catch(() => {});
+    // Only clear the entry when the component is still alive — if it
+    // unmounted mid-pipeline the setter was discarded by React, so the
+    // entry must survive for recovery on next mount.
+    if (key && mountedRef.current) deleteVoiceJob(key).catch(() => {});
   }, []);
 
   // --------------- recovery on mount ---------------
