@@ -1636,6 +1636,20 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           )}
         </div>
         {/* Daily summary settings hidden — per-agent insights still available */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-body">Rebuild Insights DB</p>
+            <p className="text-xs text-dim">Re-import all insights from PROGRESS.md</p>
+          </div>
+          <button
+            type="button"
+            disabled={rebuildingInsights}
+            onClick={handleRebuildInsights}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
+          >
+            {rebuildingInsights ? "Rebuilding..." : "Rebuild"}
+          </button>
+        </div>
         {project.active ? (
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
