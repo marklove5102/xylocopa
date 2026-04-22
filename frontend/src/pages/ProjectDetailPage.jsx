@@ -1238,10 +1238,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               <ProjectRing
                 emoji={project.emoji}
                 hasActiveAgents={(project.agent_active || 0) > 0}
-                hasTasks={(project.task_total || 0) > 0}
-                pct={project.weekly_success_pct}
-                size={40}
-                emojiSize={24}
+                size={36}
               />
             </button>
             <div className="min-w-0 flex-1">

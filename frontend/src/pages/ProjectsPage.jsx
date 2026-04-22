@@ -47,7 +47,6 @@ function SortableFolderCard(props) {
 const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd }) {
   const running = folder.active ? (folder.agent_active || 0) : 0;
   const taskTotal = folder.active ? (folder.task_total || 0) : 0;
-  const hasWeekly = (folder.weekly_total || 0) > 0;
   const gitHost = folder.git_remote ? folder.git_remote.replace(/^https?:\/\//, "").replace(/\.git$/, "") : null;
 
   return (
@@ -69,10 +68,7 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
         <ProjectRing
           emoji={folder.emoji}
           hasActiveAgents={running > 0}
-          hasTasks={taskTotal > 0}
-          pct={hasWeekly ? folder.weekly_success_pct : null}
           size={32}
-          emojiSize={20}
           className="self-center"
         />
 
