@@ -598,6 +598,21 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             ad._stop_generating(ctx.agent_id)
             if not _saw_rate_limit:
                 asyncio.ensure_future(ad.dispatch_pending_message(ctx.agent_id, delay=0))
+            # Dismiss any unanswered interactive cards — the interrupt killed
+            # the tool_use before a tool_result could be written, so the
+            # PostToolUse backfill path will never fire.
+            from routers.agents import _dismiss_pending_interactive_cards
+            _dismissed = _dismiss_pending_interactive_cards(db, ctx.agent_id)
+            if _dismissed:
+                from websocket import emit_metadata_update
+                for _d in _dismissed:
+                    ad._emit(emit_metadata_update(
+                        ctx.agent_id, _d["message_id"], _d["metadata"],
+                    ))
+                logger.info(
+                    "sync: dismissed %d interactive card(s) for agent %s on interrupt",
+                    len(_dismissed), ctx.agent_id[:8],
+                )
 
         # stop_hook_summary in JSONL: this is the authoritative signal that
         # the agent finished a turn.  Perform all stop-hook operations here

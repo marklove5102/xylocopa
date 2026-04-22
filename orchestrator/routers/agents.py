@@ -2195,92 +2195,118 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     if ad:
         ad._stale_session_retries.pop(agent.id, None)
 
+    # Flip to STARTING and commit before the tmux work so a concurrent
+    # second Resume click hits the precheck (status not in STOPPED/ERROR)
+    # and is rejected with 400 — instead of racing into
+    # _create_tmux_claude_session and killing the first call's pane.
+    # Frontend's Resume/Stop button toggles off STARTING as well.
+    agent.status = AgentStatus.STARTING
+    db.commit()
+    db.refresh(agent)
+    asyncio.ensure_future(
+        emit_agent_update(agent.id, agent.status.value, agent.project)
+    )
+
     resumed_sync = False
 
-    if resume_mode == "tmux":
-        # Launch a new tmux session and resume the CLI session in it
-        import shlex
-        import subprocess
-        from config import CLAUDE_BIN
+    try:
+        if resume_mode == "tmux":
+            # Launch a new tmux session and resume the CLI session in it
+            import shlex
+            import subprocess
+            from config import CLAUDE_BIN
 
-        cmd_parts = [CLAUDE_BIN,
-                      "--output-format", "stream-json", "--verbose"]
-        if agent.skip_permissions:
-            cmd_parts.append("--dangerously-skip-permissions")
-        if agent.model:
-            cmd_parts += ["--model", agent.model]
-        if agent.session_id:
-            cmd_parts += ["--resume", agent.session_id]
-        claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
+            cmd_parts = [CLAUDE_BIN,
+                          "--output-format", "stream-json", "--verbose"]
+            if agent.skip_permissions:
+                cmd_parts.append("--dangerously-skip-permissions")
+            if agent.model:
+                cmd_parts += ["--model", agent.model]
+            if agent.session_id:
+                cmd_parts += ["--resume", agent.session_id]
+            claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
 
-        tmux_session = tmux_session_name(agent.id)
-        _preflight_claude_project(project.path)
+            tmux_session = tmux_session_name(agent.id)
+            _preflight_claude_project(project.path)
 
-        from auth import create_agent_token
-        from agent_dispatcher import register_agent_token
-        _agent_tok = create_agent_token(db)
-        register_agent_token(agent.id, _agent_tok)
-        pane_id = _create_tmux_claude_session(
-            tmux_session, project.path, claude_cmd,
-            agent_id=agent.id, agent_token=_agent_tok,
-        )
+            from auth import create_agent_token
+            from agent_dispatcher import register_agent_token
+            _agent_tok = create_agent_token(db)
+            register_agent_token(agent.id, _agent_tok)
+            pane_id = _create_tmux_claude_session(
+                tmux_session, project.path, claude_cmd,
+                agent_id=agent.id, agent_token=_agent_tok,
+            )
 
-        agent.tmux_pane = pane_id
-        agent.status = AgentStatus.IDLE
-        if agent.session_id and ad:
-            ad.start_session_sync(agent.id, agent.session_id, project.path)
-        resumed_sync = True
-    elif ad:
-        # Default: try to re-establish sync with existing tmux pane
-        from agent_dispatcher import _detect_tmux_pane_for_session, _resolve_session_jsonl
-        from session_cache import session_source_dir
+            agent.tmux_pane = pane_id
+            agent.status = AgentStatus.IDLE
+            if agent.session_id and ad:
+                ad.start_session_sync(agent.id, agent.session_id, project.path)
+            resumed_sync = True
+        elif ad:
+            # Default: try to re-establish sync with existing tmux pane
+            from agent_dispatcher import _detect_tmux_pane_for_session, _resolve_session_jsonl
+            from session_cache import session_source_dir
 
-        sid = agent.session_id
+            sid = agent.session_id
 
-        # If session_id was never assigned (e.g. tmux launch failed
-        # before detecting the JSONL), discover it from the project's
-        # session directory by picking the most recently modified file.
-        # Check both project root and worktree session dirs.
-        if not sid:
-            sdirs = [session_source_dir(project.path)]
-            if agent.worktree:
-                wt_path = os.path.join(project.path, ".claude", "worktrees", agent.worktree)
-                wt_sdir = session_source_dir(wt_path)
-                if os.path.isdir(wt_sdir) and wt_sdir not in sdirs:
-                    sdirs.append(wt_sdir)
-            best, best_mtime = None, 0.0
-            for sdir in sdirs:
-                if not os.path.isdir(sdir):
-                    continue
-                try:
-                    for fname in os.listdir(sdir):
-                        if not fname.endswith(".jsonl"):
-                            continue
-                        fpath = os.path.join(sdir, fname)
-                        mt = os.path.getmtime(fpath)
-                        if mt > best_mtime:
-                            best, best_mtime = fname.replace(".jsonl", ""), mt
-                except OSError as e:
-                    logger.warning(
-                        "resume_agent: failed to scan session dir %s for agent %s: %s",
-                        sdir, agent.id, e,
+            # If session_id was never assigned (e.g. tmux launch failed
+            # before detecting the JSONL), discover it from the project's
+            # session directory by picking the most recently modified file.
+            # Check both project root and worktree session dirs.
+            if not sid:
+                sdirs = [session_source_dir(project.path)]
+                if agent.worktree:
+                    wt_path = os.path.join(project.path, ".claude", "worktrees", agent.worktree)
+                    wt_sdir = session_source_dir(wt_path)
+                    if os.path.isdir(wt_sdir) and wt_sdir not in sdirs:
+                        sdirs.append(wt_sdir)
+                best, best_mtime = None, 0.0
+                for sdir in sdirs:
+                    if not os.path.isdir(sdir):
+                        continue
+                    try:
+                        for fname in os.listdir(sdir):
+                            if not fname.endswith(".jsonl"):
+                                continue
+                            fpath = os.path.join(sdir, fname)
+                            mt = os.path.getmtime(fpath)
+                            if mt > best_mtime:
+                                best, best_mtime = fname.replace(".jsonl", ""), mt
+                    except OSError as e:
+                        logger.warning(
+                            "resume_agent: failed to scan session dir %s for agent %s: %s",
+                            sdir, agent.id, e,
+                        )
+                if best:
+                    sid = best
+                    agent.session_id = sid
+                    logger.info(
+                        "Discovered session %s for agent %s on resume",
+                        sid, agent.id,
                     )
-            if best:
-                sid = best
-                agent.session_id = sid
-                logger.info(
-                    "Discovered session %s for agent %s on resume",
-                    sid, agent.id,
-                )
 
-        if sid:
-            jsonl_path = _resolve_session_jsonl(sid, project.path, agent.worktree)
-            if os.path.exists(jsonl_path) and not ad._session_has_ended(jsonl_path):
-                pane = _detect_tmux_pane_for_session(sid, project.path)
-                agent.status = AgentStatus.IDLE
-                agent.tmux_pane = pane  # may be None; sync loop will retry
-                ad.start_session_sync(agent.id, sid, project.path)
-                resumed_sync = True
+            if sid:
+                jsonl_path = _resolve_session_jsonl(sid, project.path, agent.worktree)
+                if os.path.exists(jsonl_path) and not ad._session_has_ended(jsonl_path):
+                    pane = _detect_tmux_pane_for_session(sid, project.path)
+                    agent.status = AgentStatus.IDLE
+                    agent.tmux_pane = pane  # may be None; sync loop will retry
+                    ad.start_session_sync(agent.id, sid, project.path)
+                    resumed_sync = True
+    except Exception:
+        # Roll status back so the UI shows Resume again instead of
+        # being stuck in STARTING. Use a fresh commit independent of any
+        # partial state left on the session.
+        db.rollback()
+        agent = db.get(Agent, agent_id)
+        if agent is not None:
+            agent.status = AgentStatus.ERROR
+            db.commit()
+            asyncio.ensure_future(
+                emit_agent_update(agent.id, agent.status.value, agent.project)
+            )
+        raise
 
     if not resumed_sync and agent.status not in (AgentStatus.IDLE, AgentStatus.IDLE):
         agent.status = AgentStatus.IDLE
@@ -2931,6 +2957,53 @@ def _patch_interactive_answer(
     return None
 
 
+_DISMISS_ANSWER = "The user doesn't want to proceed with this tool call"
+
+
+def _dismiss_pending_interactive_cards(db: Session, agent_id: str) -> list[dict]:
+    """Mark all unanswered interactive items as dismissed for an agent.
+
+    Returns list of {"message_id": ..., "metadata": ...} for each patched message,
+    used by callers to emit websocket updates.
+    """
+    msgs = db.query(Message).filter(
+        Message.agent_id == agent_id,
+        Message.role == MessageRole.AGENT,
+        Message.meta_json.is_not(None),
+    ).order_by(Message.created_at.desc()).limit(10).all()
+
+    patched = []
+    for msg in msgs:
+        try:
+            meta = json.loads(msg.meta_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        items = meta.get("interactive")
+        if not items:
+            continue
+        changed = False
+        for item in items:
+            if item.get("auto_approved"):
+                continue
+            if item.get("answer") is not None:
+                continue
+            if item.get("selected_index") is not None:
+                continue
+            item["answer"] = _DISMISS_ANSWER
+            changed = True
+        if changed:
+            msg.meta_json = json.dumps(meta)
+            patched.append({"message_id": msg.id, "metadata": meta})
+
+    if patched:
+        db.commit()
+        from display_writer import update_last as _update_dismiss
+        for p in patched:
+            _update_dismiss(agent_id, p["message_id"])
+
+    return patched
+
+
 def _count_interactive_questions(db: Session, agent_id: str, tool_use_id: str) -> int:
     """Return the total number of questions for an interactive item."""
     msgs = db.query(Message).filter(
@@ -3248,14 +3321,15 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
         raise HTTPException(status_code=429, detail="Escape rate limited (max 1 per 2s)")
     _last_escape[agent_id] = now
 
-    # Clear any pending AskUserQuestion hook request (dismiss via PermissionManager)
+    # Dismiss ALL pending hook requests for this agent (AskUserQuestion,
+    # ExitPlanMode, permission prompts) so blocked hooks return immediately.
     from permissions import PermissionManager
     pm: PermissionManager | None = getattr(request.app.state, "permission_manager", None)
     if pm:
-        pending_id = pm.find_pending_by_tool(agent_id, "AskUserQuestion")
-        if pending_id:
-            pm.respond(pending_id, "deny", reason="Dismissed by user")
-            logger.info("Dismissed pending AskUserQuestion for agent %s via escape", agent_id[:8])
+        for pending in pm.get_pending(agent_id):
+            pm.respond(pending["request_id"], "deny", reason="Dismissed by user")
+            logger.info("Dismissed pending %s for agent %s via escape",
+                        pending.get("tool_name", "?"), agent_id[:8])
 
     from agent_dispatcher import send_tmux_keys, verify_tmux_pane
     if not verify_tmux_pane(agent.tmux_pane):
@@ -3279,6 +3353,17 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     if ad:
         ad._stop_generating(agent_id)
         ad.wake_sync(agent_id)
+
+    # Patch any unanswered interactive cards so hasPendingInteractive unblocks.
+    # C-c interrupts the CLI before tool_result can be written, so the normal
+    # PostToolUse backfill path never fires — we must dismiss cards directly.
+    dismissed = _dismiss_pending_interactive_cards(db, agent_id)
+    if dismissed:
+        from websocket import emit_metadata_update
+        for d in dismissed:
+            await emit_metadata_update(agent_id, d["message_id"], d["metadata"])
+        logger.info("escape: dismissed %d interactive card(s) for agent %s",
+                     len(dismissed), agent_id[:8])
 
     logger.info("escape: sent C-c to agent %s pane %s, woke sync", agent_id[:8], agent.tmux_pane)
     return {"detail": "ok"}
