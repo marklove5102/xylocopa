@@ -219,6 +219,7 @@ class Project(Base):
     archived: Mapped[bool] = mapped_column(default=False)
     auto_progress_summary: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_insights: Mapped[bool] = mapped_column(Boolean, default=False)
+    emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class StarredSession(Base):

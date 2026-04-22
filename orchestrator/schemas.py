@@ -293,6 +293,7 @@ class ProjectOut(BaseModel):
     archived: bool = False
     auto_progress_summary: bool = False
     ai_insights: bool = False
+    emoji: str | None = None
 
     model_config = {"from_attributes": True}
 

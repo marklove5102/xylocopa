@@ -874,6 +874,7 @@ async def list_all_folders(
             "description": proj.description if proj else None,
             "auto_progress_summary": proj.auto_progress_summary if proj else False,
             "ai_insights": proj.ai_insights if proj else False,
+            "emoji": proj.emoji if proj else None,
         }
 
         # Richer stats for active projects
@@ -1997,6 +1998,12 @@ async def update_project_settings(name: str, request: Request, db: Session = Dep
         proj.auto_progress_summary = bool(body["auto_progress_summary"])
     if "ai_insights" in body:
         proj.ai_insights = bool(body["ai_insights"])
+    if "emoji" in body:
+        raw = body["emoji"]
+        if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+            proj.emoji = None
+        else:
+            proj.emoji = str(raw)[:16]
     db.commit()
     db.refresh(proj)
     return ProjectOut.model_validate(proj)
