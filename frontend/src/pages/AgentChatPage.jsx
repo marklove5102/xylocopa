@@ -1334,7 +1334,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           className={`rounded-2xl px-4 py-2.5 ${
             isUser
               ? isCancelled
-                ? "bg-stone-400 text-white rounded-br-md"
+                ? "bg-gray-500 text-white rounded-br-md"
                 : isScheduled
                   ? "bg-amber-600/80 text-white rounded-br-md"
                   : isPending
