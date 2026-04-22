@@ -26,7 +26,6 @@ import {
   discardAgentSuggestions,
   regenerateAgentInsights,
   fetchTaskV2,
-  createTaskV2,
   wakeSync,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
@@ -1090,7 +1089,7 @@ function AgentTextSegment({ text, project }) {
   );
 }
 
-function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, onConvertToTask, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries }) {
+function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries }) {
   if (message.kind === "tool_activity") {
     return null;
   }
@@ -1161,6 +1160,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   const handleLongPressStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
+    if (!canModify) return;
     longPressTimer.current = setTimeout(() => {
       setShowActions(true);
     }, LONG_PRESS_DELAY);
@@ -1174,7 +1174,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     // Skip if the finger moved significantly (scroll gesture, not a tap)
     const endY = e.changedTouches?.[0]?.clientY ?? 0;
     const movedTooFar = Math.abs(endY - touchStartYRef.current) > 10;
-    if (!showActions && !movedTooFar) {
+    if (!canModify && !movedTooFar) {
       const now = Date.now();
       if (now - lastTapRef.current < DOUBLE_TAP_WINDOW) {
         handleDoubleClick();
@@ -1320,19 +1320,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const userInsights = isUser ? message.metadata?.insights : null;
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2 group/msg items-end gap-1`}>
-      {isUser && onConvertToTask && (
-        <button
-          type="button"
-          onClick={() => onConvertToTask(message)}
-          title="Create task"
-          className="opacity-0 group-hover/msg:opacity-100 focus:opacity-100 mb-1 p-1 rounded-lg text-dim hover:text-amber-400 hover:bg-amber-600/10 transition-all hidden sm:block"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-        </button>
-      )}
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
       <div className={`max-w-[min(85%,30rem)] min-w-0 relative overflow-hidden ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2 max-w-full" : undefined}>
         {isUndeliveredTimedOut && (
@@ -1503,9 +1491,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {!isUser && message.metadata?.interactive?.length > 0 && (
           <InteractiveBubbles metadata={message.metadata} agentId={agentId} onAnswered={onRefresh} messageContent={message.content} project={project} />
         )}
-        {/* Action popover */}
+        {/* Action popover for scheduled/pending messages */}
         {showActions && (
-          <div className={`absolute top-0 ${isUser ? "right-0" : "left-0"} -translate-y-full mb-1 z-50`}>
+          <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
               {isScheduled && (
                 <button
@@ -1519,60 +1507,26 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   </svg>
                 </button>
               )}
-              {canModify && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleEdit}
-                    title="Edit"
-                    className="px-3 py-2 text-heading hover:bg-input transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    title="Cancel"
-                    className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </>
-              )}
-              {!canModify && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowActions(false);
-                    navigator.clipboard.writeText(message.content || "").then(() => {
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
-                    }).catch(() => {});
-                  }}
-                  title="Copy"
-                  className="px-3 py-2 text-heading hover:bg-input transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                </button>
-              )}
-              {onConvertToTask && (
-                <button
-                  type="button"
-                  onClick={() => { setShowActions(false); onConvertToTask(message); }}
-                  title="Create task"
-                  className="px-3 py-2 text-amber-400 hover:bg-amber-600/10 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleEdit}
+                title="Edit"
+                className="px-3 py-2 text-heading hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                title="Cancel"
+                className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={() => setShowActions(false)}
@@ -1587,18 +1541,6 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           </div>
         )}
       </div>
-      {!isUser && onConvertToTask && (
-        <button
-          type="button"
-          onClick={() => onConvertToTask(message)}
-          title="Create task"
-          className="opacity-0 group-hover/msg:opacity-100 focus:opacity-100 mb-1 p-1 rounded-lg text-dim hover:text-amber-400 hover:bg-amber-600/10 transition-all hidden sm:block"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-        </button>
-      )}
     </div>
   );
 }
@@ -1872,7 +1814,6 @@ function ChatInput({ agentId, project, onSend, onSendLater, disabled, disabledRe
   const voice = useVoiceRecorder({
     onTranscript: (t) => voiceTargetRef.current((prev) => (prev ? prev + " " + t : t)),
     onError: (msg) => setVoiceError(msg),
-    persistKey: agentId ? `voice:chat:${agentId}` : null,
   });
   const [voiceError, setVoiceError] = useState(null);
   useEffect(() => {
@@ -2342,120 +2283,6 @@ function ChatInput({ agentId, project, onSend, onSendLater, disabled, disabledRe
   );
 }
 
-// --- Convert to Task Sheet ---
-
-function ConvertToTaskSheet({ message, project, agentName, onClose, onCreated }) {
-  const [title, setTitle] = useState(() => {
-    const text = (message.content || "").replace(/[#*`>\[\]]/g, "").trim();
-    if (text.length <= 60) return text;
-    const cut = text.slice(0, 60).lastIndexOf(" ");
-    return (cut > 20 ? text.slice(0, cut) : text.slice(0, 60)) + "...";
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const sheetRef = useRef(null);
-  const inputRef = useRef(null);
-  const touchStartRef = useRef(null);
-
-  useLayoutEffect(() => {
-    const el = sheetRef.current;
-    if (el) el.style.transform = "translateY(100%)";
-  }, []);
-
-  useEffect(() => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const el = sheetRef.current;
-      if (el) {
-        el.style.transition = "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)";
-        el.style.transform = "translateY(0px)";
-      }
-    }));
-    setTimeout(() => inputRef.current?.focus(), 350);
-  }, []);
-
-  const dismiss = useCallback(() => {
-    const el = sheetRef.current;
-    if (el) {
-      el.style.transition = "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)";
-      el.style.transform = "translateY(100%)";
-    }
-    setTimeout(onClose, 280);
-  }, [onClose]);
-
-  const handleDragStart = (e) => {
-    touchStartRef.current = e.touches?.[0]?.clientY ?? null;
-  };
-  const handleDragEnd = (e) => {
-    if (touchStartRef.current == null) return;
-    const endY = e.changedTouches?.[0]?.clientY ?? 0;
-    if (endY - touchStartRef.current > 80) dismiss();
-    touchStartRef.current = null;
-  };
-
-  const handleSave = async () => {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const sourceNote = agentName ? `\n\n---\n_Source: chat with ${agentName}_` : "";
-      await createTaskV2({
-        title: title.trim() || "Untitled task",
-        description: (message.content || "") + sourceNote,
-        project_name: project || undefined,
-        auto_dispatch: false,
-      });
-      onCreated();
-      dismiss();
-    } catch (err) {
-      setSubmitting(false);
-      throw err;
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[999]">
-      <div className="absolute inset-0 bg-black/40" onClick={dismiss} />
-      <div
-        ref={sheetRef}
-        className="absolute bottom-0 left-0 right-0 bg-surface rounded-t-2xl shadow-xl safe-area-bottom"
-        style={{ maxHeight: "60vh" }}
-        onTouchStart={handleDragStart}
-        onTouchEnd={handleDragEnd}
-      >
-        <div className="flex justify-center pt-2 pb-1">
-          <div className="w-10 h-1 rounded-full bg-dim/30" />
-        </div>
-        <div className="px-4 pb-4 space-y-3">
-          <h3 className="text-sm font-semibold text-heading">Create Task</h3>
-          <input
-            ref={inputRef}
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Task title"
-            className="w-full rounded-lg bg-input border border-divider px-3 py-2 text-sm text-body placeholder-dim focus:border-cyan-500 focus:outline-none"
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSave(); } }}
-          />
-          {project && (
-            <div className="flex items-center gap-1.5 text-xs text-dim">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-              </svg>
-              {project}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={submitting}
-            className="w-full rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm font-medium py-2.5 transition-colors"
-          >
-            {submitting ? "Saving..." : "Save to Inbox"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // --- Main Page ---
 
 export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgentId, embedded, onClose, onNavigateAgent }) {
@@ -2480,11 +2307,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const feedbackVoice = useVoiceRecorder({
     onTranscript: (t) => setIncompleteReason((prev) => (prev ? prev + " " + t : t)),
     onError: (msg) => console.warn("Feedback voice error:", msg),
-    persistKey: id ? `voice:feedback:${id}` : null,
   });
   const [showTaskCard, setShowTaskCard] = useState(false);
   const [selectedAttempt, setSelectedAttempt] = useState(null);
-  const [convertTaskMessage, setConvertTaskMessage] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   // Sync generateSummary with per-project localStorage preference
   const generateSummaryInitialized = useRef(false);
@@ -2534,7 +2359,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   };
 
   const [resuming, setResuming] = useState(false);
-  const resumingRef = useRef(false);
   const [starred, setStarred] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
   const [muted, setMuted] = useState(() => isAgentMuted(id));
@@ -3539,11 +3363,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
   // Resume agent — always uses tmux
   const handleResume = async () => {
-    // Ref guard: setResuming(true) is async, so rapid double-clicks within
-    // the same React tick can both pass `disabled={resuming}` and fire the
-    // POST twice. The ref flips synchronously.
-    if (resumingRef.current) return;
-    resumingRef.current = true;
     setResuming(true);
     try {
       // All agents resume as tmux sessions
@@ -3564,7 +3383,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       } catch {}
       showToast("Failed: " + err.message, "error");
     } finally {
-      resumingRef.current = false;
       setResuming(false);
     }
   };
@@ -4130,7 +3948,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
@@ -4141,17 +3959,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <div key={msg.id} data-msg-id={msg.id} data-msg-type="legacy_split">
                         {segments.map((seg, i) => {
                           if (seg.type === "tools") return <ToolLogBubble key={`${msg.id}-t${i}`} entries={seg.entries} />;
-                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} />;
+                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} />;
                           return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent.project} />;
                         })}
                         {lastTextIdx === -1 && msg.metadata?.interactive?.length > 0 && (
-                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} />
+                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} />
                         )}
                       </div>
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>;
               });
             })()}
 
@@ -4179,10 +3997,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               return (
                 <>
                   {queued.map((msg, idx) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} /></div>
                   ))}
                   {scheduled.map((msg) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} onConvertToTask={setConvertTaskMessage} agentId={id} onRefresh={refreshMessages} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>
                   ))}
                 </>
               );
@@ -4452,16 +4270,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               setShowStopConfirm(true);
             }
           }}
-        />
-      )}
-
-      {convertTaskMessage && agent && (
-        <ConvertToTaskSheet
-          message={convertTaskMessage}
-          project={agent.project}
-          agentName={agent.name}
-          onClose={() => setConvertTaskMessage(null)}
-          onCreated={() => toastCtx.success("Saved to inbox")}
         />
       )}
     </div>
