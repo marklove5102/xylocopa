@@ -47,7 +47,6 @@ function SortableFolderCard(props) {
 const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd }) {
   const running = folder.active ? (folder.agent_active || 0) : 0;
   const taskTotal = folder.active ? (folder.task_total || 0) : 0;
-  const gitHost = folder.git_remote ? folder.git_remote.replace(/^https?:\/\//, "").replace(/\.git$/, "") : null;
 
   return (
     <button
@@ -121,12 +120,6 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
             ) : (
               <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-zinc-500/15 text-zinc-500 dark:text-zinc-400">
                 Inactive
-              </span>
-            )}
-            {gitHost && (
-              <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-elevated text-dim truncate max-w-[200px]"
-                title={folder.git_remote}>
-                {gitHost}
               </span>
             )}
           </div>
