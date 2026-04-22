@@ -115,6 +115,50 @@ is always re-fetched from the display file — **never pushed as WS payload**.
    display file.** Don't short-circuit either edge. New message kinds need
    to flush through `display_writer` before they're visible in the UI.
 
+## MCP server — cross-session reference
+
+`orchestrator/mcp_server.py` runs as a stdio MCP server per-agent (spawned
+via `.mcp.json`). It exposes three tools: `list_sessions`, `read_session`,
+`create_task`.
+
+### Which layer does the MCP server read?
+
+The MCP `read_session` tool reads **Layer 1 (raw JSONL)** — it locates the
+Claude Code session file directly, parses turns via `jsonl_parser.py`, and
+returns formatted markdown. It does **not** read the display file or DB.
+
+### Reading chat history — which layer to use
+
+External consumers (MCP tools, analysis scripts, other agents) that need
+chat history should pick the right layer based on use case:
+
+| Layer | Size | Access | Best for |
+|---|---|---|---|
+| **L3 — display file** | ~6–12% of L1 | File read (`data/display/{agent_id}.jsonl`) | **Recommended default.** Complete, curated, self-contained. No DB access needed. Already stripped of thinking blocks and tool noise. |
+| **L2 — DB** | ~1–4% of L1 | SQLite query (`data/orchestrator.db`, table `messages`) | Structured queries — filter by role, time range, status. Smallest, but requires SQLite access. |
+| **L1 — JSONL** | 100% (baseline) | File read (`~/.claude/projects/<encoded>/<session>.jsonl`) | Full fidelity — includes thinking, tool I/O, raw API payloads. What `read_session` currently uses. Too large and noisy for most consumers. |
+| **L4 — WebUI** | last ~50 KB | HTTP (`/api/agents/{id}/display?tail_bytes=50000`) | Live UI only. Truncated by default — **do not use for complete history.** |
+
+**Rule of thumb:** if you need the full conversation in a readable form,
+**read the display file** — it's one self-contained JSONL file per agent,
+typically 6–12% of the raw JSONL size, with role/timestamp/metadata on
+every line. The WebUI endpoint tails the same file with a 50 KB byte
+window; don't rely on it for completeness.
+
+### Display file format
+
+Each line in `data/display/{agent_id}.jsonl` is a JSON object:
+
+```json
+{"id": "...", "seq": 42, "role": "agent", "kind": "text", "content": "...",
+ "source": "jsonl", "status": "completed", "metadata": {...},
+ "created_at": "...", "completed_at": "...", "delivered_at": "..."}
+```
+
+Last-occurrence-wins by `id` — streaming updates and delivery-status
+changes append replacement lines with `_replace: true`. Consumers should
+dedup by `id` (keep last).
+
 ## Hooks
 
 Each agent's `settings.local.json` is written by
