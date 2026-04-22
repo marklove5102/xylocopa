@@ -62,7 +62,7 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
           <span className="relative">!</span>
         </span>
       )}
-      <div className="flex items-start gap-3 px-5 py-5">
+      <div className="flex items-start gap-4 px-5 py-5">
         {dragHandleProps && <DragHandle {...dragHandleProps} />}
         <ProjectRing
           emoji={folder.emoji}
