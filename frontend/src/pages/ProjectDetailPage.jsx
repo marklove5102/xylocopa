@@ -550,7 +550,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [skipPermissions, setSkipPermissions] = useState(() => {
     try { return localStorage.getItem(`pref:project-agent:${name}:skipPermissions`) !== "false"; } catch { return true; }
   });
-  const [linkTask, setLinkTask] = useState(false);
+  const [linkTask, setLinkTask] = useState(true);
   const clearAllDrafts = () => { clearPrompt(); };
   const [submitting, setSubmitting] = useState(false);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);

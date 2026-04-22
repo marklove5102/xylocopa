@@ -259,7 +259,7 @@ function NewAgentForm({ showToast, navigate }) {
   const [model, setModel, clearModel] = useDraft("create-agent:model", MODEL_OPTIONS[0].value);
   const [effort, setEffort, clearEffort] = useDraft("create-agent:effort", "xhigh");
   const [worktree, setWorktree] = useState(null);
-  const [linkTask, setLinkTask] = useState(false);
+  const [linkTask, setLinkTask] = useState(true);
   // syncMode removed — all agents use tmux now
   const [skipPermissions, setSkipPermissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
