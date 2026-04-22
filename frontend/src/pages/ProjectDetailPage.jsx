@@ -686,6 +686,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const voice = useVoiceRecorder({
     onTranscript: (text) => setPrompt((prev) => (prev ? prev + " " + text : text)),
     onError: (msg) => showToast(msg, "error"),
+    persistKey: name ? `voice:project:${name}` : null,
   });
 
   // Auto-expand textarea

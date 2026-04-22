@@ -234,6 +234,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
   const voice = useVoiceRecorder({
     onTranscript: appendToDesc,
     onError: () => {},
+    persistKey: `voice:inbox:${task.id}`,
   });
 
   // --- file upload ---

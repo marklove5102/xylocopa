@@ -127,6 +127,7 @@ export default function NewTaskPage({ embedded = false }) {
   const voice = useVoiceRecorder({
     onTranscript: (text) => setDescription((prev) => (prev ? prev + " " + text : text)),
     onError: (msg) => showToast(msg, "error"),
+    persistKey: "voice:new-task",
   });
 
   // Auto-resize textarea

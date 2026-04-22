@@ -135,6 +135,7 @@ function NewTaskForm({ showToast, navigate }) {
   const voice = useVoiceRecorder({
     onTranscript: (text) => setDescription((prev) => (prev ? prev + " " + text : text)),
     onError: (msg) => showToast(msg, "error"),
+    persistKey: "voice:new-task-form",
   });
 
   const handleSubmit = async (e) => {
@@ -289,6 +290,7 @@ function NewAgentForm({ showToast, navigate }) {
   const voice = useVoiceRecorder({
     onTranscript: (text) => setPrompt((prev) => (prev ? prev + " " + text : text)),
     onError: (msg) => showToast(msg, "error"),
+    persistKey: "voice:new-agent",
   });
 
   useEffect(() => {

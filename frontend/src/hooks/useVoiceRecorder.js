@@ -1,22 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { transcribeVoice, refineVoiceText } from "../lib/api";
+import { getVoiceJob, saveVoiceJob, deleteVoiceJob } from "../lib/voiceStore";
 
 export const DEFAULT_MAX_RECORDING_MS = 300000; // 5 minutes
 
-/**
- * Batch voice recorder — records fully via MediaRecorder, then uploads
- * the audio file for transcription via Whisper API, optionally refined by LLM.
- *
- * @param {object} opts
- * @param {function} opts.onTranscript - called with the transcribed (and optionally refined) text
- * @param {function} opts.onError - called with error message string
- * @param {number}   [opts.maxDurationMs] - recording time limit in ms (default 5 min)
- *
- * Returns:
- *  recording, voiceLoading, micError, analyserNode, remainingSeconds,
- *  startRecording, stopRecording, toggleRecording
- */
-export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs }) {
+export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs, persistKey }) {
   const limit = maxDurationMs || DEFAULT_MAX_RECORDING_MS;
   const [recording, setRecording] = useState(false);
   const [voiceLoading, setVoiceLoading] = useState(false);
@@ -35,38 +23,107 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
   const startingRef = useRef(false);
   const wakeLockRef = useRef(null);
 
-  // Keep stable refs for callbacks
   const onTranscriptRef = useRef(onTranscript);
   const onErrorRef = useRef(onError);
   const limitRef = useRef(limit);
+  const persistKeyRef = useRef(persistKey);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   useEffect(() => { limitRef.current = limit; }, [limit]);
+  useEffect(() => { persistKeyRef.current = persistKey; }, [persistKey]);
 
-  // When limit changes while not recording, reset the displayed countdown.
   useEffect(() => {
-    if (!recording) {
-      setRemainingSeconds(limit / 1000);
-    }
+    if (!recording) setRemainingSeconds(limit / 1000);
   }, [limit, recording]);
 
-  // Deliver transcript — optionally refine via LLM first
-  const deliverTranscript = useCallback((text) => {
+  // --------------- unified pipeline ---------------
+  // Runs transcribe → refine → deliver. Accepts either an audio blob
+  // (fresh recording or retry) or already-transcribed rawText (resume).
+  // Persists intermediate results to IndexedDB so the pipeline can
+  // survive page freeze / kill and resume on next mount.
+
+  const runPipeline = useCallback(async (audioBlob, mimeType, rawText) => {
+    const key = persistKeyRef.current;
+
+    // Step 1 — transcribe (skip if we already have rawText)
+    if (!rawText) {
+      if (!audioBlob || audioBlob.size < 100) {
+        if (key) deleteVoiceJob(key).catch(() => {});
+        return;
+      }
+      setVoiceLoading(true);
+      try {
+        const result = await transcribeVoice(audioBlob, mimeType);
+        rawText = (result.text || "").trim();
+        if (!rawText) {
+          if (key) deleteVoiceJob(key).catch(() => {});
+          return;
+        }
+        // Persist transcription — blob no longer needed
+        if (key) saveVoiceJob(key, { status: "transcribed", rawText }).catch(() => {});
+      } catch (err) {
+        const msg = err?.message || "";
+        if (msg.includes("503") || msg.toLowerCase().includes("api key")) {
+          onErrorRef.current?.("Voice input unavailable — OpenAI API key not configured. Add OPENAI_API_KEY to .env");
+        } else {
+          onErrorRef.current?.("Transcription failed — try again.");
+        }
+        return;
+      } finally {
+        setVoiceLoading(false);
+      }
+    }
+
+    // Step 2 — refine (optional)
     const shouldRefine = (() => {
       try { return localStorage.getItem("pref:voiceRefine") !== "false"; } catch { return true; }
     })();
-    if (shouldRefine && text.length >= 2) {
+
+    let finalText = rawText;
+    if (shouldRefine && rawText.length >= 2) {
       setRefining(true);
-      refineVoiceText(text)
-        .then((res) => onTranscriptRef.current?.(res.text))
-        .catch(() => onTranscriptRef.current?.(text))
-        .finally(() => setRefining(false));
-    } else {
-      onTranscriptRef.current?.(text);
+      try {
+        const res = await refineVoiceText(rawText);
+        finalText = res.text;
+      } catch {
+        // refine failed — fall back to raw text
+      } finally {
+        setRefining(false);
+      }
     }
+
+    // Step 3 — persist final result, then deliver
+    if (key) {
+      await saveVoiceJob(key, { status: "done", text: finalText }).catch(() => {});
+    }
+    onTranscriptRef.current?.(finalText);
+    if (key) deleteVoiceJob(key).catch(() => {});
   }, []);
 
-  // Screen Wake Lock — prevent screen from sleeping during recording
+  // --------------- recovery on mount ---------------
+
+  useEffect(() => {
+    if (!persistKey) return;
+    let cancelled = false;
+
+    getVoiceJob(persistKey).then((job) => {
+      if (!job || cancelled) return;
+
+      if (job.status === "done") {
+        onTranscriptRef.current?.(job.text);
+        deleteVoiceJob(persistKey).catch(() => {});
+      } else if (job.status === "transcribed") {
+        runPipeline(null, null, job.rawText);
+      } else if (job.status === "pending" && job.audioBlob) {
+        runPipeline(job.audioBlob, job.mimeType, null);
+      }
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [persistKey, runPipeline]);
+
+  // --------------- wake lock ---------------
+
   const acquireWakeLock = useCallback(async () => {
     if (!navigator.wakeLock) return;
     try {
@@ -82,7 +139,8 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     }
   }, []);
 
-  // Helper: clean up audio resources (mic, audio context)
+  // --------------- cleanup ---------------
+
   const cleanup = useCallback(() => {
     releaseWakeLock();
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
@@ -102,32 +160,11 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     setAnalyserNode(null);
   }, [releaseWakeLock]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => { cleanup(); };
   }, [cleanup]);
 
-  // Upload blob and deliver transcript
-  const processRecording = useCallback(async (blob, mimeType) => {
-    if (blob.size < 100) return; // too short, skip
-    setVoiceLoading(true);
-    try {
-      const result = await transcribeVoice(blob, mimeType);
-      const text = (result.text || "").trim();
-      if (text) {
-        deliverTranscript(text);
-      }
-    } catch (err) {
-      const msg = err?.message || "";
-      if (msg.includes("503") || msg.toLowerCase().includes("api key")) {
-        onErrorRef.current?.("Voice input unavailable — OpenAI API key not configured. Add OPENAI_API_KEY to .env");
-      } else {
-        onErrorRef.current?.("Transcription failed — try again.");
-      }
-    } finally {
-      setVoiceLoading(false);
-    }
-  }, [deliverTranscript]);
+  // --------------- recording ---------------
 
   const startRecording = useCallback(async () => {
     if (startingRef.current || voiceLoading) return;
@@ -135,7 +172,9 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     setMicError(null);
     chunksRef.current = [];
 
-    // Check browser support
+    // Clear any stale pending job for this key
+    if (persistKeyRef.current) deleteVoiceJob(persistKeyRef.current).catch(() => {});
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       startingRef.current = false;
       if (window.location.protocol === "http:" && window.location.hostname !== "localhost") {
@@ -166,7 +205,6 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     try {
       streamRef.current = stream;
 
-      // AudioContext for AnalyserNode (waveform visualization)
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
       if (audioCtx.state === "suspended") await audioCtx.resume();
@@ -176,7 +214,6 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
       source.connect(analyser);
       setAnalyserNode(analyser);
 
-      // Pick a supported MIME type for MediaRecorder
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : MediaRecorder.isTypeSupported("audio/mp4")
@@ -187,17 +224,23 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       recorder.onstop = () => {
         const chunks = chunksRef.current;
         chunksRef.current = [];
-        if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-          processRecording(blob, recorder.mimeType || "audio/webm");
+        if (chunks.length === 0) return;
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const mime = recorder.mimeType || "audio/webm";
+        const key = persistKeyRef.current;
+
+        if (key) {
+          saveVoiceJob(key, { status: "pending", audioBlob: blob, mimeType: mime })
+            .then(() => runPipeline(blob, mime, null))
+            .catch(() => runPipeline(blob, mime, null));
+        } else {
+          runPipeline(blob, mime, null);
         }
       };
 
@@ -209,14 +252,12 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
       startTimeRef.current = Date.now();
       setRemainingSeconds(curLimit / 1000);
 
-      // Update countdown every second
       countdownRef.current = setInterval(() => {
         const elapsed = Date.now() - startTimeRef.current;
         const remaining = Math.max(0, Math.ceil((limitRef.current - elapsed) / 1000));
         setRemainingSeconds(remaining);
       }, 1000);
 
-      // Auto-stop after limit
       timerRef.current = setTimeout(() => {
         stopRecordingInternal();
       }, curLimit);
@@ -228,21 +269,19 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     } finally {
       startingRef.current = false;
     }
-  }, [voiceLoading, cleanup, processRecording, acquireWakeLock]);
+  }, [voiceLoading, cleanup, runPipeline, acquireWakeLock]);
 
   const stopRecordingInternal = useCallback(() => {
     releaseWakeLock();
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
 
-    // Stop MediaRecorder — this triggers onstop which calls processRecording
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       try { recorder.stop(); } catch {}
     }
     recorderRef.current = null;
 
-    // Stop mic tracks and audio context
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -274,7 +313,7 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs 
     micError,
     analyserNode,
     remainingSeconds,
-    streamingText: "", // no longer used — kept for API compat
+    streamingText: "",
     startRecording,
     stopRecording,
     toggleRecording,
