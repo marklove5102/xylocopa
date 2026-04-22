@@ -1238,21 +1238,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                   </button>
                 </div>
               </div>
-              <div className="flex items-center gap-3 text-xs">
-                {project.agent_count > 0 && (
-                  <span className="text-label">
-                    <span className="font-medium text-heading">{project.agent_count}</span> agent{project.agent_count !== 1 ? "s" : ""}
-                  </span>
-                )}
-                {project.active && (project.agent_active || 0) > 0 && (
-                  <span className="text-cyan-400">{project.agent_active} active</span>
-                )}
-                {(project.task_total || 0) > 0 && (
-                  <span className="text-label">
-                    <span className="font-medium text-heading">{project.task_total}</span> task{project.task_total !== 1 ? "s" : ""}
-                  </span>
-                )}
-              </div>
             </div>
           </div>
         </div>
