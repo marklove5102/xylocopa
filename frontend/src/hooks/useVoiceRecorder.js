@@ -99,13 +99,21 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
     // Save "done" before attempting delivery so recovery can pick it up
     // if the component unmounted while the pipeline was in-flight.
     if (key) {
-      await saveVoiceJob(key, { status: "done", text: finalText }).catch(() => {});
+      await saveVoiceJob(key, { status: "done", text: finalText }).catch((e) => {
+        console.warn("[voice] failed to save done entry:", e);
+      });
     }
+    console.log("[voice] pipeline done, mounted:", mountedRef.current, "key:", key, "text:", finalText?.slice(0, 40));
     onTranscriptRef.current?.(finalText);
     // Only clear the entry when the component is still alive — if it
     // unmounted mid-pipeline the setter was discarded by React, so the
     // entry must survive for recovery on next mount.
-    if (key && mountedRef.current) deleteVoiceJob(key).catch(() => {});
+    if (key && mountedRef.current) {
+      console.log("[voice] deleting entry (component alive)");
+      deleteVoiceJob(key).catch(() => {});
+    } else if (key) {
+      console.log("[voice] keeping entry for recovery (component unmounted)");
+    }
   }, []);
 
   // --------------- recovery on mount ---------------
@@ -114,8 +122,11 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
     if (!persistKey) return;
     let cancelled = false;
 
+    console.log("[voice] recovery check for key:", persistKey);
     getVoiceJob(persistKey).then((job) => {
-      if (!job || cancelled) return;
+      if (cancelled) { console.log("[voice] recovery cancelled (unmounted)"); return; }
+      if (!job) { console.log("[voice] no pending job found"); return; }
+      console.log("[voice] recovery found job:", job.status, "text:", (job.text || job.rawText || "")?.slice(0, 40));
 
       if (job.status === "done") {
         onTranscriptRef.current?.(job.text);
@@ -125,7 +136,7 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
       } else if (job.status === "pending" && job.audioBlob) {
         runPipeline(job.audioBlob, job.mimeType, null);
       }
-    }).catch(() => {});
+    }).catch((e) => { console.warn("[voice] recovery error:", e); });
 
     return () => { cancelled = true; };
   }, [persistKey, runPipeline]);
