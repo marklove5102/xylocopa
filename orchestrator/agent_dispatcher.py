@@ -921,7 +921,7 @@ def _resolve_session_jsonl(
                 return cwd_jsonl
 
     if worktree:
-        wt_path = os.path.join(project_path, ".claude", "worktrees", worktree)
+        wt_path = os.path.join(real_project, ".claude", "worktrees", worktree)
         wt_jsonl = os.path.join(
             session_source_dir(wt_path), f"{session_id}.jsonl"
         )
@@ -929,7 +929,7 @@ def _resolve_session_jsonl(
             return wt_jsonl
     else:
         # No worktree specified — scan all worktree directories as fallback
-        wt_base = os.path.join(project_path, ".claude", "worktrees")
+        wt_base = os.path.join(real_project, ".claude", "worktrees")
         if os.path.isdir(wt_base):
             try:
                 for name in os.listdir(wt_base):
@@ -951,7 +951,8 @@ def _infer_worktree_from_session(
 ) -> str | None:
     """Try to determine which worktree a session belongs to by scanning
     worktree session directories.  Returns the worktree name or None."""
-    wt_base = os.path.join(project_path, ".claude", "worktrees")
+    real_project = os.path.realpath(project_path)
+    wt_base = os.path.join(real_project, ".claude", "worktrees")
     if not os.path.isdir(wt_base):
         return None
     try:
