@@ -195,7 +195,9 @@ def read_session(session_id: str, max_turns: int = 50) -> str:
     """Read a previous Xylocopa conversation by session ID or agent ID.
 
     Returns formatted conversation turns (user prompts, agent responses,
-    system events). Orchestrator preamble is stripped for readability.
+    system events). Reads the curated display file (small, already stripped
+    of thinking blocks and tool noise) and falls back to raw JSONL only
+    when the display file doesn't exist yet.
 
     Args:
         session_id: Session UUID, agent ID, or a prefix of either
@@ -214,13 +216,95 @@ def read_session(session_id: str, max_turns: int = 50) -> str:
         return f"No agent found matching: {session_id}"
 
     agent_name = row["name"]
+    agent_id = row["id"]
     project_name = row["project"]
     actual_session_id = row["session_id"]
     project_path = row["path"]
 
-    # Locate JSONL file
+    # Try display file first — curated, ~6-12% of raw JSONL size
+    display_path = os.path.join(XYLOCOPA_ROOT, "data", "display", f"{agent_id}.jsonl")
+    if os.path.isfile(display_path):
+        return _read_from_display(
+            display_path, agent_name, project_name, actual_session_id, max_turns,
+        )
+
+    # Fallback: raw JSONL (for agents whose display file hasn't been written yet)
+    return _read_from_jsonl(
+        agent_name, project_name, actual_session_id, project_path, max_turns,
+    )
+
+
+def _read_from_display(
+    display_path: str,
+    agent_name: str,
+    project_name: str,
+    session_id: str,
+    max_turns: int,
+) -> str:
+    """Read chat history from the curated display file."""
+    try:
+        with open(display_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError as e:
+        return f"Failed to read display file: {e}"
+
+    # Parse lines, dedup by id (last occurrence wins for _replace entries)
+    seen: dict[str, dict] = {}
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_id = obj.get("id")
+        if msg_id:
+            seen[msg_id] = obj
+
+    entries = list(seen.values())
+    total = len(entries)
+
+    if not entries:
+        return f"Session {session_id} exists but has no messages in display file."
+
+    if total > max_turns:
+        entries = entries[-max_turns:]
+
+    role_map = {"USER": "User", "AGENT": "Agent", "SYSTEM": "System"}
+    lines = [
+        f"# Session: {agent_name} ({project_name})",
+        f"Session ID: `{session_id}`",
+        f"Messages: {total} total"
+        + (f" (showing last {max_turns})" if total > max_turns else ""),
+        "",
+    ]
+
+    for entry in entries:
+        role = role_map.get(entry.get("role", ""), entry.get("role", ""))
+        ts = (entry.get("created_at") or "")[:19]
+        content = entry.get("content") or ""
+
+        if len(content) > 3000:
+            content = content[:3000] + "\n... (truncated)"
+
+        lines.append(f"**[{role}]** {ts}")
+        lines.append(content)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _read_from_jsonl(
+    agent_name: str,
+    project_name: str,
+    session_id: str,
+    project_path: str,
+    max_turns: int,
+) -> str:
+    """Fallback: read chat history from raw Claude Code JSONL."""
     src_dir = _session_source_dir(project_path)
-    jsonl_path = os.path.join(src_dir, f"{actual_session_id}.jsonl")
+    jsonl_path = os.path.join(src_dir, f"{session_id}.jsonl")
 
     # Also check worktree locations
     if not os.path.isfile(jsonl_path):
@@ -230,34 +314,31 @@ def read_session(session_id: str, max_turns: int = 50) -> str:
                 wt_session_dir = _session_source_dir(
                     os.path.join(wt_base, wt_name)
                 )
-                candidate = os.path.join(wt_session_dir, f"{actual_session_id}.jsonl")
+                candidate = os.path.join(wt_session_dir, f"{session_id}.jsonl")
                 if os.path.isfile(candidate):
                     jsonl_path = candidate
                     break
 
     if not os.path.isfile(jsonl_path):
         return (
-            f"Session JSONL not found for {agent_name} ({project_name}).\n"
-            f"Looked at: {jsonl_path}\n"
+            f"Session not found for {agent_name} ({project_name}).\n"
+            f"Neither display file nor session JSONL exists.\n"
             f"The session file may have been cleaned up."
         )
 
-    # Parse JSONL
     # Cap at 2MB to avoid OOM on huge sessions
     turns = parse_session_turns(jsonl_path, max_bytes=2 * 1024 * 1024)
     total_turns = len(turns)
 
     if not turns:
-        return f"Session {actual_session_id} exists but has no parseable turns."
+        return f"Session {session_id} exists but has no parseable turns."
 
-    # Slice to most recent N turns
     if total_turns > max_turns:
         turns = turns[-max_turns:]
 
-    # Format output
     lines = [
         f"# Session: {agent_name} ({project_name})",
-        f"Session ID: `{actual_session_id}`",
+        f"Session ID: `{session_id}`",
         f"Turns: {total_turns} total"
         + (f" (showing last {max_turns})" if total_turns > max_turns else ""),
         "",
@@ -269,11 +350,9 @@ def read_session(session_id: str, max_turns: int = 50) -> str:
             role, role
         )
 
-        # Strip orchestrator wrapper from user messages
         if role == "user":
             content = strip_agent_preamble(content)
 
-        # Format tool_use as one-line summary
         if kind == "tool_use" and metadata:
             summary = format_tool_summary(
                 metadata.get("tool_name", ""),
@@ -282,7 +361,6 @@ def read_session(session_id: str, max_turns: int = 50) -> str:
             if summary:
                 content = summary
 
-        # Truncate very long content
         if len(content) > 3000:
             content = content[:3000] + "\n... (truncated)"
 
