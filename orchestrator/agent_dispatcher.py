@@ -4192,14 +4192,20 @@ Here are the day's conversations (with timestamps):
                                 session_active = False
 
                         if session_active:
-                            agent.status = AgentStatus.IDLE
+                            # Trust DB status: if agent was EXECUTING before
+                            # restart, Claude Code is still mid-turn in tmux —
+                            # preserve EXECUTING so dispatch_pending_message's
+                            # busy guard holds. The sync loop will transition
+                            # to IDLE when it sees stop_hook_summary in JSONL.
+                            if agent.status != AgentStatus.EXECUTING:
+                                agent.status = AgentStatus.IDLE
                             agent.tmux_pane = pane
                             agents_to_sync.append(
                                 (agent.id, agent.session_id, project_path)
                             )
                             logger.info(
-                                "Agent %s has active CLI session %s — will auto-sync",
-                                agent.id, agent.session_id,
+                                "Agent %s has active CLI session %s — will auto-sync (status=%s)",
+                                agent.id, agent.session_id, agent.status.value,
                             )
                             continue
                         else:
@@ -4233,14 +4239,16 @@ Here are the day's conversations (with timestamps):
                 # No pane — pane detection failed, session is gone.
 
                 if alive:
-                    agent.status = AgentStatus.IDLE
+                    # Same as above: preserve EXECUTING if that's what DB says.
+                    if agent.status != AgentStatus.EXECUTING:
+                        agent.status = AgentStatus.IDLE
                     if agent.session_id:
                         agents_to_sync.append(
                             (agent.id, agent.session_id, project_path)
                         )
                     logger.info(
-                        "Agent %s CLI process alive (pane=%s) — setting IDLE",
-                        agent.id, agent.tmux_pane,
+                        "Agent %s CLI process alive (pane=%s, status=%s)",
+                        agent.id, agent.tmux_pane, agent.status.value,
                     )
                     continue
 
