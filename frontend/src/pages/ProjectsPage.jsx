@@ -3,20 +3,12 @@ import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { fetchAllFolders, fetchTrashFolders, createProject, archiveProject, scanProjects, fetchClaudeMdPending } from "../lib/api";
+import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-// FolderIcon removed — cards now use a left-edge color strip
+import ProjectRing from "../components/ProjectRing";
 import PageHeader from "../components/PageHeader";
-import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
-
-function botState(folder) {
-  if (!folder.active) return "idle";
-  if ((folder.agent_active || 0) > 0) return "running";
-  if (folder.agent_count > 0) return "completed";
-  return "idle";
-}
 
 function DragHandle({ listeners, attributes }) {
   return (
@@ -24,7 +16,7 @@ function DragHandle({ listeners, attributes }) {
       type="button"
       {...listeners}
       {...attributes}
-      className="touch-none p-1 -ml-2 mr-1 rounded text-ghost hover:text-faint transition-colors cursor-grab active:cursor-grabbing"
+      className="touch-none p-1 -ml-2 mr-0 rounded text-ghost hover:text-faint transition-colors cursor-grab active:cursor-grabbing self-center"
       onClick={(e) => e.stopPropagation()}
     >
       <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
@@ -52,29 +44,11 @@ function SortableFolderCard(props) {
   );
 }
 
-function TaskRing({ total, completed, pct: pctOverride, size = 22 }) {
-  if (!total && pctOverride == null) return null;
-  const pct = pctOverride != null ? pctOverride : Math.round(completed / total * 100);
-  const r = (size - 4) / 2, c = 2 * Math.PI * r;
-  const offset = c * (1 - pct / 100);
-  const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#f87171";
-  const half = size / 2;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
-      <circle cx={half} cy={half} r={r} fill="transparent" stroke={color} strokeWidth={2} opacity={0.18} />
-      <circle cx={half} cy={half} r={r} fill="transparent" stroke={color} strokeWidth={2}
-        strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset}
-        transform={`rotate(-90 ${half} ${half})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-      <text x={half} y={half} textAnchor="middle" dominantBaseline="central"
-        fill={color} style={{ fontSize: `${size * 0.32}px`, fontWeight: 700 }}>
-        {pct}
-      </text>
-    </svg>
-  );
-}
-
-const FolderCard = memo(function FolderCard({ folder, onClick, onActivate, onArchive, busy, dragHandleProps, hasPendingClaudeMd }) {
-  const state = botState(folder);
+const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd }) {
+  const running = folder.active ? (folder.agent_active || 0) : 0;
+  const taskTotal = folder.active ? (folder.task_total || 0) : 0;
+  const hasWeekly = (folder.weekly_total || 0) > 0;
+  const gitHost = folder.git_remote ? folder.git_remote.replace(/^https?:\/\//, "").replace(/\.git$/, "") : null;
 
   return (
     <button
@@ -90,86 +64,84 @@ const FolderCard = memo(function FolderCard({ folder, onClick, onActivate, onArc
           <span className="relative">!</span>
         </span>
       )}
-      <div className="flex items-stretch">
-        {/* Left color strip */}
-        <div className={`w-1.5 shrink-0 ${
-          state === "running" ? "bg-cyan-400 animate-breathe" : state === "completed" ? "bg-emerald-400" : "bg-zinc-600"
-        }`} />
-        <div className="flex-1 min-w-0 p-5">
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3 px-5 py-5">
         {dragHandleProps && <DragHandle {...dragHandleProps} />}
+        <ProjectRing
+          emoji={folder.emoji}
+          hasActiveAgents={running > 0}
+          hasTasks={taskTotal > 0}
+          pct={hasWeekly ? folder.weekly_success_pct : null}
+          size={32}
+          emojiSize={20}
+          className="self-center"
+        />
+
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-heading truncate">
+          {/* Row 1: title + time */}
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="text-[17px] font-semibold leading-snug text-heading truncate">
               {folder.display_name || folder.name}
             </h3>
-            {folder.active ? (
-              <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-emerald-500/15 text-emerald-400 tracking-wide">
-                Active
-              </span>
-            ) : (
-              <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-zinc-500/15 text-zinc-400 tracking-wide">
-                Inactive
-              </span>
-            )}
-            {(folder.weekly_total || 0) > 0 && (
-              <span className="ml-auto">
-                <TaskRing total={folder.weekly_total} completed={folder.weekly_completed || 0} pct={folder.weekly_success_pct} />
+            {folder.last_activity && (
+              <span className="text-[11px] text-faint shrink-0 mt-1">
+                {relativeTime(folder.last_activity)}
               </span>
             )}
           </div>
-          {folder.git_remote && (
-            <p className="text-xs text-dim truncate mt-0.5">{folder.git_remote}</p>
-          )}
-        </div>
-      </div>
 
-      {/* Stats row */}
-      <div className="flex items-center gap-4 mt-4 text-xs">
-        {folder.agent_count > 0 && (
-          <span className="text-label">
-            <span className="font-medium text-heading">{folder.agent_count}</span> agent{folder.agent_count !== 1 ? "s" : ""}
-          </span>
-        )}
-        {folder.active && (folder.agent_active || 0) > 0 && (
-          <span className="text-cyan-400">{folder.agent_active} active</span>
-        )}
-        {folder.active && (folder.task_total || 0) > 0 && (
-          <span className="text-label">
-            <span className="font-medium text-heading">{folder.task_total}</span> tasks
-          </span>
-        )}
-        {!folder.active && folder.agent_count === 0 && (
-          <span className="text-dim">No history</span>
-        )}
-        <span className="ml-auto flex items-center gap-2">
-          {folder.last_activity && (
-            <span className="text-dim">{relativeTime(folder.last_activity)}</span>
-          )}
-          {/* Activate / Archive button */}
-          {!folder.active ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={(e) => { e.stopPropagation(); onActivate(folder.name); }}
-              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50 transition-colors"
-            >
-              {busy ? "..." : "Activate"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={(e) => { e.stopPropagation(); onArchive(folder.name); }}
-              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
-            >
-              {busy ? "..." : "Archive"}
-            </button>
-          )}
-        </span>
+          {/* Row 2: stats (bold numbers) */}
+          <div className="flex items-center gap-2 mt-1 text-sm text-dim">
+            {folder.active && (running > 0 || taskTotal > 0) ? (
+              <>
+                {running > 0 && (
+                  <span>
+                    <span className="font-semibold text-cyan-500 dark:text-cyan-400">{running}</span>
+                    <span className="ml-1 text-dim">running</span>
+                  </span>
+                )}
+                {running > 0 && taskTotal > 0 && <span className="text-faint">·</span>}
+                {taskTotal > 0 && (
+                  <span>
+                    <span className="font-semibold text-heading">{taskTotal}</span>
+                    <span className="ml-1 text-dim">task{taskTotal !== 1 ? "s" : ""}</span>
+                  </span>
+                )}
+              </>
+            ) : folder.active ? (
+              <span className="text-dim">Idle</span>
+            ) : folder.agent_count > 0 ? (
+              <span className="text-dim">Inactive · {folder.agent_count} agent{folder.agent_count !== 1 ? "s" : ""}</span>
+            ) : (
+              <span className="text-faint">No history</span>
+            )}
+          </div>
+
+          {/* Row 3: tags */}
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+            {folder.active ? (
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
+                Active
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-zinc-500/15 text-zinc-500 dark:text-zinc-400">
+                Inactive
+              </span>
+            )}
+            {gitHost && (
+              <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-elevated text-dim truncate max-w-[200px]"
+                title={folder.git_remote}>
+                {gitHost}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Drill-in chevron */}
+        <svg className="w-4 h-4 text-faint shrink-0 self-center -mr-1" fill="none"
+          stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
       </div>
-        </div>{/* end padded content */}
-      </div>{/* end flex items-stretch */}
     </button>
   );
 });
@@ -189,7 +161,6 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(null); // folder name currently being toggled
   const [refreshing, setRefreshing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [filter, setFilter] = useDraft("ui:projects:filter", "ALL");
@@ -240,32 +211,6 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
       setLoading(false);
     }
   }, []);
-
-  const handleActivate = async (name) => {
-    setBusy(name);
-    try {
-      await createProject({ name });
-      await load();
-      window.dispatchEvent(new CustomEvent("projects-data-changed"));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleArchive = async (name) => {
-    setBusy(name);
-    try {
-      await archiveProject(name);
-      await load();
-      window.dispatchEvent(new CustomEvent("projects-data-changed"));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
 
   // Cross-pane sync: project list changes
   useEffect(() => {
@@ -505,9 +450,6 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
                   key={folder.name}
                   folder={folder}
                   onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
-                  onActivate={handleActivate}
-                  onArchive={handleArchive}
-                  busy={busy === folder.name}
                   hasPendingClaudeMd={pendingProjects.includes(folder.name)}
                 />
               ))}
@@ -519,9 +461,6 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
                 <FolderCard
                   folder={filtered.find((f) => f.name === activeDragId)}
                   onClick={() => {}}
-                  onActivate={() => {}}
-                  onArchive={() => {}}
-                  busy={false}
                 />
               </div>
             ) : null}
@@ -534,9 +473,6 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
               key={folder.name}
               folder={folder}
               onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
-              onActivate={handleActivate}
-              onArchive={handleArchive}
-              busy={busy === folder.name}
               hasPendingClaudeMd={pendingProjects.includes(folder.name)}
             />
           ))}
