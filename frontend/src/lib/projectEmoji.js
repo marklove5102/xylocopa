@@ -6,7 +6,7 @@ export const DEFAULT_EMOJI_CLOSED = "📁";
 export const DEFAULT_EMOJI_OPEN = "📂";
 
 export const FLUENT_MAP = {
-  // Folders & Docs
+  // Folders & Docs — 📁 auto-flips to 📂 when the project has active agents
   "📁": "File folder",
   "📂": "Open file folder",
   "🗂️": "Card index dividers",
@@ -23,6 +23,9 @@ export const FLUENT_MAP = {
   "📚": "Books",
   "📖": "Open book",
   "📔": "Notebook with decorative cover",
+  "📰": "Newspaper",
+  "✉️": "Envelope",
+  "📬": "Open mailbox with raised flag",
 
   // Tech
   "💻": "Laptop",
@@ -45,6 +48,10 @@ export const FLUENT_MAP = {
   "🔐": "Locked with key",
   "🔑": "Key",
   "🧪": "Test tube",
+  "🤖": "Robot",
+  "📱": "Mobile phone",
+  "🛰️": "Satellite",
+  "📺": "Television",
 
   // Work & Goals
   "🎯": "Bullseye",
@@ -63,6 +70,9 @@ export const FLUENT_MAP = {
   "🔔": "Bell",
   "📢": "Loudspeaker",
   "🗺️": "World map",
+  "💼": "Briefcase",
+  "📣": "Megaphone",
+  "📝": "Memo",
 
   // Creative
   "🎨": "Artist palette",
@@ -77,6 +87,9 @@ export const FLUENT_MAP = {
   "🖌️": "Paintbrush",
   "🖍️": "Crayon",
   "🎸": "Guitar",
+  "🥁": "Drum",
+  "🎤": "Microphone",
+  "📝": "Memo",
 
   // Nature
   "🌱": "Seedling",
@@ -95,6 +108,40 @@ export const FLUENT_MAP = {
   "🌻": "Sunflower",
   "🌷": "Tulip",
   "🪴": "Potted plant",
+  "🦋": "Butterfly",
+  "🐝": "Honeybee",
+
+  // People & Places
+  "🏠": "House",
+  "🏢": "Office building",
+  "🏫": "School",
+  "🏥": "Hospital",
+  "🏭": "Factory",
+  "🏛️": "Classical building",
+  "🚀": "Rocket",
+  "🚗": "Automobile",
+  "✈️": "Airplane",
+  "🚢": "Ship",
+  "👤": "Bust in silhouette",
+  "👥": "Busts in silhouette",
+  "🌐": "Globe with meridians",
+  "🗺️": "World map",
+
+  // Food & Life
+  "☕": "Hot beverage",
+  "🍵": "Teacup without handle",
+  "🍺": "Beer mug",
+  "🍷": "Wine glass",
+  "🍕": "Pizza",
+  "🍔": "Hamburger",
+  "🍎": "Red apple",
+  "🥗": "Green salad",
+  "🍰": "Shortcake",
+  "🍪": "Cookie",
+  "🎮": "Video game",
+  "🎲": "Game die",
+  "⚽": "Soccer ball",
+  "🏃": "Person running",
 
   // Symbols
   "♻️": "Recycling symbol",
@@ -109,51 +156,114 @@ export const FLUENT_MAP = {
   "🛡️": "Shield",
   "🏷️": "Label",
   "📐": "Triangular ruler",
+  "❤️": "Red heart",
+  "🧡": "Orange heart",
+  "💙": "Blue heart",
+  "💚": "Green heart",
 };
+
+// Emojis that represent the "folder" identity and should auto-flip
+// between 📁 (closed) and 📂 (open) depending on project activity.
+export const AUTO_FOLDER_EMOJIS = new Set(["📁", "📂"]);
 
 export const CATEGORIES = [
   {
     key: "folders",
     label: "Files",
     anchor: "📁",
-    emojis: ["📁", "📂", "🗂️", "📄", "📋", "📝", "📎", "🔖", "📊", "📈", "📉", "🗃️", "🗄️", "📚", "📖", "📔"],
+    emojis: ["📁", "🗂️", "📄", "📋", "📝", "📎", "🔖", "📊", "📈", "📉", "🗃️", "🗄️", "📚", "📖", "📔", "📰", "✉️", "📬"],
   },
   {
     key: "tech",
     label: "Tech",
     anchor: "💻",
-    emojis: ["💻", "⌨️", "🖥️", "🖨️", "💾", "💿", "📀", "🖱️", "📡", "🔌", "🔋", "⚙️", "🔧", "🛠️", "🔨", "🧰", "🐛", "🔐", "🔑", "🧪"],
+    emojis: ["💻", "⌨️", "🖥️", "🖨️", "📱", "📺", "💾", "💿", "📀", "🖱️", "📡", "🛰️", "🔌", "🔋", "⚙️", "🔧", "🛠️", "🔨", "🧰", "🐛", "🤖", "🔐", "🔑", "🧪"],
   },
   {
     key: "work",
     label: "Goals",
     anchor: "🎯",
-    emojis: ["🎯", "🚀", "🏁", "🏆", "🎖️", "💡", "🧠", "📌", "📍", "🗓️", "📅", "⏰", "⏳", "🔔", "📢", "🗺️"],
+    emojis: ["🎯", "🚀", "🏁", "🏆", "🎖️", "💡", "🧠", "💼", "📌", "📍", "🗓️", "📅", "⏰", "⏳", "🔔", "📢", "📣", "🗺️"],
   },
   {
     key: "creative",
     label: "Creative",
     anchor: "🎨",
-    emojis: ["🎨", "🖼️", "🎬", "🎭", "🎵", "🎹", "📷", "🎥", "✏️", "🖌️", "🖍️", "🎸"],
+    emojis: ["🎨", "🖼️", "🎬", "🎭", "🎵", "🎹", "🥁", "🎤", "📷", "🎥", "✏️", "🖌️", "🖍️", "🎸"],
   },
   {
     key: "nature",
     label: "Nature",
     anchor: "🌱",
-    emojis: ["🌱", "🌳", "🌲", "🌊", "🔥", "❄️", "⚡", "🌈", "🌞", "🌙", "⭐", "🍃", "🌸", "🌻", "🌷", "🪴"],
+    emojis: ["🌱", "🌳", "🌲", "🌊", "🔥", "❄️", "⚡", "🌈", "🌞", "🌙", "⭐", "🍃", "🌸", "🌻", "🌷", "🪴", "🦋", "🐝"],
+  },
+  {
+    key: "places",
+    label: "Places",
+    anchor: "🏠",
+    emojis: ["🏠", "🏢", "🏫", "🏥", "🏭", "🏛️", "🚗", "✈️", "🚢", "👤", "👥", "🌐", "🗺️"],
+  },
+  {
+    key: "life",
+    label: "Life",
+    anchor: "☕",
+    emojis: ["☕", "🍵", "🍺", "🍷", "🍕", "🍔", "🍎", "🥗", "🍰", "🍪", "🎮", "🎲", "⚽", "🏃"],
   },
   {
     key: "symbols",
     label: "Symbols",
     anchor: "✨",
-    emojis: ["✨", "♻️", "💎", "🎁", "🧩", "♾️", "💬", "💭", "🔗", "🛡️", "🏷️", "📐"],
+    emojis: ["✨", "♻️", "💎", "🎁", "🧩", "♾️", "💬", "💭", "🔗", "🛡️", "🏷️", "📐", "❤️", "🧡", "💙", "💚"],
   },
 ];
 
 // Lowercase search keywords used by the picker's search box.
 export const KEYWORDS = {
-  "📁": "folder directory file closed",
-  "📂": "folder open directory active",
+  "📁": "folder directory file",
+  "📂": "folder open directory",
+  "📰": "newspaper news press",
+  "✉️": "envelope mail email",
+  "📬": "mailbox mail inbox",
+  "📱": "phone mobile smartphone",
+  "📺": "tv television screen",
+  "🛰️": "satellite space signal",
+  "🤖": "robot ai bot automation",
+  "💼": "briefcase business work",
+  "📣": "megaphone announce shout",
+  "🥁": "drum percussion music",
+  "🎤": "microphone voice mic sing",
+  "🦋": "butterfly nature",
+  "🐝": "bee honeybee bee",
+  "🏠": "house home dashboard",
+  "🏢": "office building work",
+  "🏫": "school learning education",
+  "🏥": "hospital medical health",
+  "🏭": "factory industry",
+  "🏛️": "classical museum gov",
+  "🚗": "car automobile vehicle",
+  "✈️": "airplane travel flight",
+  "🚢": "ship boat sea",
+  "👤": "person user profile",
+  "👥": "people team group users",
+  "🌐": "globe web internet world",
+  "☕": "coffee hot drink",
+  "🍵": "tea",
+  "🍺": "beer drink",
+  "🍷": "wine drink",
+  "🍕": "pizza food",
+  "🍔": "burger food",
+  "🍎": "apple fruit food",
+  "🥗": "salad healthy food",
+  "🍰": "cake dessert",
+  "🍪": "cookie snack",
+  "🎮": "game video arcade",
+  "🎲": "dice random",
+  "⚽": "soccer sports ball",
+  "🏃": "run runner fitness",
+  "❤️": "heart red love",
+  "🧡": "heart orange",
+  "💙": "heart blue",
+  "💚": "heart green",
   "🗂️": "dividers index files organize",
   "📄": "page doc document",
   "📋": "clipboard tasks list",
@@ -262,6 +372,19 @@ export function fluentFlatUrl(char) {
  */
 export function defaultProjectEmoji({ hasActiveAgents }) {
   return hasActiveAgents ? DEFAULT_EMOJI_OPEN : DEFAULT_EMOJI_CLOSED;
+}
+
+/**
+ * Resolve the emoji to render for a project, honoring the folder auto-flip:
+ * if the stored emoji is the folder glyph (📁 or 📂), we flip between
+ * open/closed based on whether agents are currently running. Any other emoji
+ * is returned verbatim.
+ */
+export function resolveProjectEmoji(emoji, { hasActiveAgents }) {
+  if (!emoji || AUTO_FOLDER_EMOJIS.has(emoji)) {
+    return defaultProjectEmoji({ hasActiveAgents });
+  }
+  return emoji;
 }
 
 /** Flat list of all curated emojis (for search). */

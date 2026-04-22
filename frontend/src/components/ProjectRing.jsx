@@ -1,12 +1,12 @@
 import FluentEmoji from "./FluentEmoji";
-import { defaultProjectEmoji } from "../lib/projectEmoji";
+import { resolveProjectEmoji } from "../lib/projectEmoji";
 
 /**
  * Project identity icon.
  *
- * Displays the user's chosen emoji, or the default folder (open 📂 when
- * an agent is active, closed 📁 otherwise). No ring, no animation —
- * the emoji itself is the whole visual.
+ * Displays the user's chosen emoji. The folder glyph is special: whether
+ * the user picked 📁 explicitly or left it as default, the render flips
+ * to 📂 (open) when an agent is active, 📁 (closed) when idle.
  */
 export default function ProjectRing({
   emoji,
@@ -14,7 +14,7 @@ export default function ProjectRing({
   size = 28,
   className = "",
 }) {
-  const displayEmoji = emoji || defaultProjectEmoji({ hasActiveAgents });
+  const displayEmoji = resolveProjectEmoji(emoji, { hasActiveAgents });
 
   return (
     <span

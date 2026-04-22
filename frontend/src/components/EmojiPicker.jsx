@@ -4,7 +4,7 @@ import FluentEmoji from "./FluentEmoji";
 import { CATEGORIES, KEYWORDS, ALL_EMOJIS } from "../lib/projectEmoji";
 
 const PICKER_W = 296;
-const PICKER_H = 380;
+const PICKER_H = 420;
 
 /**
  * Emoji picker portal, styled to mirror SendLaterPicker.
@@ -125,30 +125,32 @@ export default function EmojiPicker({ current, onSelect, onClear, onClose, ancho
         </div>
       </div>
 
-      {/* Category chips — hidden while searching */}
+      {/* Category chips — muted toolbar band, hidden while searching */}
       {!trimmed && (
-        <div className="px-3 pb-2 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
-          {CATEGORIES.map((cat) => {
-            const isActive = cat.key === category;
-            return (
-              <button
-                key={cat.key}
-                type="button"
-                onClick={() => setCategory(cat.key)}
-                title={cat.label}
-                className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                  isActive ? "bg-cyan-500/15 ring-1 ring-cyan-500/40" : "hover:bg-input"
-                }`}
-              >
-                <FluentEmoji char={cat.anchor} size={18} />
-              </button>
-            );
-          })}
+        <div className="px-2 pb-2 shrink-0">
+          <div className="flex items-center gap-0.5 overflow-x-auto no-scrollbar bg-elevated rounded-xl p-1">
+            {CATEGORIES.map((cat) => {
+              const isActive = cat.key === category;
+              return (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => setCategory(cat.key)}
+                  title={cat.label}
+                  className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+                    isActive ? "bg-surface shadow-sm" : "hover:bg-surface/50"
+                  }`}
+                >
+                  <FluentEmoji char={cat.anchor} size={16} />
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Grid */}
-      <div className="px-3 pb-3 overflow-y-auto">
+      <div className="px-3 pb-3 pt-1 overflow-y-auto">
         {emojis.length === 0 ? (
           <p className="text-center text-xs text-faint py-6">No match for "{query}"</p>
         ) : (
