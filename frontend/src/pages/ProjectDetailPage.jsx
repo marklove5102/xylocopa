@@ -34,6 +34,7 @@ import EffortSelector from "../components/EffortSelector";
 import ModelSelector from "../components/ModelSelector";
 import ProjectRing from "../components/ProjectRing";
 import EmojiPicker from "../components/EmojiPicker";
+import AgentRow from "../components/AgentRow";
 import VoiceRecorder from "../components/VoiceRecorder";
 import SendLaterPicker from "../components/SendLaterPicker";
 import useDraft from "../hooks/useDraft";
@@ -221,108 +222,6 @@ function projectBotState(proj) {
   return "idle";
 }
 
-
-function AgentRow({ agent, onClick, starred, onToggleStar, onError, project }) {
-  const statusDot = AGENT_STATUS_COLORS[agent.status] || "bg-gray-500";
-  const statusText = AGENT_STATUS_TEXT_COLORS[agent.status] || "text-dim";
-  const [copied, setCopied] = useState(false);
-  const [starLoading, setStarLoading] = useState(false);
-
-  const handleCopyId = (e) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(agent.id).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }).catch(() => {});
-  };
-
-  const handleStarClick = async (e) => {
-    e.stopPropagation();
-    if (starLoading) return;
-    setStarLoading(true);
-    const sessionId = agent.session_id || agent.id;
-    try {
-      if (starred) {
-        await unstarSession(project, sessionId);
-      } else {
-        await starSession(project, sessionId);
-      }
-      if (onToggleStar) onToggleStar(sessionId, !starred);
-    } catch (err) {
-      console.error("Star toggle failed:", err);
-      if (onError) onError(err.message || "Failed to update star");
-    } finally {
-      setStarLoading(false);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
-    >
-      <div className="relative shrink-0" onClick={handleCopyId} title={`Copy ID: ${agent.id}`}>
-        <BotIcon state={agentBotState(agent.status)} className="w-9 h-9 cursor-pointer hover:opacity-70 transition-opacity" />
-        {copied && (
-          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
-            Copied!
-          </span>
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-heading truncate flex-1">{agent.name}</h3>
-          {agent.last_message_at && (
-            <span className="text-xs text-dim shrink-0">{relativeTime(agent.last_message_at)}</span>
-          )}
-        </div>
-        <p className="text-xs text-label truncate mt-0.5">
-          {agent.last_message_preview || "No messages yet"}
-        </p>
-        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`} />
-          <span className={`text-xs lowercase ${statusText}`}>{agent.status.toLowerCase().replace("_", " ")}</span>
-          {agent.model && (
-            <span className="text-[10px] text-faint font-medium px-1.5 py-0.5 rounded bg-elevated">
-              {modelDisplayName(agent.model)}
-            </span>
-          )}
-          {agent.branch && (
-            <span className="inline-flex items-center gap-1 text-xs text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded font-mono">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-              </svg>
-              {agent.branch}
-            </span>
-          )}
-          {agent.unread_count > 0 && (
-            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-4.5 px-1 rounded-full bg-cyan-500 text-white text-xs font-bold">
-              {agent.unread_count}
-            </span>
-          )}
-        </div>
-      </div>
-      <div
-        role="button"
-        tabIndex={-1}
-        onClick={handleStarClick}
-        className="shrink-0 p-1.5 rounded-lg hover:bg-input transition-colors disabled:opacity-50"
-        title={starred ? "Unstar" : "Star"}
-      >
-        {starred ? (
-          <svg className="w-5 h-5 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
-        ) : (
-          <svg className="w-5 h-5 text-label hover:text-amber-400 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
-        )}
-      </div>
-    </button>
-  );
-}
 
 function formatSessionTime(unixMs) {
   if (!unixMs) return "";
@@ -1613,27 +1512,13 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             No {agentTab} agents
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {filtered.map((agent) => (
               <AgentRow
                 key={agent.id}
                 agent={agent}
-                project={name}
-                starred={starredIds.has(agent.session_id || agent.id)}
+                hideProjectTag
                 onClick={() => navigate(`/agents/${agent.id}`)}
-                onError={(msg) => showToast(msg, "error")}
-                onToggleStar={(sid, newStarred) => {
-                  setStarredIds((prev) => {
-                    const next = new Set(prev);
-                    newStarred ? next.add(sid) : next.delete(sid);
-                    return next;
-                  });
-                  setSessions((prev) =>
-                    prev ? prev.map((ss) =>
-                      ss.session_id === sid ? { ...ss, starred: newStarred } : ss
-                    ) : prev
-                  );
-                }}
               />
             ))}
           </div>

@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useRef, memo, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL, modelDisplayName } from "../lib/constants";
+import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
+import AgentRow from "../components/AgentRow";
 import useDraft from "../hooks/useDraft";
 import useWebSocket, { useWsEvent, isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
 import usePageVisible from "../hooks/usePageVisible";
@@ -17,127 +18,6 @@ const FILTER_TABS = [
   { key: "INSIGHTS", label: "Insights" },
   { key: "STOPPED", label: "Stopped" },
 ];
-
-const AgentRow = memo(function AgentRow({ agent, onClick, selecting, selected, onToggle }) {
-  const navigate = useNavigate();
-
-  const handleClick = () => {
-    if (selecting) {
-      onToggle(agent.id);
-    } else {
-      onClick();
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      data-agent-id={agent.id}
-      data-unread={agent.unread_count > 0 ? "1" : undefined}
-      onClick={handleClick}
-      className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
-        selecting && selected ? "ring-1 ring-cyan-500" : ""
-      }`}
-    >
-      <div className="flex items-start gap-3 px-5 py-[18px]">
-      {/* Status dot */}
-      <div className={`shrink-0 w-2.5 h-2.5 rounded-full self-center -ml-1 mr-1 ${
-        agent.status === "EXECUTING" ? "bg-cyan-400 animate-glow"
-          : agent.status === "IDLE" ? "bg-cyan-300/50"
-          : agent.status === "ERROR" ? "bg-red-400"
-          : "bg-zinc-400/50"
-      }`} />
-      {/* Selection checkbox */}
-      {selecting && (
-        <div className="shrink-0 flex items-center justify-center w-6 h-6 mt-0.5">
-          <div
-            className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-colors ${
-              selected
-                ? "bg-cyan-500 border-cyan-500"
-                : "border-edge bg-transparent"
-            }`}
-          >
-            {selected && (
-              <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="min-w-0 flex-1">
-        {/* Title + time */}
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="text-base font-medium leading-snug text-heading truncate">
-            {agent.name}
-          </h3>
-          <span className="text-[11px] text-faint shrink-0 mt-0.5">
-            {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
-          </span>
-        </div>
-        {/* Preview + unread badge */}
-        <div className="flex items-center gap-2 mt-1">
-          <p className="text-sm text-dim truncate min-w-0 flex-1">
-            {agent.last_message_preview || "No messages yet"}
-          </p>
-          {agent.unread_count > 0 && (
-            <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
-              {agent.unread_count}
-            </span>
-          )}
-        </div>
-        {/* Tags — same order as InboxCard, status shown by left strip */}
-        <div className="flex flex-wrap items-center gap-1 mt-1.5">
-          <span
-            className="text-[10px] font-medium px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
-            onClick={(e) => { e.stopPropagation(); navigate(`/projects/${encodeURIComponent(agent.project)}`); }}
-            title={agent.project}
-          >{agent.project}</span>
-          {agent.worktree && (
-            <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-              </svg>
-              Worktree
-            </span>
-          )}
-          {agent.skip_permissions && (
-            <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-              Auto
-            </span>
-          )}
-          {agent.model && (
-            <span className="text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
-              {modelDisplayName(agent.model)}
-            </span>
-          )}
-          {agent.effort && (
-            <span className="text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
-              {agent.effort.charAt(0).toUpperCase() + agent.effort.slice(1)}
-            </span>
-          )}
-          {agent.insight_status === "failed" && !agent.has_pending_suggestions && (
-            <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
-              failed
-            </span>
-          )}
-        </div>
-      </div>
-      {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
-        <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
-          generating
-        </span>
-      )}
-      {agent.has_pending_suggestions && (
-        <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-          insights
-        </span>
-      )}
-      </div>
-    </button>
-  );
-});
 
 export default function AgentsPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
