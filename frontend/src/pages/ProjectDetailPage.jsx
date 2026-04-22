@@ -885,10 +885,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   }, [name, showToast]);
 
   const handleEmojiSelect = useCallback(async (char) => {
-    // Optimistic update
     setProject((prev) => prev ? { ...prev, emoji: char } : prev);
     try {
       await updateProjectSettings(name, { emoji: char });
+      showToast(`Icon updated to ${char}`);
       window.dispatchEvent(new CustomEvent("projects-data-changed"));
     } catch (err) {
       showToast(err.message || "Failed to save icon", "error");
@@ -899,6 +899,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     setProject((prev) => prev ? { ...prev, emoji: null } : prev);
     try {
       await updateProjectSettings(name, { emoji: null });
+      showToast("Icon reset to default");
       window.dispatchEvent(new CustomEvent("projects-data-changed"));
     } catch (err) {
       showToast(err.message || "Failed to reset icon", "error");
@@ -910,6 +911,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     if (rect) setEmojiAnchorRect(rect);
     setShowEmojiPicker(true);
   }, []);
+
+  const closeEmojiPicker = useCallback(() => setShowEmojiPicker(false), []);
 
   const [rebuildingInsights, setRebuildingInsights] = useState(false);
   const handleRebuildInsights = useCallback(async () => {
@@ -1900,7 +1903,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           anchorRect={emojiAnchorRect}
           onSelect={handleEmojiSelect}
           onClear={handleEmojiClear}
-          onClose={() => setShowEmojiPicker(false)}
+          onClose={closeEmojiPicker}
         />
       )}
     </div>
