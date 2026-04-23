@@ -1327,11 +1327,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             <button
               type="button"
               onClick={handleReviewUpdates}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-400 transition-colors flex items-center gap-1.5"
+              className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5 bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 active:bg-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20 dark:active:bg-amber-500/25"
             >
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75 dark:bg-amber-400" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500 dark:bg-amber-400" />
               </span>
               Review Updates
             </button>
@@ -1340,7 +1340,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               type="button"
               disabled={refreshingClaudeMd}
               onClick={handleRefreshClaudeMd}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-cyan-600 text-white text-xs font-medium hover:bg-cyan-500 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+              className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5 bg-cyan-500/15 text-cyan-600 hover:bg-cyan-500/25 active:bg-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-400 dark:hover:bg-cyan-500/20 dark:active:bg-cyan-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {refreshingClaudeMd ? (
                 <>
@@ -1366,7 +1366,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             type="button"
             disabled={rebuildingInsights}
             onClick={handleRebuildInsights}
-            className="shrink-0 px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
+            className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors bg-cyan-500/15 text-cyan-600 hover:bg-cyan-500/25 active:bg-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-400 dark:hover:bg-cyan-500/20 dark:active:bg-cyan-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {rebuildingInsights ? "Rebuilding..." : "Rebuild"}
           </button>
@@ -1381,7 +1381,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               type="button"
               disabled={archiving}
               onClick={handleArchive}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600/20 text-amber-400 text-xs font-medium hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
+              className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 active:bg-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20 dark:active:bg-amber-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {archiving ? "Archiving..." : "Archive"}
             </button>
@@ -1396,7 +1396,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
               type="button"
               disabled={activating}
               onClick={handleActivate}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/30 disabled:opacity-50 transition-colors"
+              className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors bg-cyan-500/15 text-cyan-600 hover:bg-cyan-500/25 active:bg-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-400 dark:hover:bg-cyan-500/20 dark:active:bg-cyan-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {activating ? "Activating..." : "Activate"}
             </button>
@@ -1410,7 +1410,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           <button
             type="button"
             onClick={() => setShowDelete(true)}
-            className="shrink-0 px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 text-xs font-medium hover:bg-red-600/30 transition-colors"
+            className="shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors bg-red-500/15 text-red-600 hover:bg-red-500/25 active:bg-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20 dark:active:bg-red-500/25"
           >
             Delete
           </button>
