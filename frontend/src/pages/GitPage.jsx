@@ -15,6 +15,7 @@ import {
 } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { useToast } from "../contexts/ToastContext";
+import { forwardState } from "../lib/nav";
 // --- Merge dropdown (single ghost button → two plain-text options) ---
 function MergeDropdown({ branchName, currentName, isMerging, disabled, onMerge }) {
   const [open, setOpen] = useState(false);
@@ -214,7 +215,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           skip_permissions: true,
           prompt,
         });
-        navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
+        navigate(`/agents/${agent.id}`, { state: forwardState(location) });
       } catch (err) {
         addToast(`Merge error: ${err.message}`, "error");
       } finally {
@@ -266,7 +267,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `4) Commit and push to origin/${currentBranch}. ` +
           `Report what was committed and pushed.`,
       });
-      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
+      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
     } catch (err) {
       addToast(`Push error: ${err.message}`, "error");
     } finally {
@@ -319,7 +320,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `4) git branch -d <branch>. ` +
           `List worktrees first with 'git worktree list' to get exact paths.`,
       });
-      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
+      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
     } catch (err) {
       addToast(`Merge All error: ${err.message}`, "error");
     } finally {
@@ -363,7 +364,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `\n4) Run 'git branch -a' to show the final state.` +
           `\nReport a summary of what was merged, deleted, and skipped.`,
       });
-      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
+      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
     } catch (err) {
       addToast(`Cleanup error: ${err.message}`, "error");
     } finally {

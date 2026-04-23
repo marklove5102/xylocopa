@@ -13,6 +13,7 @@ import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import { useToast } from "../contexts/ToastContext";
 import { uploadUrl } from "../lib/urls";
+import { forwardState } from "../lib/nav";
 
 function deriveTitle(description) {
   if (!description) return "";
@@ -348,7 +349,7 @@ export default function NewTaskPage({ embedded = false }) {
         el.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)';
         el.style.transform = 'translateY(100%)';
       }
-      setTimeout(() => navigate(`/agents/${dispatched.agent_id}`, { state: { from: location.pathname + location.search } }), 250);
+      setTimeout(() => navigate(`/agents/${dispatched.agent_id}`, { state: forwardState(location) }), 250);
     } catch (err) {
       showToast("Launch failed: " + err.message, "error");
     } finally {

@@ -6,6 +6,7 @@ import ProjectSelector from "../ProjectSelector";
 import SendLaterPicker from "../SendLaterPicker";
 import { useToast } from "../../contexts/ToastContext";
 import useDraft from "../../hooks/useDraft";
+import { forwardState } from "../../lib/nav";
 
 export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
   const navigate = useNavigate();
@@ -176,7 +177,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
               <span className="text-sm text-label">Agent executing</span>
-              <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+              <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
                 className="ml-auto text-xs text-cyan-400 hover:text-cyan-300">
                 View agent &rarr;
               </button>
@@ -191,7 +192,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
                 </div>
               )}
               {task.agent_id && (
-                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
                   className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300">
                   View agent conversation &rarr;
                 </button>
@@ -219,7 +220,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
                 <div className="text-sm text-body">{renderMarkdown(task.agent_summary, task.project_name)}</div>
               )}
               {task.agent_id && (
-                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
                   className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300">
                   View agent &rarr;
                 </button>
@@ -228,7 +229,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
           )}
 
           {task.status === "CANCELLED" && task.agent_id && (
-            <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+            <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
               className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300">
               View agent &rarr;
             </button>
@@ -238,7 +239,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
             <div className="space-y-2">
               {task.rejection_reason && <p className="text-sm text-body">{task.rejection_reason}</p>}
               {task.agent_id && (
-                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
                   className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300">
                   View agent &rarr;
                 </button>
@@ -250,7 +251,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
             <div className="space-y-2">
               {task.error_message && <p className="text-sm text-body">{task.error_message}</p>}
               {task.agent_id && (
-                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
+                <button type="button" onClick={() => navigate(`/agents/${task.agent_id}`, { state: forwardState(location) })}
                   className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300">
                   View agent &rarr;
                 </button>

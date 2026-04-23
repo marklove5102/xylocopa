@@ -14,6 +14,7 @@ import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import PageHeader from "../components/PageHeader";
 import { useToast } from "../contexts/ToastContext";
 import { uploadUrl } from "../lib/urls";
+import { forwardState } from "../lib/nav";
 
 const CARDS = [
   {
@@ -463,7 +464,7 @@ function NewAgentForm({ showToast, navigate }) {
       }
       clearAllDrafts();
       clearAttachments();
-      navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } });
+      navigate(`/agents/${agentId}`, { state: forwardState(location) });
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
@@ -485,7 +486,7 @@ function NewAgentForm({ showToast, navigate }) {
       clearAllDrafts();
       clearAttachments();
       const when = new Date(scheduledAt);
-      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
+      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {

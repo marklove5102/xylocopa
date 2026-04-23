@@ -11,6 +11,7 @@ import useDraft from "../hooks/useDraft";
 import useWebSocket, { useWsEvent, isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
+import { forwardState } from "../lib/nav";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
@@ -480,7 +481,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
                 <div key={agentId} className="rounded-lg bg-surface border border-divider overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } })}
+                    onClick={() => navigate(`/agents/${agentId}`, { state: forwardState(location) })}
                     className="w-full text-left px-3 py-2 bg-elevated hover:bg-hover transition-colors"
                   >
                     <span className="text-xs font-semibold text-heading">{group.agent_name}</span>
@@ -491,7 +492,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
                     <button
                       key={r.message_id}
                       type="button"
-                      onClick={() => navigate(`/agents/${r.agent_id}`, { state: { from: location.pathname + location.search } })}
+                      onClick={() => navigate(`/agents/${r.agent_id}`, { state: forwardState(location) })}
                       className="w-full text-left px-3 py-1.5 border-t border-divider hover:bg-hover transition-colors"
                     >
                       <p className="text-xs text-body line-clamp-2">{r.content_snippet}</p>
@@ -501,7 +502,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
                   {group.items.length > 3 && (
                     <button
                       type="button"
-                      onClick={() => navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } })}
+                      onClick={() => navigate(`/agents/${agentId}`, { state: forwardState(location) })}
                       className="w-full text-left px-3 py-1 border-t border-divider text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors"
                     >
                       +{group.items.length - 3} more
@@ -601,7 +602,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
             <AgentRow
               key={agent.id}
               agent={agent}
-              onClick={() => navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } })}
+              onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
               selecting={selecting}
               selected={selected.has(agent.id)}
               onToggle={toggleOne}

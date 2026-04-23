@@ -6,6 +6,7 @@ import { modelDisplayName } from "../lib/constants";
 import { uploadUrl } from "../lib/urls";
 import ImageLightbox from "./ImageLightbox";
 import useDraft from "../hooks/useDraft";
+import { forwardState } from "../lib/nav";
 
 const STATUS_DOT = {
   inbox: "bg-slate-400",
@@ -286,7 +287,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                     ))}
                     <button
                       type="button"
-                      onClick={() => { onClose(); navigate(`/agents/${task.attempt_agents[sel].agent_id}`, { state: { from: location.pathname + location.search } }); }}
+                      onClick={() => { onClose(); navigate(`/agents/${task.attempt_agents[sel].agent_id}`, { state: forwardState(location) }); }}
                       className="ml-auto text-[11px] font-medium text-cyan-500 hover:text-cyan-400 transition-colors"
                     >
                       Enter Chat &rarr;

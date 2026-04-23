@@ -5,6 +5,7 @@ import { useMonitor } from "../contexts/MonitorContext";
 import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fetchViewingStatsWeek } from "../lib/api";
 import { isSystemHealthy } from "../lib/constants";
 import { relativeTime, durationDisplay } from "../lib/formatters";
+import { forwardState } from "../lib/nav";
 
 // Project bars/dots in the viewing-time popover use cyan (the app's accent)
 // with decreasing opacity by rank, so the top project reads as primary and
@@ -231,7 +232,7 @@ function QueuePopover({ onClose, containerRef, navigate }) {
                 label={a.task_title || a.name}
                 sub={(a.project || "").slice(0, 8)}
                 dim={!a.task_id}
-                onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`, { state: { from: location.pathname + location.search } }); }} />
+                onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`, { state: forwardState(location) }); }} />
             ))}
           </div>
         )}

@@ -8,6 +8,7 @@ import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks 
 import { useToast } from "../contexts/ToastContext";
 import InboxView from "./tasks/InboxView";
 import { CardSwipeContext } from "../components/cards/CardShell";
+import { forwardState } from "../lib/nav";
 
 const INBOX_POLL_INTERVAL = 5000;
 
@@ -177,7 +178,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const res = await batchProcessTasks(taskIds);
       if (res.agent_id) {
         if (selecting) exitSelectMode();
-        navigate(`/agents/${res.agent_id}`, { state: { from: location.pathname + location.search } });
+        navigate(`/agents/${res.agent_id}`, { state: forwardState(location) });
       } else {
         showToast(res.message || "No tasks to process");
       }

@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useCallback } from "react";
 import DraggableFab from "./DraggableFab";
 import { useUnread } from "../contexts/UnreadContext";
+import { forwardState } from "../lib/nav";
 
 const defaultPos = () => ({
   x: window.innerWidth - 64,
@@ -23,12 +24,12 @@ export default function AttentionButton() {
       // Jump to oldest unread (FIFO — list[0] is oldest)
       const next = list[0];
       if (next) {
-        navigate(`/agents/${next.id}`, { state: { from: location.pathname + location.search } });
+        navigate(`/agents/${next.id}`, { state: forwardState(location) });
         return;
       }
     }
     navigate("/split", { state: { initialPath: location.pathname } });
-  }, [hasUnread, list, navigate, location.pathname]);
+  }, [hasUnread, list, navigate, location]);
 
   const handleLongPress = useCallback(() => {
     // Always open split-screen, even with unread messages (escape hatch)

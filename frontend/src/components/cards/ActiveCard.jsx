@@ -2,6 +2,7 @@ import { memo, useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { elapsedDisplay } from "../../lib/formatters";
 import CardShell, { cardPadding } from "./CardShell";
+import { forwardState } from "../../lib/nav";
 
 export default memo(function ActiveCard({ task, selecting, selected, onToggle }) {
   const navigate = useNavigate();
@@ -16,7 +17,7 @@ export default memo(function ActiveCard({ task, selecting, selected, onToggle })
 
   const handleClick = () => {
     if (selecting) { onToggle?.(task.id); return; }
-    if (task.agent_id) navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } });
+    if (task.agent_id) navigate(`/agents/${task.agent_id}`, { state: forwardState(location) });
   };
 
   return (

@@ -206,7 +206,7 @@ describe("Merge All button behavior", () => {
     fireEvent.click(screen.getByText("Merge All"));
 
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-123");
+      expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-123", expect.objectContaining({ state: expect.any(Object) }));
     });
   });
 
@@ -236,7 +236,7 @@ describe("Merge All button behavior", () => {
     // Resolve and verify it returns to normal
     resolveCreate({ id: "agent-456" });
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-456");
+      expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-456", expect.objectContaining({ state: expect.any(Object) }));
     });
   });
 
@@ -349,7 +349,7 @@ describe("Branch merge", () => {
     expect(call.project).toBe("my-project");
     expect(call.mode).toBe("AUTO");
     expect(call.prompt).toContain("feature-x");
-    expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-123");
+    expect(mockNavigate).toHaveBeenCalledWith("/agents/agent-123", expect.objectContaining({ state: expect.any(Object) }));
   });
 });
 

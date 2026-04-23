@@ -34,6 +34,7 @@ import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
 import { uploadUrl } from "../lib/urls";
+import { forwardState, resolveBack } from "../lib/nav";
 
 // Mini error boundary that wraps individual markdown renders so a single
 // broken message doesn't crash the entire chat page.
@@ -3494,7 +3495,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => { if (onClose) onClose(); else navigate(location.state?.from || "/agents"); }}
+              onClick={() => {
+                if (onClose) { onClose(); return; }
+                const back = resolveBack(location.pathname, location.state);
+                navigate(back.to, { state: back.state });
+              }}
               className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
             >
               {embedded ? (
@@ -3685,7 +3690,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               {(isStopped || isError) && agent?.successor_id && (
                 <button
                   type="button"
-                  onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: { from: location.pathname + location.search } })}
+                  onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: forwardState(location) })}
                   className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                 >
                   Continued
@@ -3740,7 +3745,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           {agent.parent_id && (
             <button
               type="button"
-              onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.parent_id) : navigate(`/agents/${agent.parent_id}`, { state: { from: location.pathname + location.search } })}
+              onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.parent_id) : navigate(`/agents/${agent.parent_id}`, { state: forwardState(location) })}
               className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
             >
               <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -3844,7 +3849,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     {!isSelCurrent && (
                       <button
                         type="button"
-                        onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`, { state: { from: location.pathname + location.search } })}
+                        onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`, { state: forwardState(location) })}
                         className="ml-auto text-[10px] text-orange-500 dark:text-orange-400 hover:underline"
                       >
                         Enter Chat →
