@@ -30,6 +30,16 @@ Each object has a different lifespan and a different role:
 | **Project** | Lifetime of the codebase | Long-term memory, per-project context |
 | **Agent** | Minutes to hours | One execution attempt, archived as a session |
 
+Visually:
+
+```
+   PROJECT  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━▶   (forever)
+                │           │            │
+   TASK         ●───────────●────────────●──── done    (days–months)
+                │           │            │
+   AGENT      [ run ]   [ retry ]    [ retry ]         (minutes–hours)
+```
+
 Keeping these separate means an agent can fail without taking the task with it. You retry with a summary of what was tried, and the project carries forward what was learned — instead of every conversation starting from zero.
 
 ## See also
