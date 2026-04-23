@@ -716,6 +716,203 @@ _SECTION_DATE_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b", re.MULTILINE)
 
 
 # ===========================================================================
+# Resume hint (LLM-generated mood + recap on project card)
+# ===========================================================================
+
+RESUME_HINT_STALE_MINUTES = 15  # reuse cached hint if younger than this
+_resume_hint_in_flight: set[str] = set()  # dedupe concurrent refreshes
+
+_RESUME_SYSTEM = """You summarize the emotional state of a programming project.
+Return a single emoji that captures the mood of recent work, plus a short
+4-10 word past/present phrase describing what's been happening. Never prescribe
+what to do next — only describe the vibe of recent activity.
+
+Emoji mood palette (pick whichever fits best, one glyph):
+- breakthrough / big win: 🎉 🚀 ✨ 💥 🏆
+- steady momentum: 💪 🔥 ⚡ 📈
+- debugging: 🐛 🔧 🛠
+- exploring / thinking: 🤔 🧐 🔍
+- stuck / frustrated: 😩 🌀 🤯 😮‍💨
+- quiet / paused: ☕ 💤 🌙
+
+The hint is at most 40 characters. Match the language of the agent names
+(English, Chinese, mixed)."""
+
+
+def _format_activity_age(dt) -> str:
+    if dt is None:
+        return "never"
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = now - dt
+    secs = int(delta.total_seconds())
+    if secs < 60: return f"{secs}s ago"
+    if secs < 3600: return f"{secs // 60}m ago"
+    if secs < 86400: return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
+def _gather_resume_signals(project_name: str, db: Session) -> dict | None:
+    """Return a compact snapshot of recent activity, or None if too quiet to summarize."""
+    proj = db.get(Project, project_name)
+    if not proj or proj.archived:
+        return None
+
+    recent_agents = (
+        db.query(Agent)
+        .filter(Agent.project == project_name, Agent.is_subagent == False)  # noqa: E712
+        .order_by(Agent.last_message_at.desc().nullslast())
+        .limit(5)
+        .all()
+    )
+    if not recent_agents:
+        return None
+
+    # Skip projects that haven't been touched in 3+ days — a hint there is noise
+    from datetime import timedelta
+    most_recent = recent_agents[0].last_message_at
+    if most_recent is None:
+        return None
+    if most_recent.tzinfo is None:
+        most_recent = most_recent.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - most_recent > timedelta(days=3):
+        return None
+
+    agents_data = []
+    for a in recent_agents:
+        agents_data.append({
+            "name": (a.name or "")[:80],
+            "status": a.status.value if hasattr(a.status, "value") else str(a.status),
+            "last_active": _format_activity_age(a.last_message_at),
+        })
+
+    # Task activity (last 7 days, terminal only)
+    from datetime import timedelta
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    task_rows = (
+        db.query(Task.status, func.count(Task.id), func.sum(Task.attempt_number - 1))
+        .filter(Task.project_name == project_name, Task.completed_at >= week_ago)
+        .group_by(Task.status).all()
+    )
+    by_status = {s.value if hasattr(s, "value") else str(s): (int(c), int(r or 0)) for s, c, r in task_rows}
+    completed = by_status.get("COMPLETE", (0, 0))[0]
+    failed = sum(by_status.get(s, (0, 0))[0] for s in ("FAILED", "TIMEOUT"))
+    retries = sum(r for _, r in by_status.values())
+
+    return {
+        "project": project_name,
+        "week": {"completed": completed, "failed": failed, "retries": retries},
+        "recent_agents": agents_data,
+    }
+
+
+async def _call_llm_for_hint(signals: dict) -> tuple[str | None, str | None]:
+    """Call gpt-4o-mini with structured output. Returns (emoji, hint) or (None, None)."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None, None
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        logger.warning("openai package missing — skipping resume hint")
+        return None, None
+
+    user_prompt = (
+        f"Project: {signals['project']}\n\n"
+        f"Last 7d: {signals['week']['completed']} completed, "
+        f"{signals['week']['failed']} failed, {signals['week']['retries']} retries\n\n"
+        "Recent agents (newest first):\n"
+        + "\n".join(
+            f"- {a['name']!r} — {a['status']}, {a['last_active']}"
+            for a in signals["recent_agents"]
+        )
+    )
+
+    client = AsyncOpenAI(api_key=api_key)
+    try:
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": _RESUME_SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "resume_hint",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "emoji": {"type": "string", "maxLength": 8},
+                                "hint": {"type": "string", "maxLength": 40},
+                            },
+                            "required": ["emoji", "hint"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                max_tokens=60,
+                temperature=0.3,
+            ),
+            timeout=10.0,
+        )
+        data = json.loads(resp.choices[0].message.content)
+        return data.get("emoji"), data.get("hint")
+    except Exception as e:
+        logger.warning("resume hint LLM failed for %s: %s", signals["project"], e)
+        return None, None
+
+
+async def _refresh_resume_hint(project_name: str):
+    """Background task: regenerate the resume hint for one project."""
+    if project_name in _resume_hint_in_flight:
+        return
+    _resume_hint_in_flight.add(project_name)
+    try:
+        db = SessionLocal()
+        try:
+            signals = _gather_resume_signals(project_name, db)
+            if signals is None:
+                return
+            emoji, hint = await _call_llm_for_hint(signals)
+            if not hint:
+                return
+            proj = db.get(Project, project_name)
+            if proj is None:
+                return
+            proj.resume_emoji = (emoji or "")[:16] or None
+            proj.resume_hint = hint[:80]
+            proj.resume_hint_at = datetime.now(timezone.utc)
+            db.commit()
+        finally:
+            db.close()
+    finally:
+        _resume_hint_in_flight.discard(project_name)
+
+
+def _resume_hint_is_stale(proj: Project, last_activity) -> bool:
+    if proj.resume_hint_at is None:
+        return True
+    hint_at = proj.resume_hint_at
+    if hint_at.tzinfo is None:
+        hint_at = hint_at.replace(tzinfo=timezone.utc)
+    # Stale if older than window, OR new activity since the hint was generated
+    age_min = (datetime.now(timezone.utc) - hint_at).total_seconds() / 60
+    if age_min > RESUME_HINT_STALE_MINUTES:
+        return True
+    if last_activity:
+        la = last_activity
+        if la.tzinfo is None:
+            la = la.replace(tzinfo=timezone.utc)
+        if la > hint_at:
+            return True
+    return False
+
+
+# ===========================================================================
 # Routes
 # ===========================================================================
 
@@ -812,9 +1009,13 @@ async def list_projects(db: Session = Depends(get_db)):
     return results
 
 
+from fastapi import BackgroundTasks
+
+
 @router.get("/api/projects/folders")
 async def list_all_folders(
     request: Request,
+    background_tasks: BackgroundTasks,
     tz_offset: int = Query(default=0, description="Client timezone offset in minutes"),
     db: Session = Depends(get_db),
 ):
@@ -875,7 +1076,14 @@ async def list_all_folders(
             "auto_progress_summary": proj.auto_progress_summary if proj else False,
             "ai_insights": proj.ai_insights if proj else False,
             "emoji": proj.emoji if proj else None,
+            "resume_emoji": proj.resume_emoji if proj else None,
+            "resume_hint": proj.resume_hint if proj else None,
         }
+
+        # Schedule background refresh of resume hint when stale.
+        # Only for active projects that have any agent activity at all.
+        if proj and active and agent_count > 0 and _resume_hint_is_stale(proj, last_activity):
+            background_tasks.add_task(_refresh_resume_hint, proj.name)
 
         # Richer stats for active projects
         if active:

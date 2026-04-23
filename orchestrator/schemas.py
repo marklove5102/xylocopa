@@ -294,6 +294,8 @@ class ProjectOut(BaseModel):
     auto_progress_summary: bool = False
     ai_insights: bool = False
     emoji: str | None = None
+    resume_emoji: str | None = None
+    resume_hint: str | None = None
 
     model_config = {"from_attributes": True}
 

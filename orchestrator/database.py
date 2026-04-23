@@ -128,6 +128,20 @@ def init_db():
             ))
             conn.commit()
 
+        # Add resume hint columns (LLM-generated mood + recap)
+        columns = _table_columns(conn, "projects")
+        if "resume_emoji" not in columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN resume_emoji VARCHAR(16)"))
+            conn.commit()
+        columns = _table_columns(conn, "projects")
+        if "resume_hint" not in columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN resume_hint VARCHAR(80)"))
+            conn.commit()
+        columns = _table_columns(conn, "projects")
+        if "resume_hint_at" not in columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN resume_hint_at DATETIME"))
+            conn.commit()
+
         # Add cli_sync column to agents if missing
         columns = _table_columns(conn, "agents")
         if "cli_sync" not in columns:

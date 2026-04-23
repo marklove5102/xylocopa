@@ -6,6 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
+import FluentEmoji from "../components/FluentEmoji";
 import PageHeader from "../components/PageHeader";
 import useDraft from "../hooks/useDraft";
 import usePageVisible from "../hooks/usePageVisible";
@@ -25,49 +26,6 @@ function DragHandle({ listeners, attributes }) {
         <rect x="3" y="12" width="10" height="1.5" rx="0.75" />
       </svg>
     </button>
-  );
-}
-
-function ProjectStatusBar({ folder, className = "" }) {
-  const inbox = folder.inbox_count || 0;
-  const executing = folder.executing_count || 0;
-  const idle = folder.idle_count || 0;
-  const completed = folder.weekly_completed || 0;
-
-  const total = inbox + executing + idle + completed;
-  if (total === 0) {
-    return (
-      <div
-        className={`h-1.5 rounded-full bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
-        title={folder.active ? "No activity this week" : "No recent activity"}
-      />
-    );
-  }
-
-  const segs = [
-    { count: inbox,     color: "bg-amber-400",   label: "inbox" },
-    { count: executing, color: "bg-cyan-400",    label: "executing", pulse: true },
-    { count: idle,      color: "bg-violet-400",  label: "idle" },
-    { count: completed, color: "bg-emerald-400", label: "completed" },
-  ];
-
-  const hint = segs.filter(s => s.count > 0)
-    .map(s => `${s.count} ${s.label}`)
-    .join(" · ");
-
-  return (
-    <div
-      className={`flex h-1.5 rounded-full overflow-hidden bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
-      title={hint}
-    >
-      {segs.map((s, i) => s.count > 0 && (
-        <div
-          key={i}
-          className={`h-full ${s.color}${s.pulse ? " animate-pulse" : ""}`}
-          style={{ flex: s.count }}
-        />
-      ))}
-    </div>
   );
 }
 
@@ -134,11 +92,21 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
             )}
           </div>
 
-          {/* Row 2: task-status color bar */}
-          <ProjectStatusBar folder={folder} className="mt-2" />
+          {/* Row 2: LLM-generated mood + recap */}
+          {folder.resume_hint && (
+            <div
+              className="flex items-center gap-1.5 text-sm text-dim mt-1 leading-snug"
+              title={folder.resume_hint}
+            >
+              {folder.resume_emoji && (
+                <FluentEmoji char={folder.resume_emoji} size={14} className="shrink-0" />
+              )}
+              <span className="truncate">{folder.resume_hint}</span>
+            </div>
+          )}
 
           {/* Row 3: status pill */}
-          <div className="flex items-center gap-1.5 mt-2">
+          <div className="flex items-center gap-1.5 mt-1.5">
             {folder.active ? (
               <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
                 Active

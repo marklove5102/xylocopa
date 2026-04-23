@@ -143,6 +143,25 @@ export const FLUENT_MAP = {
   "⚽": "Soccer ball",
   "🏃": "Person running",
 
+  // Mood (used by LLM-generated resume hints)
+  "🎉": "Party popper",
+  "🎊": "Confetti ball",
+  "💥": "Collision",
+  "💪": "Flexed biceps",
+  "🤔": "Thinking face",
+  "🧐": "Face with monocle",
+  "🔍": "Magnifying glass tilted left",
+  "😩": "Weary face",
+  "🌀": "Cyclone",
+  "🤯": "Exploding head",
+  "😮‍💨": "Face exhaling",
+  "💤": "Zzz",
+  "😤": "Face with steam from nose",
+  "🥲": "Smiling face with tear",
+  "😊": "Smiling face with smiling eyes",
+  "🙂": "Slightly smiling face",
+  "😎": "Smiling face with sunglasses",
+
   // Symbols
   "♻️": "Recycling symbol",
   "✨": "Sparkles",
