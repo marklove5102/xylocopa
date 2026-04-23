@@ -1441,9 +1441,11 @@ async def rename_project(name: str, body: ProjectRename, request: Request, db: S
     ), {"new_name": new_name, "display": new_display, "old_name": name})
     db.execute(update(Agent).where(Agent.project == name).values(project=new_name))
     db.execute(update(StarredSession).where(StarredSession.project == name).values(project=new_name))
-    from models import Task
+    from models import Task, ProgressInsight, SessionViewEvent
     db.execute(update(Task).where(Task.project == name).values(project=new_name))
     db.execute(update(Task).where(Task.project_name == name).values(project_name=new_name))
+    db.execute(update(ProgressInsight).where(ProgressInsight.project == name).values(project=new_name))
+    db.execute(update(SessionViewEvent).where(SessionViewEvent.project == name).values(project=new_name))
 
     ghost = db.execute(text("SELECT name FROM projects WHERE name = :old"), {"old": name}).fetchone()
     if ghost:
