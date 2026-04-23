@@ -891,6 +891,34 @@ async def list_all_folders(
                 )
                 .scalar()
             )
+            # Pipeline counts: inbox / executing / idle — feed the per-project
+            # status bar on the Projects list
+            inbox_count = (
+                db.query(func.count(Task.id))
+                .filter(
+                    Task.project_name == dirname,
+                    Task.status == TaskStatus.INBOX,
+                )
+                .scalar()
+            )
+            executing_count = (
+                db.query(func.count(Agent.id))
+                .filter(
+                    Agent.project == dirname,
+                    Agent.is_subagent == False,  # noqa: E712
+                    Agent.status == AgentStatus.EXECUTING,
+                )
+                .scalar()
+            )
+            idle_count = (
+                db.query(func.count(Agent.id))
+                .filter(
+                    Agent.project == dirname,
+                    Agent.is_subagent == False,  # noqa: E712
+                    Agent.status == AgentStatus.IDLE,
+                )
+                .scalar()
+            )
             # Count agents linked to tasks (matches Agents page filtering)
             task_agent_total = (
                 db.query(func.count(Agent.id))
@@ -972,6 +1000,9 @@ async def list_all_folders(
             entry["weekly_total"] = _w_total
             entry["weekly_completed"] = _w_completed
             entry["weekly_success_pct"] = _w_pct
+            entry["inbox_count"] = inbox_count
+            entry["executing_count"] = executing_count
+            entry["idle_count"] = idle_count
 
         results.append(entry)
 

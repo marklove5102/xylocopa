@@ -29,51 +29,44 @@ function DragHandle({ listeners, attributes }) {
 }
 
 function ProjectStatusBar({ folder, className = "" }) {
-  const weeklyTotal = folder.weekly_total || 0;
+  const inbox = folder.inbox_count || 0;
+  const executing = folder.executing_count || 0;
+  const idle = folder.idle_count || 0;
   const completed = folder.weekly_completed || 0;
-  const failed = Math.max(0, weeklyTotal - completed);
-  const taskTotal = folder.active ? (folder.task_total || 0) : 0;
-  const taskCompleted = folder.task_completed || 0;
-  const taskPending = Math.max(0, taskTotal - taskCompleted);
-  const running = folder.active ? (folder.agent_active || 0) : 0;
 
-  const pctCompleted = weeklyTotal > 0 ? (completed / weeklyTotal) * 100 : 0;
-  const pctFailed = weeklyTotal > 0 ? (failed / weeklyTotal) * 100 : 0;
+  const total = inbox + executing + idle + completed;
+  if (total === 0) {
+    return (
+      <div
+        className={`h-1.5 rounded-full bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
+        title={folder.active ? "No activity this week" : "No recent activity"}
+      />
+    );
+  }
 
-  const hint = weeklyTotal > 0
-    ? `Week: ${completed} completed, ${failed} failed${running > 0 ? ` · ${running} running now` : ""}`
-    : running > 0
-      ? `${running} agent${running !== 1 ? "s" : ""} running`
-      : taskPending > 0
-        ? `${taskPending} task${taskPending !== 1 ? "s" : ""} queued`
-        : folder.active ? "Idle this week" : "No recent activity";
+  const segs = [
+    { count: inbox,     color: "bg-amber-400",   label: "inbox" },
+    { count: executing, color: "bg-cyan-400",    label: "executing", pulse: true },
+    { count: idle,      color: "bg-violet-400",  label: "idle" },
+    { count: completed, color: "bg-emerald-400", label: "completed" },
+  ];
+
+  const hint = segs.filter(s => s.count > 0)
+    .map(s => `${s.count} ${s.label}`)
+    .join(" · ");
 
   return (
     <div
-      className={`relative h-1.5 rounded-full overflow-hidden bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
+      className={`flex h-1.5 rounded-full overflow-hidden bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
       title={hint}
     >
-      {pctCompleted > 0 && (
+      {segs.map((s, i) => s.count > 0 && (
         <div
-          className="absolute top-0 left-0 h-full bg-emerald-400"
-          style={{ width: `${pctCompleted}%` }}
+          key={i}
+          className={`h-full ${s.color}${s.pulse ? " animate-pulse" : ""}`}
+          style={{ flex: s.count }}
         />
-      )}
-      {pctFailed > 0 && (
-        <div
-          className="absolute top-0 h-full bg-rose-400/80"
-          style={{ left: `${pctCompleted}%`, width: `${pctFailed}%` }}
-        />
-      )}
-      {weeklyTotal === 0 && taskPending > 0 && (
-        <div
-          className="absolute top-0 left-0 h-full bg-amber-400/70"
-          style={{ width: `${Math.min(100, taskPending * 6)}%` }}
-        />
-      )}
-      {running > 0 && (
-        <div className="absolute inset-0 bg-cyan-400/20 animate-pulse" />
-      )}
+      ))}
     </div>
   );
 }
