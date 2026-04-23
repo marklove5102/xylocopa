@@ -263,7 +263,7 @@ export default function useVoiceRecorder({ onTranscript, onError, maxDurationMs,
         }
       };
 
-      recorder.start();
+      recorder.start(1000);
       acquireWakeLock();
 
       const curLimit = limitRef.current;
