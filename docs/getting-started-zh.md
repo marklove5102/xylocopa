@@ -14,7 +14,7 @@
 
 ## 整体流程一览
 
-Xylocopa 是 AI 原生的 [GTD](https://zh.wikipedia.org/wiki/%E6%90%9E%E5%AE%9A%E5%85%B6%E4%BA%8B)。GTD 的思路很简单：把想法从脑子里倒出来，之后再决定怎么处理，时机到了再动手。Xylocopa 保留这个循环 -- 但"动手"那一环交给 AI agent，不是你自己。
+Xylocopa 是 AI 原生的 [GTD](https://gettingthingsdone.com/what-is-gtd/)。GTD 的思路很简单：把想法从脑子里倒出来，之后再决定怎么处理，时机到了再动手。Xylocopa 保留这个循环 -- 但"动手"那一环交给 AI agent，不是你自己。
 
 ```
           ┌─────────────────────────────────────────────────────────┐

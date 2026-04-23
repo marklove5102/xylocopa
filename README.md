@@ -21,7 +21,7 @@ If you find Xylocopa useful, a star helps others discover it :)
 
 ## The Loop
 
-Classic GTD moves ideas through a five-step loop (capture, clarify, organize, reflect, engage), all performed by one human. Xylocopa keeps the loop but rewires the executor: **you capture and decide, your agents execute, and the system reflects and remembers.** The five steps below are GTD for an era where the work itself can be delegated to AI.
+Classic [GTD](https://gettingthingsdone.com/what-is-gtd/) moves ideas through a five-step loop (capture, clarify, organize, reflect, engage), all performed by one human. Xylocopa keeps the loop but rewires the executor: **you capture and decide, your agents execute, and the system reflects and remembers.** The five steps below are GTD for an era where the work itself can be delegated to AI.
 
 Traditional task management tracks what **you** need to do. Xylocopa tracks what your **agents** are doing.
 

@@ -14,7 +14,7 @@ This guide is for people who just installed Xylocopa (see the [host setup](../RE
 
 ## The Loop at a glance
 
-Xylocopa is an AI-native take on [GTD](https://gettingthingsdone.com/). The idea of GTD is simple: get ideas out of your head, decide what to do with them later, and act on them when the time is right. Xylocopa keeps that loop, but the "actor" is an AI agent, not you.
+Xylocopa is an AI-native take on [GTD](https://gettingthingsdone.com/what-is-gtd/). The idea of GTD is simple: get ideas out of your head, decide what to do with them later, and act on them when the time is right. Xylocopa keeps that loop, but the "actor" is an AI agent, not you.
 
 ```
          ┌─────────────────────────────────────────────────────────┐
