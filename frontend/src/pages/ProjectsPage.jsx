@@ -62,71 +62,49 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
           <span className="relative">!</span>
         </span>
       )}
-      <div className="flex items-start gap-4 px-5 py-5">
+      <div className="flex items-center gap-3 px-4 py-3">
         {dragHandleProps && <DragHandle {...dragHandleProps} />}
         <ProjectRing
           emoji={folder.emoji}
           hasActiveAgents={running > 0}
-          size={32}
-          className="self-center"
+          size={28}
         />
 
         <div className="min-w-0 flex-1">
-          {/* Row 1: title + time */}
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="text-[17px] font-semibold leading-snug text-heading truncate">
+          <div className="flex items-center gap-2">
+            <h3 className={`text-[15px] font-semibold truncate ${folder.active ? "text-heading" : "text-dim"}`}>
               {folder.display_name || folder.name}
             </h3>
-            {folder.last_activity && (
-              <span className="text-[11px] text-faint shrink-0 mt-1">
-                {relativeTime(folder.last_activity)}
+            {running > 0 && (
+              <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-500 dark:text-cyan-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-glow" />
+                {running}
               </span>
             )}
           </div>
-
-          {/* Row 2: stats (bold numbers) */}
-          <div className="flex items-center gap-2 mt-1 text-sm text-dim">
-            {folder.active && (running > 0 || taskTotal > 0) ? (
-              <>
-                {running > 0 && (
-                  <span>
-                    <span className="font-semibold text-cyan-500 dark:text-cyan-400">{running}</span>
-                    <span className="ml-1 text-dim">running</span>
-                  </span>
-                )}
-                {running > 0 && taskTotal > 0 && <span className="text-faint">·</span>}
-                {taskTotal > 0 && (
-                  <span>
-                    <span className="font-semibold text-heading">{taskTotal}</span>
-                    <span className="ml-1 text-dim">task{taskTotal !== 1 ? "s" : ""}</span>
-                  </span>
-                )}
-              </>
-            ) : folder.active ? (
-              <span className="text-dim">Idle</span>
-            ) : folder.agent_count > 0 ? (
-              <span className="text-dim">Inactive · {folder.agent_count} agent{folder.agent_count !== 1 ? "s" : ""}</span>
-            ) : (
-              <span className="text-faint">No history</span>
-            )}
-          </div>
-
-          {/* Row 3: tags */}
-          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-faint">
             {folder.active ? (
-              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
-                Active
-              </span>
+              taskTotal > 0 ? (
+                <span><span className="text-dim font-medium">{taskTotal}</span> task{taskTotal !== 1 ? "s" : ""}</span>
+              ) : running > 0 ? (
+                <span className="text-dim">Working…</span>
+              ) : (
+                <span>Idle</span>
+              )
+            ) : folder.agent_count > 0 ? (
+              <span>Inactive · <span className="text-dim">{folder.agent_count}</span> agent{folder.agent_count !== 1 ? "s" : ""}</span>
             ) : (
-              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-zinc-500/15 text-zinc-500 dark:text-zinc-400">
-                Inactive
-              </span>
+              <span>No history</span>
             )}
           </div>
         </div>
 
-        {/* Drill-in chevron */}
-        <svg className="w-4 h-4 text-faint shrink-0 self-center -mr-1" fill="none"
+        {folder.last_activity && (
+          <span className="text-[11px] text-faint shrink-0">
+            {relativeTime(folder.last_activity)}
+          </span>
+        )}
+        <svg className="w-4 h-4 text-faint shrink-0 -mr-1" fill="none"
           stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
