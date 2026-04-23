@@ -1,6 +1,6 @@
 # Getting Started with Xylocopa
 
-> A beginner's walkthrough — by the end, you'll have created a project, captured your first task, and watched an agent execute it.
+> A beginner's walkthrough — by the end, you'll have captured your first task, organized it into a project, and watched an agent execute it.
 >
 > 中文版：[getting-started-zh.md](getting-started-zh.md)
 
@@ -38,17 +38,6 @@ That's the whole loop. The rest of this doc just fills in the details.
 
 ## Core concepts
 
-### Project
-A **project** is a bucket for related work. Usually it's backed by a git repo on disk — either a repo you already have, or one Xylocopa clones from a GitHub URL. Agents dispatched under a project run inside that project's working tree.
-
-<p align="center"><img src="getting-started/03-projects.png" alt="Projects list" width="360"></p>
-
-**Don't want to bother with multiple projects?** Totally fine. Create one catch-all project — the author personally uses a `random-things` project for anything that doesn't deserve its own repo (bills, shopping research, reading notes, a one-off script). All tasks live inside it, and you're done. You can always split things out later.
-
-<p align="center"><img src="getting-started/04-new-project.png" alt="New project form" width="320"></p>
-
-To create one, long-press the `+` button in the bottom nav → **New Project**. Only the **Name** is required. If you supply a **Git URL**, Xylocopa clones it; if you leave it blank, you get an empty folder under `~/xylocopa-projects/<name>/`.
-
 ### Task
 A **task** is a single unit of work you want done — "add a contact form", "fix the mobile footer", "pay the electricity bill". A task has a title, an optional description, optionally a project, and some knobs (model, thinking effort, worktree, Auto mode).
 
@@ -60,6 +49,17 @@ The inbox is the **one shared queue across every project**. You capture into it,
 <p align="center"><img src="getting-started/02-inbox.png" alt="Inbox with several queued tasks" width="320"></p>
 
 Why a single inbox across all projects? Because most of the time, when an idea hits you, you don't want to stop and ask "which project does this belong to?" You want to dump it and move on. The inbox lets you do that. Sorting comes later.
+
+### Project
+A **project** is a bucket for related work. Usually it's backed by a git repo on disk — either a repo you already have, or one Xylocopa clones from a GitHub URL. Agents dispatched under a project run inside that project's working tree.
+
+<p align="center"><img src="getting-started/03-projects.png" alt="Projects list" width="360"></p>
+
+**Don't want to bother with multiple projects?** Totally fine. Create one catch-all project — the author personally uses a `random-things` project for anything that doesn't deserve its own repo (bills, shopping research, reading notes, a one-off script). All tasks live inside it, and you're done. You can always split things out later.
+
+<p align="center"><img src="getting-started/04-new-project.png" alt="New project form" width="320"></p>
+
+To create one, long-press the `+` button in the bottom nav → **New Project**. Only the **Name** is required. If you supply a **Git URL**, Xylocopa clones it; if you leave it blank, you get an empty folder under `~/xylocopa-projects/<name>/`.
 
 ### Agent
 An **agent** is a running Claude Code session that Xylocopa manages. When you dispatch a task, an agent is spawned inside the project's directory (or an isolated [git worktree](https://git-scm.com/docs/git-worktree) — see the Worktree toggle), runs the task, and waits for you to review.
@@ -73,33 +73,23 @@ Every conversation with an agent is persisted as a **session** (both the JSONL C
 
 ## Your first five minutes
 
-### 1. Create a project
+### 1. Capture a task
 
-Tap and hold the `+` button in the bottom nav. The **Create** menu opens with three options:
+Tap the `+` button in the bottom nav. The **New Task** sheet slides up.
 
-<p align="center"><img src="getting-started/08-create-menu.png" alt="Create menu — New Agent / New Project / New Task" width="320"></p>
+<p align="center"><img src="getting-started/06-new-task-dispatch-ready.png" alt="New Task sheet" width="320"></p>
 
-Pick **New Project**, give it a name (lowercase letters, numbers, hyphens, underscores, dots), optionally paste a Git URL, and hit **Create Project**.
-
-> **Shortcut**: if you just want a dumping ground, name it `random-things` or `misc` and be done. You can always add more projects later.
-
-### 2. Capture a task
-
-Back on the Inbox tab, tap the `+` button (short press this time — long-press re-opens the Create menu). The **New Task** sheet slides up.
-
-<p align="center"><img src="getting-started/06-new-task-dispatch-ready.png" alt="New Task sheet with a project selected" width="320"></p>
+Fill in what you want done:
 
 - **Title** is optional — if blank, Xylocopa derives one from your description.
-- **Project** — pick one from the dropdown, or leave blank to save to inbox as "unassigned" (triage later).
+- **Project** — pick one from the dropdown, or leave blank to save into the inbox as "unassigned" (triage later). On a fresh install you have no projects yet — leave it blank for now.
 - **Describe what needs to be done** — free-form prompt. This is what the agent sees.
 - **Model** — Opus / Sonnet / Haiku. Opus is the default; pick cheaper for simple tasks.
 - **Effort** — L / M / xH / Max. Higher = more thinking, slower, more expensive.
 - **Worktree** toggle — if on, the agent works in an isolated git worktree so it won't step on anything else you (or other agents) have open.
 - **Auto** toggle — see [Auto mode + safety](#auto-mode--safety) below.
 
-### 3. Decide: dispatch now, or park in the inbox?
-
-The six buttons on the input bar (left → right):
+Then pick how to leave the sheet. The six buttons on the input bar (left → right):
 
 <p align="center"><img src="getting-started/01-input-bar-annotated-en.png" alt="Input-bar buttons, annotated" width="520"></p>
 
@@ -115,9 +105,23 @@ The six buttons on the input bar (left → right):
 The three colored buttons on the right are the three ways to leave this sheet. Pick by intent:
 
 - You're capturing an idea on the go → **⚡ Quick save** (stay here for the next one) or **📥 Save** (one and done).
-- You want the agent to start **right now** → **✈️ Launch agent**.
+- You want the agent to start **right now** → **✈️ Launch agent** (requires a project — see step 2).
 
-### 4. Watch it run
+### 2. Create a project (when you're ready to dispatch)
+
+You can leave tasks in the inbox as long as you want. But to dispatch a task to an agent, it needs a project to live in — the agent works inside that project's directory.
+
+Tap and hold the `+` button in the bottom nav. The **Create** menu opens with three options:
+
+<p align="center"><img src="getting-started/08-create-menu.png" alt="Create menu — New Agent / New Project / New Task" width="320"></p>
+
+Pick **New Project**, give it a name (lowercase letters, numbers, hyphens, underscores, dots), optionally paste a Git URL, and hit **Create Project**.
+
+> **Shortcut**: if you just want a dumping ground, name it `random-things` or `misc` and be done. You can always add more projects later.
+
+Once a project exists, open any inbox task, assign the project, and hit **Dispatch**.
+
+### 3. Watch it run
 
 If you dispatched, you're now in the agent's chat view. You can:
 
