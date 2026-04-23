@@ -2222,6 +2222,8 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
                 cmd_parts.append("--dangerously-skip-permissions")
             if agent.model:
                 cmd_parts += ["--model", agent.model]
+            if agent.worktree:
+                cmd_parts += ["--worktree", agent.worktree]
             if agent.session_id:
                 cmd_parts += ["--resume", agent.session_id]
             claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
@@ -2229,12 +2231,25 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             tmux_session = tmux_session_name(agent.id)
             _preflight_claude_project(project.path)
 
+            # Worktree agents: tmux cwd must be the worktree path so that
+            # Claude encodes its session dir as `...<worktree>` — otherwise
+            # `claude --resume <sid>` looks in the project-root-encoded dir
+            # and can't find the JSONL, exits to bash, and subsequent
+            # messages get typed into the shell instead of the CLI.
+            launch_cwd = project.path
+            if agent.worktree:
+                wt_path = os.path.join(
+                    project.path, ".claude", "worktrees", agent.worktree,
+                )
+                if os.path.isdir(wt_path):
+                    launch_cwd = wt_path
+
             from auth import create_agent_token
             from agent_dispatcher import register_agent_token
             _agent_tok = create_agent_token(db)
             register_agent_token(agent.id, _agent_tok)
             pane_id = _create_tmux_claude_session(
-                tmux_session, project.path, claude_cmd,
+                tmux_session, launch_cwd, claude_cmd,
                 agent_id=agent.id, agent_token=_agent_tok,
             )
 

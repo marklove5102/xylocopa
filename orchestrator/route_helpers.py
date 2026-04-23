@@ -167,10 +167,19 @@ def create_tmux_claude_session(
     if agent_token:
         new_session_cmd[3:3] = ["-e", f"XYLOCOPA_AGENT_TOKEN={agent_token}"]
     _sp.run(new_session_cmd, check=True, capture_output=True, timeout=TMUX_CMD_TIMEOUT)
-    # Get pane ID
+    # Get pane ID. If display-message fails or returns empty (e.g. a
+    # concurrent kill-session wiped the new session between create and
+    # query), raise a clean error so callers don't blindly run
+    # `send-keys -t ''` and surface a misleading subprocess 500.
     pane_result = _sp.run(["tmux", "display-message", "-p", "-t", session_name, "#{pane_id}"],
                           capture_output=True, text=True, timeout=TMUX_CMD_TIMEOUT)
     pane_id = pane_result.stdout.strip()
+    if pane_result.returncode != 0 or not pane_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"tmux session {session_name} disappeared after create "
+                   f"(rc={pane_result.returncode}, stderr={pane_result.stderr.strip()!r})",
+        )
     # Unset problematic env vars, export XY_AGENT_ID (and legacy
     # AHIVE_AGENT_ID alias) for hooks, and disable prompt suggestions so
     # tmux send-keys Enter always reaches onSubmit (avoids autocomplete
