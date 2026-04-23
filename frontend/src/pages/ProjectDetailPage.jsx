@@ -5,7 +5,6 @@ import {
   fetchProjectAgents,
   fetchProjectSessions,
   createAgent,
-  launchTmuxAgent,
   createProject,
   deleteProject as deleteProjectApi,
   archiveProject as archiveProjectApi,
@@ -13,9 +12,6 @@ import {
   starSession,
   unstarSession,
   scanAgents,
-  sendMessage,
-  generateWorktreeName,
-  uploadFile,
   fetchProjectFile,
   refreshClaudeMd,
   refreshClaudeMdStatus,
@@ -26,28 +22,20 @@ import {
   updateProjectSettings,
   rebuildInsights,
   fetchTaskCounts,
-  createTaskV2,
-  dispatchTask,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
-import EffortSelector from "../components/EffortSelector";
-import ModelSelector from "../components/ModelSelector";
 import ProjectRing from "../components/ProjectRing";
 import EmojiPicker from "../components/EmojiPicker";
 import AgentRow from "../components/AgentRow";
-import VoiceRecorder from "../components/VoiceRecorder";
-import SendLaterPicker from "../components/SendLaterPicker";
 import useDraft from "../hooks/useDraft";
-import useVoiceRecorder from "../hooks/useVoiceRecorder";
-import { relativeTime, TIME_SHORT } from "../lib/formatters";
-import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, MODEL_OPTIONS, modelDisplayName, agentBotState } from "../lib/constants";
+import { relativeTime } from "../lib/formatters";
+import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName, agentBotState } from "../lib/constants";
 import FilterTabs from "../components/FilterTabs";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import ClaudeMdDiffModal from "../components/ClaudeMdDiffModal";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
-import { uploadUrl } from "../lib/urls";
 
 const AGENT_TABS = [
   { key: "starred", label: "Starred" },
@@ -439,44 +427,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Starred session IDs (eagerly loaded for agent rows)
   const [starredIds, setStarredIds] = useState(new Set());
 
-  // Agent creation (draft persisted per project)
-  const [prompt, setPrompt, clearPrompt] = useDraft(`project-agent:${name}:prompt`, "");
-  const [model, setModel, clearModel] = useDraft(`project-agent:${name}:model`, MODEL_OPTIONS[0].value);
-  const [effort, setEffort, clearEffort] = useDraft(`project-agent:${name}:effort`, "xhigh");
-  const [worktree, setWorktree] = useState(() => {
-    try { const v = localStorage.getItem(`pref:project-agent:${name}:worktree`); return v !== null ? (v === "" ? null : v) : null; } catch { return null; }
-  });
-  // syncMode removed — all agents use tmux now
-  const [skipPermissions, setSkipPermissions] = useState(() => {
-    try { return localStorage.getItem(`pref:project-agent:${name}:skipPermissions`) !== "false"; } catch { return true; }
-  });
-  const [linkTask, setLinkTask] = useState(true);
-  const clearAllDrafts = () => { clearPrompt(); };
-  const [submitting, setSubmitting] = useState(false);
-  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiAnchorRef = useRef(null);
   const [emojiAnchorRect, setEmojiAnchorRect] = useState(null);
-  const attachmentCacheKey = `draft:project-agent:${name}:attachments`;
-  const [attachments, setAttachments] = useState(() => {
-    try {
-      const cached = localStorage.getItem(attachmentCacheKey);
-      if (cached) {
-        return JSON.parse(cached).map((a) => ({
-          ...a,
-          uploading: false,
-          file: null,
-          previewUrl: a.thumbnailUrl || null,
-        }));
-      }
-    } catch { /* ignore */ }
-    return [];
-  });
-  const [dragOver, setDragOver] = useState(false);
-  const dragCountRef = useRef(0);
-  const fileInputRef = useRef(null);
   const toast = useToast();
-  const textareaRef = useRef(null);
 
   const [refreshing, setRefreshing] = useState(false);
   const [fileModal, setFileModal] = useState(null); // "CLAUDE.md" | "PROGRESS.md" | null
@@ -552,12 +506,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
       // Clean up old localStorage keys that embed the project name
       try {
-        // Draft keys from useDraft (prefixed with "draft:")
-        localStorage.removeItem(`draft:project-agent:${name}:prompt`);
-        localStorage.removeItem(`draft:project-agent:${name}:model`);
-        localStorage.removeItem(`draft:project-agent:${name}:effort`);
-        // Attachment cache (already has "draft:" prefix)
-        localStorage.removeItem(`draft:project-agent:${name}:attachments`);
         // Tab state from useDraft
         localStorage.removeItem(`draft:ui:project:${name}:tab`);
         // Update lastViewed to new name
@@ -585,20 +533,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       setRenaming(false);
     }
   };
-
-  const voice = useVoiceRecorder({
-    onTranscript: (text) => setPrompt((prev) => (prev ? prev + " " + text : text)),
-    onError: (msg) => showToast(msg, "error"),
-    persistKey: name ? `voice:project:${name}` : null,
-  });
-
-  // Auto-expand textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
-  }, [prompt]);
 
   // Fetch project + agents
   const loadData = useCallback(async () => {
@@ -894,161 +828,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     sessions: sessions != null ? sessions.length : 0,
   };
 
-  // Cleanup blob URLs on unmount (only revoke actual blob: URLs, not server URLs)
-  useEffect(() => {
-    return () => {
-      attachments.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); });
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync completed attachments to localStorage cache
-  useEffect(() => {
-    const completed = attachments.filter((a) => !a.uploading && a.uploadedPath);
-    if (completed.length > 0) {
-      const toCache = completed.map((a) => ({
-        id: a.id,
-        uploadedPath: a.uploadedPath,
-        originalName: a.originalName,
-        size: a.size,
-        mimeType: a.mimeType || a.file?.type || null,
-        thumbnailUrl: a.thumbnailUrl || (
-          (a.mimeType || a.file?.type || "").startsWith("image/")
-            ? uploadUrl(a.uploadedPath.split("/").pop())
-            : null
-        ),
-      }));
-      try { localStorage.setItem(attachmentCacheKey, JSON.stringify(toCache)); } catch { /* ignore */ }
-    } else {
-      try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
-    }
-  }, [attachments, attachmentCacheKey]);
-
-  const addFiles = (files) => {
-    for (const file of files) {
-      if (file.size > 50 * 1024 * 1024) {
-        showToast(`${file.name} exceeds 50 MB limit`, "error");
-        continue;
-      }
-      const id = Math.random().toString(36).slice(2, 10);
-      const isImage = file.type.startsWith("image/");
-      const previewUrl = isImage ? URL.createObjectURL(file) : null;
-      setAttachments((prev) => [...prev, {
-        id, file, previewUrl, uploading: true, uploadedPath: null,
-        originalName: file.name, size: file.size, mimeType: file.type,
-      }]);
-      uploadFile(file).then((result) => {
-        setAttachments((prev) => prev.map((a) =>
-          a.id === id ? { ...a, uploading: false, uploadedPath: result.path } : a
-        ));
-      }).catch((err) => {
-        setAttachments((prev) => prev.filter((a) => a.id !== id));
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        showToast(`Upload failed: ${err.message}`, "error");
-      });
-    }
-  };
-
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (files.length > 0) addFiles(files);
-  };
-
-  const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current++; if (e.dataTransfer?.types?.includes("Files")) setDragOver(true); };
-  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current--; if (dragCountRef.current <= 0) { dragCountRef.current = 0; setDragOver(false); } };
-  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const handleDrop = (e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setDragOver(false); const files = Array.from(e.dataTransfer?.files || []); if (files.length > 0) addFiles(files); };
-  const handlePaste = (e) => { const items = e.clipboardData?.items; if (!items) return; const files = []; for (const item of items) { if (item.kind === "file") { const f = item.getAsFile(); if (f) files.push(f); } } if (files.length > 0) { e.preventDefault(); addFiles(files); } };
-
-  const removeAttachment = (id) => {
-    setAttachments((prev) => {
-      const att = prev.find((a) => a.id === id);
-      if (att?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(att.previewUrl);
-      return prev.filter((a) => a.id !== id);
-    });
-  };
-
-  const clearAttachments = () => {
-    setAttachments((prev) => {
-      prev.forEach((a) => { if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl); });
-      return [];
-    });
-    try { localStorage.removeItem(attachmentCacheKey); } catch { /* ignore */ }
-  };
-
-  const buildPromptText = (baseText, atts) => {
-    let msg = baseText;
-    for (const a of atts) {
-      if (a.uploadedPath) msg += `\n[Attached file: ${a.uploadedPath}]`;
-    }
-    return msg;
-  };
-
-  const anyUploading = attachments.some((a) => a.uploading);
-  const hasContent = prompt.trim() || attachments.some((a) => a.uploadedPath);
-
-  // Submit new agent (or launch in tmux if syncMode)
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!prompt.trim() && attachments.length === 0) { showToast("Enter a description.", "error"); return; }
-    if (anyUploading) { showToast("Uploads still in progress...", "error"); return; }
-    const uploaded = attachments.filter((a) => a.uploadedPath);
-    const fullPrompt = buildPromptText(prompt.trim(), uploaded);
-    setSubmitting(true);
-    try {
-      let agentId;
-      if (linkTask) {
-        const taskTitle = (prompt.trim() || "Agent task").slice(0, 120);
-        const task = await createTaskV2({
-          title: taskTitle,
-          description: fullPrompt,
-          project_name: name,
-          model: model || undefined,
-          effort: effort || undefined,
-          skip_permissions: skipPermissions,
-          use_worktree: !!worktree,
-          use_tmux: true,
-          auto_dispatch: false,
-        });
-        const dispatched = await dispatchTask(task.id);
-        agentId = dispatched.agent_id;
-      } else {
-        const agent = await launchTmuxAgent({ project: name, prompt: fullPrompt, model, effort, worktree, skip_permissions: skipPermissions });
-        agentId = agent.id;
-      }
-      clearAllDrafts();
-      clearAttachments();
-      navigate(`/agents/${agentId}`);
-    } catch (err) {
-      showToast("Failed: " + err.message, "error");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // Schedule agent creation for later
-  const handleSchedule = async (scheduledAt) => {
-    if (!prompt.trim() && attachments.length === 0) { showToast("Enter a description.", "error"); return; }
-    if (anyUploading) { showToast("Uploads still in progress...", "error"); return; }
-    const uploaded = attachments.filter((a) => a.uploadedPath);
-    const fullPrompt = buildPromptText(prompt.trim(), uploaded);
-    setShowSchedulePicker(false);
-    setSubmitting(true);
-    try {
-      const agent = await createAgent({ project: name, prompt: fullPrompt, mode: "AUTO", model, effort, worktree, skip_permissions: skipPermissions });
-      await sendMessage(agent.id, fullPrompt, { scheduled_at: scheduledAt });
-      clearAllDrafts();
-      clearAttachments();
-      const when = new Date(scheduledAt);
-      showToast(`Scheduled for ${when.toLocaleTimeString([], TIME_SHORT)}`);
-      navigate(`/agents/${agent.id}`);
-    } catch (err) {
-      showToast("Failed: " + err.message, "error");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   // Activate project
   const handleActivate = async () => {
     setActivating(true);
@@ -1262,195 +1041,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             {activating ? "Activating..." : "Activate"}
           </button>
         </div>
-      )}
-
-      {/* New agent form — active projects only */}
-      {project.active && (
-      <form onSubmit={handleSubmit} className="rounded-xl bg-surface shadow-card p-4">
-        <label className="block text-sm font-medium text-label mb-2">New Agent</label>
-        <div
-          className="glass-bar-nav rounded-[22px] px-3 pt-2 pb-2.5 flex flex-col gap-2 relative mb-5"
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
-          {dragOver && (
-            <div className="absolute inset-0 z-30 rounded-[22px] bg-cyan-500/15 border-2 border-dashed border-cyan-500 flex items-center justify-center pointer-events-none">
-              <span className="text-sm font-medium text-cyan-400">Drop files here</span>
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
-            onPaste={handlePaste}
-            placeholder="What should this agent do?"
-            rows={3}
-            className="w-full min-h-[72px] max-h-[180px] rounded-xl bg-transparent px-3 py-2 text-sm text-heading placeholder-hint resize-none focus:outline-none transition-colors"
-          />
-          {voice.refining && (
-            <div className="px-3 pb-1 text-sm text-cyan-400/80 italic animate-pulse">
-              Refining...
-            </div>
-          )}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {attachments.map((att) => (
-                <div key={att.id} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-elevated text-xs max-w-[140px]">
-                  {att.previewUrl ? (
-                    <img src={att.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
-                  ) : (
-                    <svg className="w-4 h-4 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                    </svg>
-                  )}
-                  <span className="truncate text-label flex-1 min-w-0">{att.originalName}</span>
-                  {att.uploading ? (
-                    <svg className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  ) : (
-                    <button type="button" onClick={() => removeAttachment(att.id)} className="text-dim hover:text-heading shrink-0">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.xml,.log,.zip,.tar,.gz" multiple className="hidden" onChange={handleFileSelect} />
-          <div className="flex items-center gap-1.5 px-1">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
-              className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors bg-elevated hover:bg-hover text-label"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
-            <div className="flex-1 min-w-0 flex items-center justify-end gap-1.5">
-              {voice.recording && voice.remainingSeconds != null && (
-                <span className={`text-xs font-semibold tabular-nums ${voice.remainingSeconds <= 10 ? "text-red-400" : "text-red-500"}`}>
-                  {voice.remainingSeconds >= 60
-                    ? `${Math.floor(voice.remainingSeconds / 60)}:${String(voice.remainingSeconds % 60).padStart(2, "0")}`
-                    : voice.remainingSeconds}
-                </span>
-              )}
-              <VoiceRecorder
-                recording={voice.recording}
-                voiceLoading={voice.voiceLoading}
-                micError={voice.micError}
-                onToggle={voice.toggleRecording}
-              />
-            </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowSchedulePicker((v) => !v)}
-                disabled={submitting || !hasContent || anyUploading}
-                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                  submitting || !hasContent || anyUploading
-                    ? "bg-elevated text-dim cursor-not-allowed"
-                    : "bg-amber-500 hover:bg-amber-400 text-white"
-                }`}
-                title="Send later"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
-                </svg>
-              </button>
-              {showSchedulePicker && (
-                <SendLaterPicker
-                  title="Schedule At"
-                  onSelect={handleSchedule}
-                  onClose={() => setShowSchedulePicker(false)}
-                />
-              )}
-            </div>
-            <button
-              type="submit"
-              disabled={submitting || !hasContent || anyUploading}
-              className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                submitting || !hasContent || anyUploading
-                  ? "bg-elevated text-dim cursor-not-allowed"
-                  : "bg-cyan-500 hover:bg-cyan-400 text-white"
-              }`}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-[1fr_max-content] gap-y-2 gap-x-2 items-center">
-          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-            <ModelSelector value={model} onChange={setModel} />
-            <EffortSelector value={effort} onChange={setEffort} />
-          </div>
-          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
-            <div
-              role="switch"
-              aria-checked={skipPermissions}
-              onClick={() => { const next = !skipPermissions; setSkipPermissions(next); try { localStorage.setItem(`pref:project-agent:${name}:skipPermissions`, String(next)); } catch {} }}
-              className={`relative w-9 h-[20px] rounded-full transition-colors ${skipPermissions ? "bg-amber-500" : "bg-elevated"}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${skipPermissions ? "translate-x-[16px]" : ""}`} />
-            </div>
-            <span className="text-sm text-label">Auto</span>
-          </label>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <button
-              type="button"
-              onClick={async () => {
-                if (worktree) { setWorktree(null); try { localStorage.setItem(`pref:project-agent:${name}:worktree`, ""); } catch {} return; }
-                setWorktree("...");
-                const name = prompt.trim() ? await generateWorktreeName(prompt) : null;
-                const val = name || "auto";
-                setWorktree(val);
-                try { localStorage.setItem(`pref:project-agent:${name}:worktree`, val); } catch {}
-              }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                worktree
-                  ? "bg-purple-500/15 text-purple-400 ring-1 ring-purple-500/30"
-                  : "bg-elevated text-dim hover:text-label"
-              }`}
-              title={worktree ? "Disable worktree" : "Enable worktree"}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-              </svg>
-              Worktree
-            </button>
-            {worktree && (
-              <input
-                type="text"
-                value={worktree === "auto" || worktree === "..." ? "" : worktree}
-                onChange={(e) => { const v = e.target.value || "auto"; setWorktree(v); try { localStorage.setItem(`pref:project-agent:${name}:worktree`, v); } catch {} }}
-                className="flex-1 min-w-0 rounded-lg bg-elevated px-2.5 py-1.5 text-xs text-heading placeholder:text-faint outline-none focus:ring-1 focus:ring-purple-500/40"
-                placeholder={worktree === "..." ? "generating..." : "worktree name"}
-              />
-            )}
-          </div>
-          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
-            <div
-              role="switch"
-              aria-checked={linkTask}
-              onClick={() => setLinkTask(!linkTask)}
-              className={`relative w-9 h-[20px] rounded-full transition-colors ${linkTask ? "bg-cyan-500" : "bg-elevated"}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${linkTask ? "translate-x-[16px]" : ""}`} />
-            </div>
-            <span className="text-sm text-label">Task</span>
-          </label>
-        </div>
-      </form>
       )}
 
       {/* Agent tabs */}
