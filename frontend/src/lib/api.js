@@ -513,7 +513,7 @@ export async function generateWorktreeName(prompt) {
 // ---- Session viewing time statistics ----
 
 export const fetchViewingStatsWeek = (days = 7) =>
-  request(`/api/stats/viewing/week?days=${days}`);
+  request(`/api/stats/viewing/week?days=${days}&tz_offset=${new Date().getTimezoneOffset()}`);
 
 export const fetchViewingStatsDay = (date) =>
-  request(`/api/stats/viewing/day?date=${encodeURIComponent(date)}`);
+  request(`/api/stats/viewing/day?date=${encodeURIComponent(date)}&tz_offset=${new Date().getTimezoneOffset()}`);
