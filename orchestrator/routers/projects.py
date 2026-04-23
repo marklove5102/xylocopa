@@ -728,10 +728,19 @@ ALWAYS respond in English regardless of the source language.
 Tone: playful, casual, a little cheeky. Like a friend recapping your day,
 not a status report. Past tense. 4-6 words, ~25 characters.
 
-If there are zero recent agents to summarize, respond with: snoozing
-Otherwise, ALWAYS describe the most recent real user task — never default
-to "snoozing" just because task names are in another language. Translate
-whatever the agent was working on into a playful English recap.
+Focus on the single most-recent agent in the input (the one at the top of
+the list). Its "name" field IS the task description — summarize that as
+a playful English recap, even if:
+  • the agent is IDLE (it just finished a turn and is waiting — the task
+    is still the thing that was being worked on)
+  • the week stats are all zero (those count terminal tasks only, and an
+    in-progress task won't show up there yet)
+  • the task name is in Chinese or another language (translate it)
+
+Only respond "snoozing" when the top agent's last_active is more than a
+couple of days old AND nothing else is happening. If the top agent is
+"Xs ago", "Xm ago", or "Xh ago", you MUST describe its task — never
+snooze a fresh agent.
 
 Good hints (playful past tense):
   "polished those project cards"
@@ -739,13 +748,13 @@ Good hints (playful past tense):
   "chased a sneaky null pointer"
   "shipped dark mode, finally"
   "rabbit-holed on the picker"
+  "added a new course page"
   "snoozing"
 
-Bad hints (avoid these — too formal or vague):
+Bad hints (avoid — too formal or incorrectly giving up):
   "Optimized the project list visuals"
   "Recent work has paused for reflection"
-  "Project on hold"
-  "Working on the emoji picker"
+  "snoozing" (when the top agent was active minutes ago)
 
 Then pick an emoji that matches the actual work:
 - code / fixing: 🔧 🛠 🐛
@@ -754,6 +763,7 @@ Then pick an emoji that matches the actual work:
 - shipping / done: 🚀 🎉 🏆
 - iterating: 🌀 🧩
 - complex / hard: 🤯
+- adding content / writing: 📝 📄
 - snoozing: 💤
 - (use any other relevant emoji you know)
 
