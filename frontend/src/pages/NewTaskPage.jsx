@@ -65,6 +65,18 @@ export default function NewTaskPage({ embedded = false }) {
     if (el) el.style.transform = 'translateY(100%)';
   }, []);
 
+  // When opened from a project detail page, default the project field to
+  // that project — overrides the persisted draft so the sheet reflects the
+  // user's current context.
+  useEffect(() => {
+    const bgPath = location.state?.backgroundLocation?.pathname;
+    if (!bgPath) return;
+    const m = bgPath.match(/^\/projects\/([^/]+)/);
+    if (m) {
+      try { setProject(decodeURIComponent(m[1])); } catch { setProject(m[1]); }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Slide sheet up + fade in backdrop
   useEffect(() => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
