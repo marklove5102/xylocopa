@@ -665,6 +665,12 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 asyncio.ensure_future(
                     ad.dispatch_pending_message(ctx.agent_id, delay=0)
                 )
+            # Fire-and-forget resume hint refresh for the project this
+            # agent belongs to.  Stop hook is the authoritative "turn is
+            # done" signal, so it's the right moment to re-summarize.
+            if _sh_project and _sh_agent and not _sh_agent.is_subagent:
+                from routers.projects import _refresh_resume_hint
+                asyncio.ensure_future(_refresh_resume_hint(_sh_project))
 
         logger.debug("Agent %s: sync_import result=%s, inserted=%d, pointer now=%d",
                      ctx.agent_id[:8], "new_turns", _actually_inserted, ctx.last_turn_count)

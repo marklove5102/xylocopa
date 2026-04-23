@@ -719,7 +719,6 @@ _SECTION_DATE_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b", re.MULTILINE)
 # Resume hint (LLM-generated mood + recap on project card)
 # ===========================================================================
 
-RESUME_HINT_STALE_MINUTES = 15  # reuse cached hint if younger than this
 _resume_hint_in_flight: set[str] = set()  # dedupe concurrent refreshes
 
 _RESUME_SYSTEM = """You describe what a programmer was last working on in a project.
@@ -921,25 +920,6 @@ async def _refresh_resume_hint(project_name: str):
         _resume_hint_in_flight.discard(project_name)
 
 
-def _resume_hint_is_stale(proj: Project, last_activity) -> bool:
-    if proj.resume_hint_at is None:
-        return True
-    hint_at = proj.resume_hint_at
-    if hint_at.tzinfo is None:
-        hint_at = hint_at.replace(tzinfo=timezone.utc)
-    # Stale if older than window, OR new activity since the hint was generated
-    age_min = (datetime.now(timezone.utc) - hint_at).total_seconds() / 60
-    if age_min > RESUME_HINT_STALE_MINUTES:
-        return True
-    if last_activity:
-        la = last_activity
-        if la.tzinfo is None:
-            la = la.replace(tzinfo=timezone.utc)
-        if la > hint_at:
-            return True
-    return False
-
-
 # ===========================================================================
 # Routes
 # ===========================================================================
@@ -1037,13 +1017,9 @@ async def list_projects(db: Session = Depends(get_db)):
     return results
 
 
-from fastapi import BackgroundTasks
-
-
 @router.get("/api/projects/folders")
 async def list_all_folders(
     request: Request,
-    background_tasks: BackgroundTasks,
     tz_offset: int = Query(default=0, description="Client timezone offset in minutes"),
     db: Session = Depends(get_db),
 ):
@@ -1107,11 +1083,6 @@ async def list_all_folders(
             "resume_emoji": proj.resume_emoji if proj else None,
             "resume_hint": proj.resume_hint if proj else None,
         }
-
-        # Schedule background refresh of resume hint when stale.
-        # Only for active projects that have any agent activity at all.
-        if proj and active and agent_count > 0 and _resume_hint_is_stale(proj, last_activity):
-            background_tasks.add_task(_refresh_resume_hint, proj.name)
 
         # Richer stats for active projects
         if active:
