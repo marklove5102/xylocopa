@@ -721,40 +721,26 @@ _SECTION_DATE_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b", re.MULTILINE)
 
 _resume_hint_in_flight: set[str] = set()  # dedupe concurrent refreshes
 
-_RESUME_SYSTEM = """You describe what a programmer was last working on in a project.
+_RESUME_SYSTEM = """You read a short slice of an agent's recent conversation and
+summarize what was just being worked on.
 
 ALWAYS respond in English regardless of the source language.
 
 Tone: playful, casual, a little cheeky. Like a friend recapping your day,
 not a status report. Past tense. 4-6 words, ~25 characters.
 
-Focus on the single most-recent agent in the input (the one at the top of
-the list). Its "name" field IS the task description — summarize that as
-a playful English recap, even if:
-  • the agent is IDLE (it just finished a turn and is waiting — the task
-    is still the thing that was being worked on)
-  • the week stats are all zero (those count terminal tasks only, and an
-    in-progress task won't show up there yet)
-  • the task name is in Chinese or another language (translate it)
-
-Only respond "snoozing" when the top agent's last_active is more than a
-couple of days old AND nothing else is happening. If the top agent is
-"Xs ago", "Xm ago", or "Xh ago", you MUST describe its task — never
-snooze a fresh agent.
-
-Good hints (playful past tense):
+Good hints:
   "polished those project cards"
   "wrestled COLMAP into shape"
   "chased a sneaky null pointer"
   "shipped dark mode, finally"
   "rabbit-holed on the picker"
   "added a new course page"
-  "snoozing"
 
-Bad hints (avoid — too formal or incorrectly giving up):
+Bad hints (avoid — too formal, too long, or vague):
   "Optimized the project list visuals"
-  "Recent work has paused for reflection"
-  "snoozing" (when the top agent was active minutes ago)
+  "Working on the emoji picker"
+  "Status: in progress"
 
 Then pick an emoji that matches the actual work:
 - code / fixing: 🔧 🛠 🐛
@@ -764,88 +750,44 @@ Then pick an emoji that matches the actual work:
 - iterating: 🌀 🧩
 - complex / hard: 🤯
 - adding content / writing: 📝 📄
-- snoozing: 💤
+- quiet: 💤
 - (use any other relevant emoji you know)
 
 Avoid frustrated faces (no 😩 😮‍💨 😤)."""
 
 
-def _format_activity_age(dt) -> str:
-    if dt is None:
-        return "never"
-    now = datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    delta = now - dt
-    secs = int(delta.total_seconds())
-    if secs < 60: return f"{secs}s ago"
-    if secs < 3600: return f"{secs // 60}m ago"
-    if secs < 86400: return f"{secs // 3600}h ago"
-    return f"{secs // 86400}d ago"
-
-
-def _gather_resume_signals(project_name: str, db: Session) -> dict | None:
-    """Return a compact snapshot of recent activity, or None if too quiet to summarize."""
-    proj = db.get(Project, project_name)
-    if not proj or proj.archived:
-        return None
-
-    recent_agents = (
-        db.query(Agent)
-        .filter(Agent.project == project_name, Agent.is_subagent == False)  # noqa: E712
-        .order_by(Agent.last_message_at.desc().nullslast())
-        .limit(10)
+def _collect_recent_turns(agent_id: str, db: Session, limit: int = 8) -> list[str] | None:
+    """Pull the last `limit` user+agent turns as short transcript lines, or None."""
+    msgs = (
+        db.query(Message)
+        .filter(
+            Message.agent_id == agent_id,
+            Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
+            Message.content != "",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
         .all()
     )
-    # Drop triage/automation agents (their "names" are the actual system prompt).
-    # Real user-task agents have short, descriptive names.
-    def _is_meta(a):
-        n = a.name or ""
-        return n.startswith("You are ") or len(n) > 200
-    recent_agents = [a for a in recent_agents if not _is_meta(a)][:5]
-    if not recent_agents:
+    if not msgs:
         return None
-
-    # Skip projects that haven't been touched in 3+ days — a hint there is noise
-    from datetime import timedelta
-    most_recent = recent_agents[0].last_message_at
-    if most_recent is None:
-        return None
-    if most_recent.tzinfo is None:
-        most_recent = most_recent.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) - most_recent > timedelta(days=3):
-        return None
-
-    agents_data = []
-    for a in recent_agents:
-        agents_data.append({
-            "name": (a.name or "")[:80],
-            "status": a.status.value if hasattr(a.status, "value") else str(a.status),
-            "last_active": _format_activity_age(a.last_message_at),
-        })
-
-    # Task activity (last 7 days, terminal only)
-    from datetime import timedelta
-    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    task_rows = (
-        db.query(Task.status, func.count(Task.id), func.sum(Task.attempt_number - 1))
-        .filter(Task.project_name == project_name, Task.completed_at >= week_ago)
-        .group_by(Task.status).all()
-    )
-    by_status = {s.value if hasattr(s, "value") else str(s): (int(c), int(r or 0)) for s, c, r in task_rows}
-    completed = by_status.get("COMPLETE", (0, 0))[0]
-    failed = sum(by_status.get(s, (0, 0))[0] for s in ("FAILED", "TIMEOUT"))
-    retries = sum(r for _, r in by_status.values())
-
-    return {
-        "project": project_name,
-        "week": {"completed": completed, "failed": failed, "retries": retries},
-        "recent_agents": agents_data,
-    }
+    msgs.reverse()  # chronological
+    lines = []
+    for m in msgs:
+        text = (m.content or "").strip()
+        if not text:
+            continue
+        # Squash whitespace; cap per-line to keep total prompt small
+        text = " ".join(text.split())
+        if len(text) > 400:
+            text = text[:400] + "…"
+        role = "user" if m.role == MessageRole.USER else "agent"
+        lines.append(f"{role}: {text}")
+    return lines or None
 
 
-async def _call_llm_for_hint(signals: dict) -> tuple[str | None, str | None]:
-    """Call gpt-4o-mini with structured output. Returns (emoji, hint) or (None, None)."""
+async def _call_llm_for_hint(transcript: list[str]) -> tuple[str | None, str | None]:
+    """Call gpt-4o-mini to summarize a short transcript. Returns (emoji, hint) or (None, None)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None, None
@@ -856,14 +798,9 @@ async def _call_llm_for_hint(signals: dict) -> tuple[str | None, str | None]:
         return None, None
 
     user_prompt = (
-        f"Project: {signals['project']}\n\n"
-        f"Last 7d: {signals['week']['completed']} completed, "
-        f"{signals['week']['failed']} failed, {signals['week']['retries']} retries\n\n"
-        "Recent agents (newest first):\n"
-        + "\n".join(
-            f"- {a['name']!r} — {a['status']}, {a['last_active']}"
-            for a in signals["recent_agents"]
-        )
+        "Here are the last few turns of an agent's conversation. "
+        "Summarize what was just worked on.\n\n"
+        + "\n\n".join(transcript)
     )
 
     client = AsyncOpenAI(api_key=api_key)
@@ -899,25 +836,35 @@ async def _call_llm_for_hint(signals: dict) -> tuple[str | None, str | None]:
         data = json.loads(resp.choices[0].message.content)
         return data.get("emoji"), data.get("hint")
     except Exception as e:
-        logger.warning("resume hint LLM failed for %s: %s", signals["project"], e)
+        logger.warning("resume hint LLM failed: %s", e)
         return None, None
 
 
-async def _refresh_resume_hint(project_name: str):
-    """Background task: regenerate the resume hint for one project."""
-    if project_name in _resume_hint_in_flight:
+async def _refresh_resume_hint(agent_id: str):
+    """Background task: summarize the agent's recent turns into its project's resume hint.
+
+    Triggered by sync_engine right after a stop_hook_summary is imported.
+    """
+    if agent_id in _resume_hint_in_flight:
         return
-    _resume_hint_in_flight.add(project_name)
+    _resume_hint_in_flight.add(agent_id)
     try:
         db = SessionLocal()
         try:
-            signals = _gather_resume_signals(project_name, db)
-            if signals is None:
+            agent = db.get(Agent, agent_id)
+            if agent is None or agent.is_subagent or not agent.project:
                 return
-            emoji, hint = await _call_llm_for_hint(signals)
+            # Skip meta/triage agents (their "name" is a long system prompt)
+            name = agent.name or ""
+            if name.startswith("You are ") or len(name) > 200:
+                return
+            transcript = _collect_recent_turns(agent_id, db)
+            if not transcript:
+                return
+            emoji, hint = await _call_llm_for_hint(transcript)
             if not hint:
                 return
-            proj = db.get(Project, project_name)
+            proj = db.get(Project, agent.project)
             if proj is None:
                 return
             proj.resume_emoji = (emoji or "")[:16] or None
@@ -927,7 +874,7 @@ async def _refresh_resume_hint(project_name: str):
         finally:
             db.close()
     finally:
-        _resume_hint_in_flight.discard(project_name)
+        _resume_hint_in_flight.discard(agent_id)
 
 
 # ===========================================================================
