@@ -2326,6 +2326,30 @@ async def search_project_files(
     ql = q.lower()
     deadline = _time.monotonic() + _SEARCH_TIME_BUDGET_SEC
 
+    # Wildcard handling: glob-style * and ? compiled to a regex once.
+    has_wildcard = "*" in q or "?" in q
+    pattern_re = None
+    if has_wildcard and q.strip("*?"):
+        # Translate glob to regex: escape literal chars, then * → .*?, ? → .
+        parts = q.replace("?", "*").split("*")  # split on either wildcard
+        # Re-derive piece boundaries handling both wildcards
+        import re as _re
+        regex_parts = []
+        i = 0
+        for ch in q:
+            if ch == "*":
+                regex_parts.append(".*?")
+            elif ch == "?":
+                regex_parts.append(".")
+            else:
+                regex_parts.append(_re.escape(ch))
+        pattern_re = _re.compile("".join(regex_parts), _re.IGNORECASE)
+
+    def _matches(text: str) -> bool:
+        if pattern_re is not None:
+            return pattern_re.search(text) is not None
+        return ql in text.lower()
+
     name_matches: list[str] = []
     content_matches: list[dict] = []
     truncated = False
@@ -2352,7 +2376,7 @@ async def search_project_files(
                 continue
 
             # File-name match (any file, not just text)
-            if ql in rel.lower() and len(name_matches) < limit:
+            if _matches(rel) and len(name_matches) < limit:
                 name_matches.append(rel)
 
             # Content match (text-like files only, size-limited)
@@ -2369,13 +2393,19 @@ async def search_project_files(
                 with open(full, "r", encoding="utf-8", errors="replace") as f:
                     matches = []
                     for i, line in enumerate(f, 1):
-                        if ql in line.lower():
+                        if _matches(line):
                             text = line.rstrip("\n")
                             if len(text) > 240:
                                 # Center snippet around first match
-                                idx = text.lower().find(ql)
+                                if pattern_re is not None:
+                                    m = pattern_re.search(text)
+                                    idx, mlen = (m.start(), m.end() - m.start()) if m else (0, 0)
+                                else:
+                                    idx, mlen = text.lower().find(ql), len(q)
+                                if idx < 0:
+                                    idx, mlen = 0, 0
                                 start = max(0, idx - 80)
-                                end = min(len(text), idx + len(q) + 160)
+                                end = min(len(text), idx + mlen + 160)
                                 text = ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(line) else "")
                             matches.append({"line": i, "text": text})
                             if len(matches) >= 3:

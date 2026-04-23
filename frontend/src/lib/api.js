@@ -359,11 +359,12 @@ export const regenerateAgentInsights = (agentId) =>
   request(`/api/agents/${agentId}/regenerate-insights`, { method: "POST" });
 
 // --- Message search ---
-export const searchMessages = (query, { project, role, limit } = {}) => {
+export const searchMessages = (query, { project, role, limit, includeSubagents } = {}) => {
   const params = new URLSearchParams({ q: query });
   if (project) params.set("project", project);
   if (role) params.set("role", role);
   if (limit) params.set("limit", String(limit));
+  if (includeSubagents === false) params.set("include_subagents", "false");
   return request(`/api/messages/search?${params}`);
 };
 

@@ -841,7 +841,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     setMessageSearchLoading(true);
     setFileSearchLoading(true);
     searchTimerRef.current = setTimeout(() => {
-      searchMessages(q, { project: name })
+      searchMessages(q, { project: name, includeSubagents: false })
         .then((data) => setMessageResults(data))
         .catch((err) => { console.error("searchMessages failed:", err); setMessageResults(null); })
         .finally(() => setMessageSearchLoading(false));
@@ -863,12 +863,22 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   ), [agents, agentTab]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return tabFiltered;
+    const raw = search.trim();
+    if (!raw) return tabFiltered;
+    const hasWildcard = raw.includes("*") || raw.includes("?");
+    let predicate;
+    if (hasWildcard) {
+      // Convert glob to case-insensitive regex (* → .*?, ? → .)
+      const escaped = raw.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      const reSrc = escaped.replace(/\*/g, ".*?").replace(/\?/g, ".");
+      const re = new RegExp(reSrc, "i");
+      predicate = (s) => typeof s === "string" && re.test(s);
+    } else {
+      const q = raw.toLowerCase();
+      predicate = (s) => typeof s === "string" && s.toLowerCase().includes(q);
+    }
     return tabFiltered.filter((a) =>
-      a.id?.toLowerCase().includes(q) ||
-      a.name?.toLowerCase().includes(q) ||
-      a.last_message_preview?.toLowerCase().includes(q)
+      predicate(a.id) || predicate(a.name) || predicate(a.last_message_preview)
     );
   }, [tabFiltered, search]);
 

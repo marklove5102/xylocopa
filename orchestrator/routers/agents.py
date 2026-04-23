@@ -1626,43 +1626,77 @@ async def search_messages(
     project: str | None = None,
     role: MessageRole | None = None,
     limit: int = 50,
+    include_subagents: bool = True,
     db: Session = Depends(get_db),
 ):
-    """Full-text search across all message content."""
+    """Full-text search across all message content.
+
+    Supports glob-style wildcards * and ? in q. Without wildcards, performs
+    a substring (contains) match. With wildcards, the pattern controls
+    anchoring (e.g. `foo*` = starts-with, `*foo` = ends-with, `*foo*` = contains).
+    """
     if len(q) < 2:
         raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
     if limit > 200:
         limit = 200
 
-    # Escape LIKE wildcards in user input
+    has_wildcard = "*" in q or "?" in q
+    # Always escape SQL LIKE meta-chars in the raw input
     safe_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if has_wildcard:
+        # Convert glob wildcards to LIKE wildcards (after escaping above).
+        # Auto-wrap with % so wildcards add flexibility without forcing
+        # anchoring — `fetch*Project` means "contains fetch...Project anywhere".
+        converted = safe_q.replace("*", "%").replace("?", "_")
+        like_pattern = converted if converted.startswith("%") else f"%{converted}"
+        if not like_pattern.endswith("%"):
+            like_pattern = f"{like_pattern}%"
+    else:
+        like_pattern = f"%{safe_q}%"
 
     query = (
         db.query(Message, Agent.name, Agent.project)
         .join(Agent, Message.agent_id == Agent.id)
         .filter(or_(
-            Message.content.ilike(f"%{safe_q}%", escape="\\"),
-            Agent.id.ilike(f"%{safe_q}%", escape="\\"),
-            Agent.name.ilike(f"%{safe_q}%", escape="\\"),
+            Message.content.ilike(like_pattern, escape="\\"),
+            Agent.id.ilike(like_pattern, escape="\\"),
+            Agent.name.ilike(like_pattern, escape="\\"),
         ))
     )
     if project:
         query = query.filter(Agent.project == project)
     if role:
         query = query.filter(Message.role == role)
+    if not include_subagents:
+        query = query.filter(Agent.is_subagent == False)  # noqa: E712
 
     total = query.count()
     rows = query.order_by(Message.created_at.desc()).limit(limit).all()
+
+    # Build a snippet matcher: regex when wildcards present, plain substring otherwise
+    if has_wildcard:
+        import re as _re
+        pattern_re = _re.compile(
+            ".*?".join(_re.escape(part) for part in q.replace("?", "*").split("*")),
+            _re.IGNORECASE,
+        ) if q.strip("*?") else None
+    else:
+        pattern_re = None
 
     results = []
     for msg, agent_name, agent_project in rows:
         # Build snippet: ~80 chars before and after first match
         content = msg.content or ""
-        lower = content.lower()
-        idx = lower.find(q.lower())
+        idx, match_len = -1, len(q)
+        if pattern_re is not None:
+            m = pattern_re.search(content)
+            if m:
+                idx, match_len = m.start(), max(1, m.end() - m.start())
+        else:
+            idx = content.lower().find(q.lower())
         if idx >= 0:
             start = max(0, idx - 80)
-            end = min(len(content), idx + len(q) + 80)
+            end = min(len(content), idx + match_len + 80)
             snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
         else:
             snippet = content[:160] + ("..." if len(content) > 160 else "")
