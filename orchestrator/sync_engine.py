@@ -148,7 +148,8 @@ def _notify_interactive(ad, agent, new_turns):
 # User message promotion — single path (Phase 3a)
 # ---------------------------------------------------------------------------
 
-def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, meta, kind, jsonl_ts=None):
+def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, meta, kind, jsonl_ts=None,
+                                 deferred_promotions: list | None = None):
     """Match a JSONL user turn to a queued web message, or create a CLI message.
 
     Strategy:
@@ -158,6 +159,12 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
     3. No match → create new CLI-sourced message
 
     Returns Message to insert, or None if already handled (dedup/promotion).
+
+    When a web message is promoted, the id is appended to
+    ``deferred_promotions`` (if provided) so the caller can flush the
+    display writer AFTER ``db.commit()``. This keeps the display_writer
+    protocol (commit → then flush) intact; an inline call here would open
+    a second session that sees uncommitted data.
     """
     from content_matcher import ContentMatcher
 
@@ -216,9 +223,12 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
             logger.info("Agent %s: promoted web msg %s → uuid=%s (method=%s)",
                         ctx.agent_id[:8], web_msg.id, jsonl_uuid, method)
 
-            # Update display file with delivery status (fixes stale delivered_at)
-            from display_writer import update_last as _update_display
-            _update_display(ctx.agent_id, web_msg.id)
+            # Defer the display-file write until after the caller's commit.
+            # Writing inline would open a second session that sees the
+            # uncommitted promotion and writes stale state (resolves
+            # ARCHITECTURE_REFACTOR.md §7 — the sole pre-commit violation).
+            if deferred_promotions is not None:
+                deferred_promotions.append(web_msg.id)
 
             # Emit WS delivery event
             if web_msg.delivered_at:
@@ -476,6 +486,10 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _saw_interrupt = False
         _saw_stop_hook = False
         _saw_rate_limit = False
+        # Accumulate message_ids promoted (queued→delivered) this cycle so
+        # we can call promote_to_delivered AFTER db.commit(). Writing inline
+        # would violate the display_writer "commit → then flush" contract.
+        _deferred_promotions: list[str] = []
         for i, (role, content, *rest) in enumerate(new_turns):
             seq = ctx.last_turn_count + i
             meta = rest[0] if rest else None
@@ -490,6 +504,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             if role == "user":
                 msg = _promote_or_create_user_msg(
                     db, ctx, content, jsonl_uuid, seq, meta, kind, jsonl_ts,
+                    deferred_promotions=_deferred_promotions,
                 )
                 if msg is None:
                     continue
@@ -548,6 +563,9 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 "Commit failed for agent %s, will retry next cycle: %s",
                 ctx.agent_id[:8], exc,
             )
+            # Drop deferred promotions — the rows never committed, so the
+            # display file must not reflect them.
+            _deferred_promotions.clear()
             # DO NOT advance pointer — next cycle retries, UUID dedup
             # skips already-committed turns
             return "commit_error"
@@ -560,6 +578,13 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         # Flush new messages to display file
         from display_writer import flush_agent as _flush_display
         _flush_display(ctx.agent_id)
+
+        # Flush deferred promotions — post-commit so the display_writer
+        # session sees the new delivered_at / status values.
+        if _deferred_promotions:
+            from display_writer import promote_to_delivered as _promote_display
+            for _promoted_id in _deferred_promotions:
+                _promote_display(ctx.agent_id, _promoted_id)
 
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.

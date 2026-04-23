@@ -2889,9 +2889,10 @@ Here are the day's conversations (with timestamps):
                         agent.id, due_msg.id,
                         json.loads(due_msg.meta_json),
                     ))
-                # Flush to display file so queued message appears immediately
-                from display_writer import flush_agent as _sched_flush
-                _sched_flush(agent.id)
+                # Write queued partition entry — display_seq stays NULL
+                # until UserPromptSubmit triggers promote_to_delivered.
+                from display_writer import flush_queued_entry as _sched_flush_queued
+                _sched_flush_queued(agent.id, due_msg.id)
             else:
                 self._fail_message(due_msg, "Failed to send via tmux")
                 logger.warning(

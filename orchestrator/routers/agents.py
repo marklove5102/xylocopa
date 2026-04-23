@@ -18,7 +18,7 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from config import CC_MODEL, CLAUDE_HOME, DISPLAY_DIR, VALID_MODELS
+from config import CC_MODEL, CLAUDE_HOME, DISPLAY_DIR, QUEUED_DB_FALLBACK, VALID_MODELS
 from database import SessionLocal, get_db
 from models import (
     Agent, AgentInsightSuggestion, AgentMode, AgentStatus,
@@ -2507,18 +2507,20 @@ async def get_agent_display(
     empty = DisplayResponse(messages=[], next_offset=0, queued=[], has_earlier=False)
 
     if not os.path.isfile(display_path):
-        # Still return queued messages even if no display file yet
-        queued = (
-            db.query(Message)
-            .filter(
-                Message.agent_id == agent_id,
-                Message.source.in_(("web", "plan_continue", "task")),
-                Message.display_seq.is_(None),
+        # Still return queued messages even if no display file yet — gated
+        # behind XY_QUEUED_FALLBACK while Phase 2A writer sites stabilise.
+        if QUEUED_DB_FALLBACK:
+            queued = (
+                db.query(Message)
+                .filter(
+                    Message.agent_id == agent_id,
+                    Message.source.in_(("web", "plan_continue", "task")),
+                    Message.display_seq.is_(None),
+                )
+                .order_by(Message.created_at.asc())
+                .all()
             )
-            .order_by(Message.created_at.asc())
-            .all()
-        )
-        empty.queued = [_apply_display_content(m) for m in queued]
+            empty.queued = [_apply_display_content(m) for m in queued]
         return empty
 
     has_earlier = False
@@ -2576,12 +2578,13 @@ async def get_agent_display(
             displayed.append(entry)
         # else: malformed — skip silently
 
-    # Fallback to DB query when the file has no queued partition yet. Phase
-    # 2A will gate this behind a feature flag; Phase 1 keeps dual-path so
-    # nothing regresses before writer callsites migrate.
+    # Fallback to DB query when the file has no queued partition yet, gated
+    # behind XY_QUEUED_FALLBACK. Phase 2A writer sites always emit queued
+    # entries; the DB query exists as a safety net for this release and is
+    # removed in Phase 3 (together with the flag).
     if queued_from_file:
         queued_out: list = queued_from_file
-    else:
+    elif QUEUED_DB_FALLBACK:
         queued_rows = (
             db.query(Message)
             .filter(
@@ -2593,6 +2596,8 @@ async def get_agent_display(
             .all()
         )
         queued_out = [_apply_display_content(m) for m in queued_rows]
+    else:
+        queued_out = []
 
     return DisplayResponse(
         messages=displayed,
@@ -2752,9 +2757,10 @@ async def send_agent_message(
                         import json as _json
                         from websocket import emit_metadata_update
                         ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
-                # Flush to display file so queued message appears immediately
-                from display_writer import flush_agent as _msg_flush
-                _msg_flush(agent.id)
+                # Write queued partition entry. display_seq stays NULL until
+                # UserPromptSubmit triggers promote_to_delivered.
+                from display_writer import flush_queued_entry as _msg_flush_queued
+                _msg_flush_queued(agent.id, msg.id)
                 logger.info("Message %s queued to agent %s via tmux pane %s", msg.id, agent.id, agent.tmux_pane)
                 return msg
 
@@ -2786,9 +2792,10 @@ async def send_agent_message(
                     import json as _json
                     from websocket import emit_metadata_update
                     ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
-            # No flush_agent here — PENDING messages stay out of the display
-            # file until dispatched (QUEUED) by the stop hook, so they get
-            # display_seq after the preceding agent response.
+            # Write queued partition entry so the bubble shows immediately.
+            # display_seq is only allocated at delivery via promote_to_delivered.
+            from display_writer import flush_queued_entry as _busy_flush_queued
+            _busy_flush_queued(agent.id, msg.id)
             logger.info("Message %s stored PENDING for busy agent %s (generating %s) — stop hook will dispatch",
                         msg.id, agent.id, agent.generating_msg_id)
             return msg
@@ -2831,6 +2838,9 @@ async def send_agent_message(
             import json as _json
             from websocket import emit_metadata_update
             ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
+    # Write queued partition entry — scheduled or tmux-less PENDING paths.
+    from display_writer import flush_queued_entry as _pending_flush_queued
+    _pending_flush_queued(agent.id, msg.id)
     logger.info("Message %s pending for agent %s", msg.id, agent.id)
     return msg
 
@@ -2849,25 +2859,22 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
 async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Cancel or delete a message.
+    """Soft-cancel a pre-delivery message.
 
-    PENDING/QUEUED → soft-cancel (status → CANCELLED, bubble greyed in place).
-    CANCELLED       → hard delete (row removed from DB).
+    Only PENDING/QUEUED messages can be cancelled. The DB row is marked
+    CANCELLED and a `_deleted` tombstone is appended to the display file
+    so the queued bubble disappears immediately. Hard-delete is no longer
+    needed — the tombstone makes the message vanish from the UI.
     """
     msg = db.get(Message, message_id)
     if not msg or msg.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.status == MessageStatus.CANCELLED:
-        db.delete(msg)
-        db.commit()
-        logger.info("Message %s hard-deleted for agent %s", message_id, agent_id)
-        from websocket import emit_message_update
-        await emit_message_update(agent_id, message_id, "DELETED")
-        return {"detail": "Message deleted"}
     if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
-        raise HTTPException(status_code=400, detail="Only PENDING, QUEUED, or CANCELLED messages can be removed")
+        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be cancelled")
     msg.status = MessageStatus.CANCELLED
     db.commit()
+    from display_writer import mark_deleted as _cancel_mark_deleted
+    _cancel_mark_deleted(agent_id, message_id)
     logger.info("Message %s cancelled for agent %s", message_id, agent_id)
     from websocket import emit_message_update
     await emit_message_update(agent_id, message_id, "CANCELLED")
@@ -2881,12 +2888,12 @@ async def update_message(
     body: UpdateMessage,
     db: Session = Depends(get_db),
 ):
-    """Update content and/or scheduled_at of a PENDING message."""
+    """Update content and/or scheduled_at of a pre-delivery (PENDING/QUEUED) message."""
     msg = db.get(Message, message_id)
     if not msg or msg.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.status != MessageStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Only PENDING messages can be updated")
+    if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
+        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be updated")
 
     if body.content is not None:
         if not body.content.strip():
@@ -2907,6 +2914,9 @@ async def update_message(
 
     db.commit()
     db.refresh(msg)
+    # Reflect the edit in the display file's queued partition.
+    from display_writer import update_queued_entry as _update_queued
+    _update_queued(agent_id, message_id)
     logger.info("Message %s updated for agent %s", message_id, agent_id)
     return msg
 

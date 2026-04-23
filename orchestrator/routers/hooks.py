@@ -183,8 +183,11 @@ async def hook_agent_user_prompt(request: Request):
             msg.completed_at = now
             db.commit()
 
-            from display_writer import update_last
-            update_last(agent_id, msg.id)
+            # Promotion is the sole queued→delivered transition. Appends a
+            # tombstone for the queued entry and the full delivered line
+            # (with a freshly allocated display_seq) under one flock.
+            from display_writer import promote_to_delivered
+            promote_to_delivered(agent_id, msg.id)
 
             asyncio.ensure_future(emit_message_delivered(
                 agent_id, msg.id, now.isoformat(),
