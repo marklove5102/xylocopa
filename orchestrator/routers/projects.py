@@ -2272,3 +2272,125 @@ async def browse_project_file(name: str, path: str, db: Session = Depends(get_db
     except (OSError, UnicodeDecodeError) as e:
         return {"path": path, "content": None, "truncated": False, "size": size,
                 "message": f"Cannot read file: {e}"}
+
+
+_SEARCH_TEXT_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".html", ".css", ".scss", ".sass", ".less",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
+    ".md", ".mdx", ".rst", ".txt",
+    ".sh", ".bash", ".zsh", ".fish",
+    ".go", ".rs", ".java", ".kt", ".swift", ".rb", ".php", ".pl",
+    ".c", ".cpp", ".h", ".hpp", ".cs", ".m", ".mm",
+    ".sql", ".graphql", ".proto", ".dockerfile", ".gitignore",
+    ".vue", ".svelte", ".astro",
+    ".lua", ".r", ".scala", ".clj", ".ex", ".exs", ".elm",
+}
+_SEARCH_MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
+_SEARCH_TIME_BUDGET_SEC = 4.0
+
+
+def _is_searchable_file(filename: str) -> bool:
+    if filename.startswith("."):
+        # Allow common dotfiles like .env.example, .gitignore
+        if filename in (".env", ".env.example", ".gitignore", ".dockerignore"):
+            return True
+        return False
+    _, ext = os.path.splitext(filename)
+    return ext.lower() in _SEARCH_TEXT_EXTS
+
+
+@router.get("/api/projects/{name}/search-files")
+async def search_project_files(
+    name: str,
+    q: str,
+    limit: int = 30,
+    db: Session = Depends(get_db),
+):
+    """Search file names and contents within a project directory.
+
+    Returns:
+      - name_matches: files whose path contains the query (case-insensitive)
+      - content_matches: files containing matching lines, with up to 3 line snippets
+    """
+    if len(q) < 2:
+        raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+    if limit > 100:
+        limit = 100
+
+    project_path = resolve_project_path(name, db)
+    if not os.path.isdir(project_path):
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    project_path = os.path.realpath(project_path)
+    ql = q.lower()
+    deadline = _time.monotonic() + _SEARCH_TIME_BUDGET_SEC
+
+    name_matches: list[str] = []
+    content_matches: list[dict] = []
+    truncated = False
+
+    for root, dirs, files in os.walk(project_path, followlinks=False):
+        if _time.monotonic() > deadline:
+            truncated = True
+            break
+        # Prune ignored directories in-place
+        dirs[:] = [
+            d for d in dirs
+            if d.lower() not in _BROWSE_IGNORED
+            and not d.endswith(".egg-info")
+            and not (d.startswith(".") and d not in (".env",))
+        ]
+        for fname in files:
+            if _time.monotonic() > deadline:
+                truncated = True
+                break
+            full = os.path.join(root, fname)
+            try:
+                rel = os.path.relpath(full, project_path)
+            except ValueError:
+                continue
+
+            # File-name match (any file, not just text)
+            if ql in rel.lower() and len(name_matches) < limit:
+                name_matches.append(rel)
+
+            # Content match (text-like files only, size-limited)
+            if len(content_matches) >= limit:
+                continue
+            if not _is_searchable_file(fname):
+                continue
+            try:
+                if os.path.getsize(full) > _SEARCH_MAX_FILE_SIZE:
+                    continue
+            except OSError:
+                continue
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    matches = []
+                    for i, line in enumerate(f, 1):
+                        if ql in line.lower():
+                            text = line.rstrip("\n")
+                            if len(text) > 240:
+                                # Center snippet around first match
+                                idx = text.lower().find(ql)
+                                start = max(0, idx - 80)
+                                end = min(len(text), idx + len(q) + 160)
+                                text = ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(line) else "")
+                            matches.append({"line": i, "text": text})
+                            if len(matches) >= 3:
+                                break
+                    if matches:
+                        content_matches.append({"path": rel, "matches": matches})
+            except (OSError, UnicodeDecodeError):
+                continue
+        if len(name_matches) >= limit and len(content_matches) >= limit:
+            break
+
+    return {
+        "query": q,
+        "name_matches": name_matches,
+        "content_matches": content_matches,
+        "total_files": len(name_matches) + len(content_matches),
+        "truncated": truncated,
+    }

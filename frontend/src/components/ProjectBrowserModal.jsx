@@ -148,7 +148,7 @@ function FileViewer({ project, node }) {
 
 /* ---- main modal ---- */
 
-export default function ProjectBrowserModal({ project, agentId, onClose }) {
+export default function ProjectBrowserModal({ project, agentId, onClose, initialFile = null }) {
   // Cache key prefix: scope per-agent when agentId is provided (split-screen),
   // otherwise fall back to project-level caching (ProjectDetailPage).
   const cachePrefix = agentId ? `filebrowser:${project}:${agentId}` : `filebrowser:${project}`;
@@ -156,7 +156,7 @@ export default function ProjectBrowserModal({ project, agentId, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedDirs, setExpandedDirs] = useState(new Set());
-  const [viewingFile, setViewingFile] = useState(null);
+  const [viewingFile, setViewingFile] = useState(initialFile);
   const scrollRef = useRef(null);
   const scrollSaveTimer = useRef(null);
   const containerRef = useRef(null);
@@ -211,8 +211,10 @@ export default function ProjectBrowserModal({ project, agentId, onClose }) {
       try {
         const savedExp = localStorage.getItem(`${cachePrefix}:expanded`);
         if (savedExp) { setExpandedDirs(new Set(JSON.parse(savedExp))); restored = true; }
-        const savedView = localStorage.getItem(`${cachePrefix}:viewing`);
-        if (savedView) setViewingFile(JSON.parse(savedView));
+        if (!initialFile) {
+          const savedView = localStorage.getItem(`${cachePrefix}:viewing`);
+          if (savedView) setViewingFile(JSON.parse(savedView));
+        }
       } catch { /* ignore */ }
       if (!restored) {
         const rootDirs = (res.tree || []).filter((n) => n.type === "dir").map((n) => n.path);

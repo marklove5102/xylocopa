@@ -198,6 +198,8 @@ export const fetchProjectTree = (project, depth = 3) =>
   request(`/api/projects/${e(project)}/tree?depth=${depth}`);
 export const browseProjectFile = (project, path) =>
   request(`/api/projects/${e(project)}/browse?path=${e(path)}`);
+export const searchProjectFiles = (project, query, limit = 30) =>
+  request(`/api/projects/${e(project)}/search-files?q=${encodeURIComponent(query)}&limit=${limit}`);
 export const refreshClaudeMd = (project) =>
   request(`/api/projects/${e(project)}/refresh-claudemd`, { method: "POST" });
 export const refreshClaudeMdStatus = (project) =>

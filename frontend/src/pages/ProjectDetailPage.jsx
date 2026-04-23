@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAllFolders,
@@ -22,6 +22,8 @@ import {
   updateProjectSettings,
   rebuildInsights,
   fetchTaskCounts,
+  searchMessages,
+  searchProjectFiles,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
 import ProjectRing from "../components/ProjectRing";
@@ -422,6 +424,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [loadError, setLoadError] = useState(null);
   const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
 
+  // In-project search (agents + messages + files)
+  const [search, setSearch] = useDraft(`ui:project:${name}:search`, "");
+  const [messageResults, setMessageResults] = useState(null);
+  const [messageSearchLoading, setMessageSearchLoading] = useState(false);
+  const [fileResults, setFileResults] = useState(null);
+  const [fileSearchLoading, setFileSearchLoading] = useState(false);
+  const [openFile, setOpenFile] = useState(null); // {path, name} when clicked from search
+  const searchTimerRef = useRef(null);
+
   // Sessions (lazy-loaded)
   const [sessions, setSessions] = useState(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -816,11 +827,50 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     return () => clearInterval(timer);
   }, [visible, agentTab, name]);
 
-  // Filter agents by tab
-  const filtered =
+  // Debounced search: messages (server, project-scoped) + files (server)
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    const q = search.trim();
+    if (q.length < 2) {
+      setMessageResults(null);
+      setFileResults(null);
+      setMessageSearchLoading(false);
+      setFileSearchLoading(false);
+      return;
+    }
+    setMessageSearchLoading(true);
+    setFileSearchLoading(true);
+    searchTimerRef.current = setTimeout(() => {
+      searchMessages(q, { project: name })
+        .then((data) => setMessageResults(data))
+        .catch((err) => { console.error("searchMessages failed:", err); setMessageResults(null); })
+        .finally(() => setMessageSearchLoading(false));
+      searchProjectFiles(name, q)
+        .then((data) => setFileResults(data))
+        .catch((err) => { console.error("searchProjectFiles failed:", err); setFileResults(null); })
+        .finally(() => setFileSearchLoading(false));
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [search, name]);
+
+  // Client-side agent filter — by name / id / preview, applied on top of tab filter
+  const tabFiltered = useMemo(() => (
     agentTab === "active"
       ? agents.filter((a) => a.status !== "STOPPED")
-      : agents.filter((a) => a.status === "STOPPED");
+      : agentTab === "stopped"
+        ? agents.filter((a) => a.status === "STOPPED")
+        : agents
+  ), [agents, agentTab]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tabFiltered;
+    return tabFiltered.filter((a) =>
+      a.id?.toLowerCase().includes(q) ||
+      a.name?.toLowerCase().includes(q) ||
+      a.last_message_preview?.toLowerCase().includes(q)
+    );
+  }, [tabFiltered, search]);
 
   // Tab counts
   const tabCounts = {
@@ -1030,6 +1080,158 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
       <div className="pb-24 p-4 max-w-2xl mx-auto w-full space-y-5">
+
+      {/* Search bar */}
+      <div className="relative">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-faint pointer-events-none" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="8" />
+          <path strokeLinecap="round" d="m21 21-4.35-4.35" />
+        </svg>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search agents, messages & files..."
+          className="w-full h-9 pl-9 pr-8 rounded-lg bg-surface border border-divider text-sm text-body placeholder-hint focus:outline-none focus:ring-1 focus:ring-cyan-500"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-label transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* Search results: messages + files */}
+      {search.trim().length >= 2 && (
+        <div className="space-y-3">
+          {/* Messages */}
+          {messageSearchLoading && (
+            <p className="text-xs text-dim animate-pulse">Searching messages...</p>
+          )}
+          {messageResults && messageResults.results && messageResults.results.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-dim font-medium">
+                {messageResults.total} message{messageResults.total !== 1 ? "s" : ""} found
+              </p>
+              {Object.entries(
+                messageResults.results.reduce((acc, r) => {
+                  const key = r.agent_id;
+                  if (!acc[key]) acc[key] = { agent_name: r.agent_name, items: [] };
+                  acc[key].items.push(r);
+                  return acc;
+                }, {})
+              ).map(([agentId, group]) => (
+                <div key={agentId} className="rounded-lg bg-surface border border-divider overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } })}
+                    className="w-full text-left px-3 py-2 bg-elevated hover:bg-hover transition-colors"
+                  >
+                    <span className="text-xs font-semibold text-heading">{group.agent_name}</span>
+                    <span className="text-[10px] text-faint ml-1">({group.items.length})</span>
+                  </button>
+                  {group.items.slice(0, 3).map((r) => (
+                    <button
+                      key={r.message_id}
+                      type="button"
+                      onClick={() => navigate(`/agents/${r.agent_id}`, { state: { from: location.pathname + location.search } })}
+                      className="w-full text-left px-3 py-1.5 border-t border-divider hover:bg-hover transition-colors"
+                    >
+                      <p className="text-xs text-body line-clamp-2">{r.content_snippet}</p>
+                      <span className="text-[10px] text-faint">{relativeTime(r.created_at)}</span>
+                    </button>
+                  ))}
+                  {group.items.length > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } })}
+                      className="w-full text-left px-3 py-1 border-t border-divider text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors"
+                    >
+                      +{group.items.length - 3} more
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {messageResults && messageResults.results && messageResults.results.length === 0 && !messageSearchLoading && (
+            <p className="text-xs text-dim">No messages match "{search.trim()}"</p>
+          )}
+
+          {/* Files */}
+          {fileSearchLoading && (
+            <p className="text-xs text-dim animate-pulse">Searching files...</p>
+          )}
+          {fileResults && (fileResults.name_matches?.length > 0 || fileResults.content_matches?.length > 0) && (
+            <div className="space-y-1">
+              <p className="text-xs text-dim font-medium">
+                {fileResults.total_files} file{fileResults.total_files !== 1 ? "s" : ""} found
+                {fileResults.truncated ? " (search truncated)" : ""}
+              </p>
+              {/* Filename matches */}
+              {fileResults.name_matches?.slice(0, 8).map((path) => {
+                const baseName = path.split("/").pop();
+                return (
+                  <button
+                    key={`name-${path}`}
+                    type="button"
+                    onClick={() => setOpenFile({ path, name: baseName, type: "file" })}
+                    className="w-full text-left rounded-lg bg-surface border border-divider px-3 py-2 hover:bg-hover transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
+                    </svg>
+                    <span className="text-xs font-medium text-heading truncate">{baseName}</span>
+                    <span className="text-[10px] text-faint truncate">{path}</span>
+                  </button>
+                );
+              })}
+              {/* Content matches */}
+              {fileResults.content_matches?.map((file) => {
+                const baseName = file.path.split("/").pop();
+                return (
+                  <div key={`content-${file.path}`} className="rounded-lg bg-surface border border-divider overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setOpenFile({ path: file.path, name: baseName, type: "file" })}
+                      className="w-full text-left px-3 py-2 bg-elevated hover:bg-hover transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
+                      </svg>
+                      <span className="text-xs font-semibold text-heading truncate">{baseName}</span>
+                      <span className="text-[10px] text-faint truncate">{file.path}</span>
+                      <span className="text-[10px] text-faint ml-auto shrink-0">({file.matches.length})</span>
+                    </button>
+                    {file.matches.map((m, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setOpenFile({ path: file.path, name: baseName, type: "file" })}
+                        className="w-full text-left px-3 py-1.5 border-t border-divider hover:bg-hover transition-colors flex items-start gap-2"
+                      >
+                        <span className="text-[10px] text-faint font-mono shrink-0 mt-0.5 w-8 text-right">{m.line}</span>
+                        <code className="text-xs text-body font-mono break-all line-clamp-2">{m.text}</code>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {fileResults && fileResults.total_files === 0 && !fileSearchLoading && (
+            <p className="text-xs text-dim">No files match "{search.trim()}"</p>
+          )}
+        </div>
+      )}
 
       {/* Inactive project banner */}
       {!project.active && (
@@ -1289,6 +1491,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         <ProjectBrowserModal
           project={name}
           onClose={() => setShowBrowser(false)}
+        />
+      )}
+
+      {openFile && (
+        <ProjectBrowserModal
+          project={name}
+          initialFile={openFile}
+          onClose={() => setOpenFile(null)}
         />
       )}
 
