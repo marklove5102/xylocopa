@@ -896,8 +896,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   return (
     <div className="h-full flex flex-col">
       {/* Fixed Header */}
-      <div className="shrink-0 bg-page border-b border-divider px-4 pt-3 pb-3 relative z-10 safe-area-pt">
-        <div className="max-w-2xl mx-auto">
+      <div className="shrink-0 bg-page border-b border-divider relative z-10 safe-area-pt">
+        <div className="max-w-2xl mx-auto px-4 pt-3">
           <button
             type="button"
             onClick={() => { localStorage.removeItem("lastViewed:projects"); navigate("/projects", { replace: true }); }}
@@ -1020,6 +1020,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             </div>
           </div>
         </div>
+        <div className="max-w-2xl mx-auto mt-3">
+          <FilterTabs tabs={AGENT_TABS} active={agentTab} onChange={setAgentTab} counts={tabCounts} />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -1043,12 +1046,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         </div>
       )}
 
-      {/* Agent tabs */}
-      <div className="mt-7">
-        <div className="mb-3 -mx-4">
-          <FilterTabs tabs={AGENT_TABS} active={agentTab} onChange={setAgentTab} counts={tabCounts} />
-        </div>
-
+      {/* Agent list */}
+      <div>
         {agentTab === "sessions" || agentTab === "starred" ? (
           sessionsLoading ? (
             <div className="text-center py-8 text-faint text-sm animate-pulse">Loading sessions...</div>
