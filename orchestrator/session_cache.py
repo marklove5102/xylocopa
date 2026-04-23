@@ -60,7 +60,16 @@ def _resolve_session_dir_name(project_path: str) -> str:
 
     Negative results (no dir found) are NOT cached so subsequent calls
     can discover newly created directories.
+
+    Project paths are realpath-normalized first so symlinked projects
+    (e.g. xylocopa self-hosting via ``~/xylocopa-projects/xylocopa →
+    /home/.../xylocopa``) resolve to the same directory Claude Code itself
+    writes to.  Without this, ``.owner`` sidecars and successor-session
+    JSONL lookups land in symlink-form encoding while Claude CLI writes
+    JSONLs under realpath-form encoding, silently breaking
+    ``/clear``-induced session rotation.
     """
+    project_path = os.path.realpath(project_path)
     if project_path in _encoded_name_cache:
         return _encoded_name_cache[project_path]
 
@@ -96,6 +105,8 @@ def _resolve_session_dir_name(project_path: str) -> str:
 
 def invalidate_path_cache(project_path: str) -> None:
     """Clear the cached directory name for a project path."""
+    _encoded_name_cache.pop(os.path.realpath(project_path), None)
+    # Also pop the un-realpath'd key in case anything pre-fix slipped in.
     _encoded_name_cache.pop(project_path, None)
 
 

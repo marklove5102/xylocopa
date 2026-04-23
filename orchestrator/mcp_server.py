@@ -55,7 +55,12 @@ def _encode_project_path(path: str) -> str:
 
 
 def _session_source_dir(project_path: str) -> str:
-    """Locate Claude Code's session directory for a project path."""
+    """Locate Claude Code's session directory for a project path.
+
+    Realpath-normalize first so symlinked projects (e.g. xylocopa
+    self-hosting) match the dir Claude CLI actually writes to.
+    """
+    project_path = os.path.realpath(project_path)
     predicted = _encode_project_path(project_path)
     projects_root = os.path.join(CLAUDE_HOME, "projects")
 
