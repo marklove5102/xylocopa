@@ -14,13 +14,13 @@
 </p>
 
 
-**Xylocopa — a hive for your AI agents.** 🐝
+**Xylocopa — capture tasks, dispatch to agents, keep the context.** 🐝
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea) — the blue carpenter bee._
 
-An AI-native take on GTD — capture anywhere, dispatch to agents, keep what's learned. Thoughts in. Agents out. Lessons kept.
+Xylocopa aims to reduce the friction of navigating multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) projects — keeping track of what you asked, what got done, and what to try next. Capture tasks into an inbox, group them by project, and dispatch to agents running in parallel on isolated worktrees. When an attempt misses the mark, retry with a summary of what was tried, so the project carries forward what was learned instead of starting over each session.
 
-Xylocopa is a web-based control layer for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Capture ideas from anywhere, dispatch to parallel agents on isolated worktrees, and iterate with auto-summarized context when agents miss the mark. Your existing CLAUDE.md files, project setup, and CLI sessions all carry over — and project knowledge accrues across sessions instead of resetting with each one.
+Tasks in. Agents out. Lessons kept.
 
 If you find Xylocopa useful, a star helps others discover it :)
 
