@@ -104,7 +104,9 @@ server = FastMCP(
     instructions=(
         "Xylocopa orchestrator tools. Use list_sessions to discover "
         "previous conversations, read_session to read one, and create_task "
-        "to drop a new task into the Xylocopa inbox.\n\n"
+        "to drop a new task into the Xylocopa inbox. "
+        "Use update_task to modify a task, dispatch_task to queue it for "
+        "execution, and list_tasks to see the current backlog.\n\n"
         "File handling: when generating or referencing media files "
         "(images, videos, plots), save them inside the project directory "
         "so the web UI can display them. Files in /tmp/ or other external "
@@ -473,6 +475,211 @@ def create_task(
         f"Model: {model or '(project default)'}  "
         f"Effort: {effort or '(default)'}  Priority: {priority}"
     )
+
+
+@server.tool()
+def update_task(
+    task_id: str,
+    title: str = "",
+    description: str = "",
+    project: str = "",
+    model: str = "",
+    effort: str = "",
+    priority: int | None = None,
+) -> str:
+    """Update fields on an existing Xylocopa task.
+
+    Only fields you pass (non-empty for strings, non-None for priority) are
+    updated. Status is intentionally NOT mutable here — use dispatch_task to
+    queue a task, or other dedicated tools for status changes.
+
+    Args:
+        task_id: ID of the task to update (required).
+        title: New title. Empty = leave unchanged.
+        description: New description. Empty = leave unchanged.
+        project: New project name. Must exist in the Project table.
+            Empty = leave unchanged.
+        model: New Claude model id. Empty = leave unchanged.
+        effort: New effort level (low|medium|high|xhigh|max).
+            Empty = leave unchanged.
+        priority: New priority (0 normal, 1 high). None = leave unchanged.
+    """
+    # Lazy imports so read-only callers don't pay the cost
+    from models import Project, Task
+
+    with _get_write_session() as db:
+        task = db.get(Task, task_id)
+        if task is None:
+            return f"Task {task_id} not found."
+
+        changes: list[str] = []
+
+        if project:
+            proj = db.query(Project).filter_by(name=project).one_or_none()
+            if proj is None:
+                available = sorted(p.name for p in db.query(Project).all())
+                return (
+                    f"Project `{project}` not found.\n"
+                    f"Available: {', '.join(available)}"
+                )
+            if task.project_name != project:
+                task.project_name = project
+                changes.append(f"project={project}")
+
+        if title:
+            if task.title != title:
+                task.title = title
+                changes.append("title")
+
+        if description:
+            if task.description != description:
+                task.description = description
+                changes.append("description")
+
+        if model:
+            if task.model != model:
+                task.model = model
+                changes.append(f"model={model}")
+
+        if effort:
+            if task.effort != effort:
+                task.effort = effort
+                changes.append(f"effort={effort}")
+
+        if priority is not None:
+            if task.priority != priority:
+                task.priority = priority
+                changes.append(f"priority={priority}")
+
+        if not changes:
+            return f"Task {task_id}: no changes (all provided fields matched current values or were empty)."
+
+        db.commit()
+        return f"Updated task {task_id}: {', '.join(changes)}."
+
+
+@server.tool()
+def dispatch_task(task_id: str) -> str:
+    """Queue a task for execution by transitioning it to PENDING.
+
+    The orchestrator's background poller picks up PENDING tasks within a
+    few seconds and spawns a tmux agent to run them. Use this after a task
+    has been created (INBOX) and fully specified, or to retry a FAILED/
+    TIMEOUT task.
+
+    Prerequisites:
+        - task must exist
+        - task must have a project_name
+        - task must have a title
+        - current status must be one that can transition to PENDING
+          (typically INBOX, FAILED, TIMEOUT)
+
+    Args:
+        task_id: ID of the task to dispatch (required).
+    """
+    # Lazy imports so read-only callers don't pay the cost
+    from models import Task, TaskStatus
+    from task_state_machine import can_transition
+
+    with _get_write_session() as db:
+        task = db.get(Task, task_id)
+        if task is None:
+            return f"Task {task_id} not found."
+
+        if not task.project_name:
+            return f"Task {task_id} has no project_name set; cannot dispatch."
+        if not task.title:
+            return f"Task {task_id} has no title set; cannot dispatch."
+
+        current_status = task.status
+        if current_status == TaskStatus.PENDING:
+            return f"Task {task_id} is already PENDING; awaiting dispatch."
+
+        if not can_transition(current_status, TaskStatus.PENDING):
+            return (
+                f"Task {task_id} cannot transition from "
+                f"{current_status.value} to PENDING."
+            )
+
+        title = task.title
+
+        rows = (
+            db.query(Task)
+            .filter(Task.id == task_id, Task.status == current_status)
+            .update({"status": TaskStatus.PENDING}, synchronize_session="fetch")
+        )
+        if rows == 0:
+            return f"Task {task_id} status changed concurrently; retry."
+        db.commit()
+
+    return (
+        f"Task {task_id} ({title}) queued for dispatch. "
+        f"The orchestrator will spawn an agent within a few seconds."
+    )
+
+
+@server.tool()
+def list_tasks(project: str = "", status: str = "", limit: int = 30) -> str:
+    """List Xylocopa tasks, optionally filtered by project and status.
+
+    Results are ordered by created_at DESC.
+
+    Args:
+        project: Filter by project name (optional — shows all if empty).
+        status: Filter by status, e.g. "INBOX", "PENDING", "EXECUTING",
+            "FAILED", "COMPLETE" (case-insensitive). Empty = all statuses.
+        limit: Max results (default 30, capped at 100).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    if limit < 1:
+        limit = 1
+    elif limit > 100:
+        limit = 100
+
+    try:
+        clauses: list[str] = []
+        params: list = []
+        if project:
+            clauses.append("project_name = ?")
+            params.append(project)
+        if status:
+            clauses.append("UPPER(status) = ?")
+            params.append(status.strip().upper())
+
+        query = (
+            "SELECT id, title, project_name, status, priority, created_at "
+            "FROM tasks"
+        )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = db.execute(query, tuple(params)).fetchall()
+    finally:
+        db.close()
+
+    if not rows:
+        filters = []
+        if project:
+            filters.append(f"project={project}")
+        if status:
+            filters.append(f"status={status}")
+        suffix = f" ({', '.join(filters)})" if filters else ""
+        return f"No tasks found.{suffix}"
+
+    lines = [f"Found {len(rows)} task(s):\n"]
+    for r in rows:
+        ts = (r["created_at"] or "")[:19]
+        title = (r["title"] or "(untitled)")[:120]
+        lines.append(
+            f"- **{title}** [{r['status']}] — {r['project_name'] or '(no project)'}\n"
+            f"  id: `{r['id']}`  priority: {r['priority']}  created: {ts}"
+        )
+    return "\n".join(lines)
 
 
 def _lookup_agent(db: sqlite3.Connection, identifier: str) -> dict | None:

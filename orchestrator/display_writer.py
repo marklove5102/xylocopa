@@ -61,20 +61,13 @@ def transform_for_display(role: str | None, content: str | None,
     - USER messages: strip [Attached file: ...] tags, store paths in metadata
     - SYSTEM stop notes: strip prefix, store stop_action in metadata
     - Task notifications: parse XML into metadata.task_notification
-    - Redact XYLOCOPA_AGENT_TOKEN values (in case an agent printed its env)
     """
     if content is None:
         return content, metadata
 
-    # 0. Redact any live agent API tokens before any other processing.
-    # This catches `env` / `printenv` output and accidentally-echoed tokens.
-    from agent_dispatcher import redact_agent_tokens
-    content = redact_agent_tokens(content)
-
     # 1. display_content override (already set by _prepare_dispatch)
     if isinstance(metadata, dict) and "display_content" in metadata:
         content = metadata["display_content"]
-        content = redact_agent_tokens(content)
 
     # 2. USER: strip attachment tags, store paths
     if role == "USER":

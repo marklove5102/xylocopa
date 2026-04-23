@@ -50,51 +50,6 @@ TERMINAL_STATUSES = [AgentStatus.STOPPED, AgentStatus.ERROR]
 _STALE_SESSION_THRESHOLD = 1800
 
 
-# ---------------------------------------------------------------------------
-# Agent API-token registry — in-memory only.
-#
-# Tokens are minted at spawn time (see auth.create_agent_token) and injected
-# into the agent subprocess via XYLOCOPA_AGENT_TOKEN. They are never
-# persisted to disk so they cannot be recovered after the orchestrator
-# restarts; the agent will naturally re-auth via a freshly-minted token
-# on its next spawn.
-#
-# The registry exists so we can redact token *values* from anything the
-# agent writes back — pane captures, tool output, JSONL content, UI
-# messages — in case the agent runs `env` / `printenv` or otherwise prints
-# its environment.
-# ---------------------------------------------------------------------------
-
-_AGENT_TOKENS: dict[str, str] = {}
-
-
-def register_agent_token(agent_id: str, token: str) -> None:
-    """Record an agent's API token for output redaction."""
-    if agent_id and token:
-        _AGENT_TOKENS[agent_id] = token
-
-
-def unregister_agent_token(agent_id: str) -> None:
-    """Forget an agent's token — call on STOPPED/ERROR transitions."""
-    _AGENT_TOKENS.pop(agent_id, None)
-
-
-def redact_agent_tokens(text_value):
-    """Replace any known active agent token substring with a mask.
-
-    Safe for None and non-string input (returned unchanged). Iterates
-    over the active token set — small in practice (≤ concurrent agent
-    count) so linear scan is fine.
-    """
-    if not isinstance(text_value, str) or not _AGENT_TOKENS:
-        return text_value
-    out = text_value
-    for tok in _AGENT_TOKENS.values():
-        if tok and tok in out:
-            out = out.replace(tok, "***REDACTED_XYLOCOPA_AGENT_TOKEN***")
-    return out
-
-
 def _query_verify_agents(db: Session, task_id, *, alive_only=True):
     """Query verify sub-agents for a task."""
     q = db.query(Agent).filter(
@@ -2217,7 +2172,6 @@ Here are the day's conversations (with timestamps):
             self._stale_session_retries.pop(agent.id, None)
             self._idle_no_pane_retries.pop(agent.id, None)
             self._known_subagents.pop(agent.id, None)
-            unregister_agent_token(agent.id)
             # Clean up hook signal files (both new and legacy paths)
             from route_helpers import unlink_session_signals
             unlink_session_signals(agent.id)
@@ -2309,7 +2263,6 @@ Here are the day's conversations (with timestamps):
             self._cancel_launch_task(agent.id)
             self._stale_session_retries.pop(agent.id, None)
             self._idle_no_pane_retries.pop(agent.id, None)
-            unregister_agent_token(agent.id)
 
         if emit:
             from websocket import emit_agent_update

@@ -146,27 +146,14 @@ def compute_successor_id(agent_id: str, db: Session) -> str | None:
 def create_tmux_claude_session(
     session_name: str, project_path: str, claude_cmd: str,
     agent_id: str | None = None,
-    agent_token: str | None = None,
 ) -> str:
-    """Create a tmux session running Claude. Returns pane_id.
-
-    If *agent_token* is provided, it is injected into the tmux session
-    environment via ``new-session -e`` so the child shell + Claude
-    inherit it as ``XYLOCOPA_AGENT_TOKEN`` *without the value ever being
-    echoed to the pane*. Tool output capturing (pane grabs, user scrolling)
-    therefore cannot reveal the token — only processes that explicitly
-    read the env (e.g. ``env`` / ``printenv``) can, and that output is
-    redacted on its way to the UI (see agent_dispatcher.redact_agent_tokens).
-    """
+    """Create a tmux session running Claude. Returns pane_id."""
     # Kill any stale session with same name
     _sp.run(["tmux", "kill-session", "-t", session_name],
             capture_output=True, timeout=TMUX_CMD_TIMEOUT)
-    # Create new detached session. Pass the API token via -e so it is
-    # seeded into the session env directly (not echoed to the pane).
-    new_session_cmd = ["tmux", "new-session", "-d", "-s", session_name, "-c", project_path]
-    if agent_token:
-        new_session_cmd[3:3] = ["-e", f"XYLOCOPA_AGENT_TOKEN={agent_token}"]
-    _sp.run(new_session_cmd, check=True, capture_output=True, timeout=TMUX_CMD_TIMEOUT)
+    # Create new detached session.
+    _sp.run(["tmux", "new-session", "-d", "-s", session_name, "-c", project_path],
+            check=True, capture_output=True, timeout=TMUX_CMD_TIMEOUT)
     # Get pane ID. If display-message fails or returns empty (e.g. a
     # concurrent kill-session wiped the new session between create and
     # query), raise a clean error so callers don't blindly run
@@ -183,8 +170,7 @@ def create_tmux_claude_session(
     # Unset problematic env vars, export XY_AGENT_ID (and legacy
     # AHIVE_AGENT_ID alias) for hooks, and disable prompt suggestions so
     # tmux send-keys Enter always reaches onSubmit (avoids autocomplete
-    # intercepting Enter). XYLOCOPA_AGENT_TOKEN is NOT exported here —
-    # it is seeded via new-session -e above to avoid echoing its value.
+    # intercepting Enter).
     env_setup = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT XYLOCOPA_MANAGED AGENTHIVE_MANAGED CLAUDE_CODE_OAUTH_TOKEN"
     env_setup += " && export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"
     if agent_id:

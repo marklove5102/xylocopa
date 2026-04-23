@@ -646,13 +646,9 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
 
         _preflight_claude_project(project.path)
-        from auth import create_agent_token
-        from agent_dispatcher import register_agent_token
-        _agent_tok = create_agent_token(db)
-        register_agent_token(agent_id, _agent_tok)
         pane_id = _create_tmux_claude_session(
             tmux_session, project.path, claude_cmd,
-            agent_id=agent_id, agent_token=_agent_tok,
+            agent_id=agent_id,
         )
         agent.tmux_pane = pane_id
 
@@ -803,13 +799,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # directory that hasn't been explicitly trusted yet.
     _preflight_claude_project(proj.path)
 
-    from auth import create_agent_token
-    from agent_dispatcher import register_agent_token
-    _agent_tok = create_agent_token(db)
-    register_agent_token(agent_hex, _agent_tok)
     pane_id = _create_tmux_claude_session(
         tmux_session, proj.path, claude_cmd,
-        agent_id=agent_hex, agent_token=_agent_tok,
+        agent_id=agent_hex,
     )
 
     # Create Agent record immediately so the frontend can navigate to it.
@@ -2244,13 +2236,9 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
                 if os.path.isdir(wt_path):
                     launch_cwd = wt_path
 
-            from auth import create_agent_token
-            from agent_dispatcher import register_agent_token
-            _agent_tok = create_agent_token(db)
-            register_agent_token(agent.id, _agent_tok)
             pane_id = _create_tmux_claude_session(
                 tmux_session, launch_cwd, claude_cmd,
-                agent_id=agent.id, agent_token=_agent_tok,
+                agent_id=agent.id,
             )
 
             agent.tmux_pane = pane_id

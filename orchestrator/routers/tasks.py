@@ -125,13 +125,9 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
 
     from routers.agents import _preflight_claude_project, _launch_tmux_background
     _preflight_claude_project(proj.path)
-    from auth import create_agent_token
-    from agent_dispatcher import register_agent_token
-    _agent_tok = create_agent_token(db)
-    register_agent_token(agent_hex, _agent_tok)
     pane_id = create_tmux_claude_session(
         tmux_session, proj.path, claude_cmd,
-        agent_id=agent_hex, agent_token=_agent_tok,
+        agent_id=agent_hex,
     )
 
     # Create Agent record
@@ -601,8 +597,7 @@ async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
     if not host_project:
         raise HTTPException(400, "No projects available to host the agent")
 
-    api_base = os.getenv("API_BASE_URL", f"http://localhost:{os.getenv('PORT', '8080')}")
-    prompt = f"""You are a task triage assistant for Xylocopa. Analyze the inbox tasks below, then update each one via the local API.
+    prompt = f"""You are a task triage assistant for Xylocopa. Analyze the inbox tasks below, then update each one using the Xylocopa MCP tools.
 
 FOR EACH TASK:
 1. **Title**: Rewrite to be clear, specific, and actionable (<80 chars). Keep good titles unchanged.
@@ -616,26 +611,20 @@ AVAILABLE PROJECTS:
 INBOX TASKS:
 {json.dumps(tasks_data, ensure_ascii=False, indent=2)}
 
-AUTHENTICATION:
-- The orchestrator has already injected a short-lived API token into your environment as $XYLOCOPA_AGENT_TOKEN. Attach it to every API call: -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN"
-- Do NOT read the database to extract jwt_secret, do NOT attempt to sign tokens yourself, and do NOT try to discover or create any other credential. The env token is the only supported path.
+TOOLS TO USE:
+- `mcp__xylocopa__update_task` — update a task's fields. Pass the task id plus the fields you want to change (title, description, project_name, etc.). Preserve every field shown in the task's `config` object verbatim — the task owner already configured those.
+- `mcp__xylocopa__dispatch_task` — queue a task for execution once it has enough detail and a project assigned.
+- `mcp__xylocopa__list_tasks` — inspect the current inbox if you need more context than the data above.
+- `mcp__xylocopa__create_task` — create a new task (use only if you need to split or spawn a task; normal triage does not require this).
+- `mcp__xylocopa__read_session` / `mcp__xylocopa__list_sessions` — optional, for pulling context from prior conversations when a task description references earlier work.
 
-HOW TO UPDATE:
-- Update a task: curl -s -X PUT {api_base}/api/v2/tasks/TASK_ID -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN" -H "Content-Type: application/json" -d '<JSON>'
-  The JSON body MUST include: title, description, project_name (your changes) + ALL fields from the task's `config` object merged in verbatim. Never drop or override any config field — the task owner already configured them.
-- Dispatch for execution: curl -s -X POST {api_base}/api/v2/tasks/TASK_ID/dispatch -H "Authorization: Bearer $XYLOCOPA_AGENT_TOKEN"
-
-SAFETY RULES:
-- You may ONLY call these API endpoints: PUT /api/v2/tasks/TASK_ID (update) and POST /api/v2/tasks/TASK_ID/dispatch (start execution)
-- Do NOT call any other endpoints (no /api/agents/*, /api/git/*, /api/projects/*, DELETE endpoints, etc.)
-- Do NOT write to memory files (.claude/memory/, MEMORY.md) or modify CLAUDE.md
-- Do NOT `echo`, `env`, or otherwise print $XYLOCOPA_AGENT_TOKEN. Treat it as a secret — reference it only by name.
+Use the MCP tools listed above; do not attempt other ways to reach the orchestrator.
 
 INSTRUCTIONS:
 1. First, analyze all tasks and present a summary table of your proposed changes (title, project assignment, ready status)
 2. If anything is ambiguous — unclear intent, multiple possible projects, vague descriptions that could go different directions — ask the user to clarify before proceeding. Don't guess on important decisions.
 3. Ask the user to confirm before applying changes
-4. After confirmation, execute the curl commands to update each task
+4. After confirmation, call `mcp__xylocopa__update_task` for each task that needs updates, then `mcp__xylocopa__dispatch_task` for each task that is ready to execute.
 5. Report a final summary of what was changed and dispatched"""
 
     # Launch via the tmux agent endpoint (no task for the triage agent itself —
