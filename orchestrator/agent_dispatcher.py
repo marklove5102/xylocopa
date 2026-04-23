@@ -1805,11 +1805,8 @@ class AgentDispatcher:
 
     def _trigger_daily_progress_summaries(self, db: Session, target_date=None):
         """Auto-trigger PROGRESS.md summary for projects with the toggle enabled."""
-        projects = (
-            db.query(Project)
-            .filter(Project.auto_progress_summary == True, Project.archived == False)
-            .all()
-        )
+        from routers.projects import active_projects
+        projects = [p for p in active_projects(db) if p.auto_progress_summary]
         if not projects:
             return
 
@@ -3116,8 +3113,9 @@ Here are the day's conversations (with timestamps):
         and writes unlinked entries for user confirmation in the UI.
         """
         from websocket import emit_agent_update
+        from routers.projects import active_projects
 
-        projects = db.query(Project).filter(Project.archived == False).all()
+        projects = active_projects(db)
         if not projects:
             return
         proj_by_path: dict[str, Project] = {

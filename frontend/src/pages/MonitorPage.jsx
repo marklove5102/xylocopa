@@ -358,7 +358,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     setOrphanResult(null);
     try {
       const scan = await scanOrphans();
-      if (scan.total_files === 0) {
+      const projectCount = scan.orphan_project_count || 0;
+      if (scan.total_files === 0 && projectCount === 0) {
         setOrphanResult({ freed_bytes: 0, message: "No orphans found" });
         return;
       }
@@ -366,7 +367,8 @@ export default function MonitorPage({ theme, onToggleTheme }) {
         `Delete ${scan.total_files} orphaned files (${formatBytes(scan.total_bytes)})?\n\n` +
         `${scan.orphan_session_count} session files (${formatBytes(scan.orphan_session_bytes)})\n` +
         `${scan.orphan_log_count} log files (${formatBytes(scan.orphan_log_bytes)})\n` +
-        `${scan.empty_dir_count} empty directories`
+        `${scan.empty_dir_count} empty directories\n` +
+        `${projectCount} ghost projects (folder missing)`
       );
       if (!ok) return;
       const result = await cleanOrphans();
@@ -686,7 +688,7 @@ export default function MonitorPage({ theme, onToggleTheme }) {
               ? `Orphan cleanup error: ${orphanResult.error}`
               : orphanResult.message
                 ? orphanResult.message
-                : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs)`}
+                : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs, ${orphanResult.deleted_projects || 0} projects)`}
           </p>
         )}
 

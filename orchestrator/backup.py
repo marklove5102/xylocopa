@@ -98,10 +98,10 @@ def do_backup():
 
     # 2. All PROGRESS.md files from projects (keyed by DB project name, not folder)
     from database import SessionLocal
-    from models import Project
+    from routers.projects import active_projects
     db = SessionLocal()
     try:
-        projects = db.query(Project).filter(Project.archived == False).all()  # noqa: E712
+        projects = active_projects(db)
     finally:
         db.close()
     if projects:

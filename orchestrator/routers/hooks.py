@@ -1305,7 +1305,8 @@ async def hook_agent_session_start(request: Request):
     _db2 = _SL()
     try:
         cwd_real = os.path.realpath(cwd)
-        projects = _db2.query(Project).filter(Project.archived == False).all()
+        from routers.projects import active_projects
+        projects = active_projects(_db2)
         matched_proj = None
         for p in projects:
             proj_real = os.path.realpath(p.path)

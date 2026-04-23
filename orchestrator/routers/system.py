@@ -512,7 +512,7 @@ async def system_orphan_scan():
         result = scan_orphans()
         # Strip file lists from response (only return counts/sizes)
         return {k: v for k, v in result.items()
-                if k not in ("orphan_sessions", "orphan_logs", "empty_dirs")}
+                if k not in ("orphan_sessions", "orphan_logs", "empty_dirs", "orphan_projects")}
 
     return await asyncio.get_event_loop().run_in_executor(None, _scan)
 

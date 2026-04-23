@@ -33,6 +33,14 @@ def scan_orphans() -> dict:
         rows = conn.execute(text("SELECT id FROM messages")).fetchall()
         live_msg_ids = {r[0] for r in rows}
 
+        # Orphan = DB row whose folder is gone, regardless of archived state.
+        # The Projects page (active or inactive view) only shows rows whose
+        # folder exists on disk, so a missing-folder row is invisible everywhere.
+        rows = conn.execute(text("SELECT name, path FROM projects")).fetchall()
+        orphan_projects = [
+            {"name": r[0], "path": r[1]} for r in rows if not os.path.isdir(r[1])
+        ]
+
     # 1. Session JSONL files
     projects_dir = os.path.join(CLAUDE_HOME, "projects")
     orphan_sessions = []
@@ -81,11 +89,13 @@ def scan_orphans() -> dict:
         "orphan_sessions": orphan_sessions,
         "orphan_logs": orphan_logs,
         "empty_dirs": empty_dirs,
+        "orphan_projects": orphan_projects,
         "orphan_session_count": len(orphan_sessions),
         "orphan_session_bytes": session_bytes,
         "orphan_log_count": len(orphan_logs),
         "orphan_log_bytes": log_bytes,
         "empty_dir_count": len(empty_dirs),
+        "orphan_project_count": len(orphan_projects),
         "total_files": len(orphan_sessions) + len(orphan_logs),
         "total_bytes": session_bytes + log_bytes,
     }
@@ -153,10 +163,39 @@ def delete_orphans(scan_result: dict) -> dict:
         except OSError as e:
             logger.warning("Failed to remove empty dir %s: %s", d, e)
 
+    # Hard-delete project rows whose folder is gone.  Models declare
+    # ON DELETE CASCADE on the FKs, but historical SQLite tables were created
+    # before those constraints landed and SQLite doesn't backfill them — so
+    # cascade is unreliable in practice.  Wipe related rows explicitly.
+    deleted_projects = 0
+    orphan_projects = scan_result.get("orphan_projects", [])
+    if orphan_projects:
+        with engine.begin() as conn:
+            for p in orphan_projects:
+                name = p["name"]
+                try:
+                    # messages → cascade through agents
+                    conn.execute(text(
+                        "DELETE FROM messages WHERE agent_id IN "
+                        "(SELECT id FROM agents WHERE project = :n)"
+                    ), {"n": name})
+                    conn.execute(text("DELETE FROM agents WHERE project = :n"), {"n": name})
+                    conn.execute(text(
+                        "DELETE FROM tasks WHERE project_name = :n OR project = :n"
+                    ), {"n": name})
+                    conn.execute(text("DELETE FROM starred_sessions WHERE project = :n"), {"n": name})
+                    conn.execute(text("DELETE FROM progress_insights WHERE project = :n"), {"n": name})
+                    conn.execute(text("DELETE FROM session_view_events WHERE project = :n"), {"n": name})
+                    conn.execute(text("DELETE FROM projects WHERE name = :n"), {"n": name})
+                    deleted_projects += 1
+                except Exception as e:
+                    logger.warning("Failed to hard-delete project %s: %s", name, e)
+
     return {
         "deleted_sessions": deleted_sessions,
         "deleted_logs": deleted_logs,
         "deleted_dirs": deleted_dirs,
+        "deleted_projects": deleted_projects,
         "evicted_cache": evicted_cache,
         "freed_bytes": freed,
     }

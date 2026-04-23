@@ -407,7 +407,8 @@ async def task_queue_status(
     pending_list = [TaskOut.model_validate(t).model_dump() for t in pending_tasks]
 
     # Per-project agent counts (no capacity enforcement)
-    projects = db.query(Project).filter(Project.archived == False).all()
+    from routers.projects import active_projects
+    projects = active_projects(db)
     capacity = {}
     for proj in projects:
         active = (
@@ -561,7 +562,8 @@ async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(400, "No inbox tasks to process")
 
     # Gather available projects
-    projects = db.query(Project).filter(Project.archived == False).all()
+    from routers.projects import active_projects
+    projects = active_projects(db)
     project_list = [{"name": p.name, "display_name": getattr(p, "display_name", None) or p.name,
                      "description": getattr(p, "description", None) or ""} for p in projects]
 

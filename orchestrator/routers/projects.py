@@ -44,6 +44,18 @@ logger = logging.getLogger("orchestrator")
 router = APIRouter(tags=["projects"])
 
 
+# ---- Canonical "what counts as an active project" -------------------------
+# Single source of truth: a row is active iff it's in the projects table with
+# archived=0 AND its folder still exists on disk.  Use this everywhere instead
+# of rolling your own `Project.archived == False` query — that catches ghost
+# rows (folder deleted out from under the DB) which the orphan-cleanup will
+# eventually hard-delete.
+
+def active_projects(db: Session) -> list[Project]:
+    rows = db.query(Project).filter(Project.archived == False).all()  # noqa: E712
+    return [p for p in rows if os.path.isdir(p.path)]
+
+
 # ---- Folder name validation ----
 
 _RESERVED_FOLDER_NAMES = {"trash", "folders"}
@@ -913,7 +925,7 @@ async def _refresh_resume_hint(agent_id: str):
 @router.get("/api/projects", response_model=list[ProjectWithStats])
 async def list_projects(db: Session = Depends(get_db)):
     """List all active (non-archived) projects with task and agent statistics."""
-    projects = db.query(Project).filter(Project.archived == False).order_by(Project.name).all()
+    projects = sorted(active_projects(db), key=lambda p: p.name)
     results = []
     for proj in projects:
         # Count agents linked to tasks (matches Agents page filtering)
