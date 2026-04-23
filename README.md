@@ -7,7 +7,7 @@
 
 > [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Known Issues**](#known-issues) · [**Roadmap**](#roadmap) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
 >
-> New here? Start with the beginner walkthrough: [**Getting Started Guide**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
+> New here? Read [**Concepts**](docs/concepts.md) for the 3-minute overview, or the full [**Getting Started Guide**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 
 **Xylocopa — capture tasks, dispatch to agents, keep the context.** 🐝
 

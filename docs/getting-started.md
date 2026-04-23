@@ -216,6 +216,7 @@ On desktop: tap the split-screen button (bottom-right of any page), pick 2/3/4 p
 
 ## Where to go next
 
+- [Concepts](concepts.md) — the three-layer model (task / project / agent) explained
 - [README — The Loop](../README.md#the-loop) — the full feature tour
 - [README — Durable by Default](../README.md#durable-by-default) — how your work survives crashes
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design
