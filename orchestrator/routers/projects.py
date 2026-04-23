@@ -722,23 +722,36 @@ _SECTION_DATE_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b", re.MULTILINE)
 RESUME_HINT_STALE_MINUTES = 15  # reuse cached hint if younger than this
 _resume_hint_in_flight: set[str] = set()  # dedupe concurrent refreshes
 
-_RESUME_SYSTEM = """You summarize the emotional state of a programming project.
-Return a single emoji that captures the mood of recent work, plus a short
-4-10 word past/present phrase describing what's been happening. Never prescribe
-what to do next — only describe the vibe of recent activity.
+_RESUME_SYSTEM = """You describe what a programmer was last working on in a project.
 
-Emoji mood palette (pick whichever fits best, one glyph):
-- breakthrough / big win: 🎉 🚀 ✨ 💥 🏆
-- steady momentum: 💪 🔥 ⚡ 📈
-- debugging / fixing: 🐛 🔧 🛠
-- exploring / thinking: 🤔 🧐 🔍
-- iterating / working through it: 🌀 🧩
-- mind-blown / complex challenge: 🤯
-- quiet / paused: ☕ 💤 🌙
+Write a 4-6 word past-tense phrase about the most recent real work session
+(~25 characters). Match the language of the agent names.
 
-Avoid faces that look frustrated or upset (no 😩 😮‍💨 😤).
-The hint is at most 40 characters. Match the language of the agent names
-(English, Chinese, mixed)."""
+If the most recent agent is just a triage/automation/meta script, OR there's
+no meaningful session to describe, respond with the single word: paused
+
+Examples of good hints (real work):
+  "fixed the emoji picker bug"
+  "优化了项目列表布局"
+  "explored fuzzy matching libs"
+
+Examples of bad hints (avoid these — they're vague filler):
+  "Recent work has paused for reflection"
+  "Quiet pause, no recent progress"
+  "Project on hold"
+For all of those, respond literally: paused
+
+Then pick an emoji that matches the work content (not the mood):
+- code work: 🔧 🛠 🐛
+- design / UI: 🎨 ✨
+- exploring / research: 🔍 🤔
+- shipping / done: 🚀 🎉 🏆
+- iterating: 🌀 🧩
+- complex / hard: 🤯
+- paused: 💤
+- (use other relevant emoji from your knowledge if a more specific one fits)
+
+Avoid frustrated faces (no 😩 😮‍💨 😤)."""
 
 
 def _format_activity_age(dt) -> str:
@@ -848,10 +861,10 @@ async def _call_llm_for_hint(signals: dict) -> tuple[str | None, str | None]:
                         "schema": {
                             "type": "object",
                             "properties": {
+                                "hint": {"type": "string", "maxLength": 60},
                                 "emoji": {"type": "string", "maxLength": 8},
-                                "hint": {"type": "string", "maxLength": 40},
                             },
-                            "required": ["emoji", "hint"],
+                            "required": ["hint", "emoji"],
                             "additionalProperties": False,
                         },
                     },

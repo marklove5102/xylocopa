@@ -92,18 +92,16 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
             )}
           </div>
 
-          {/* Row 2: LLM-generated mood + recap */}
-          {folder.resume_hint && (
-            <div
-              className="flex items-center gap-1.5 text-sm text-dim mt-1 leading-snug"
-              title={folder.resume_hint}
-            >
-              {folder.resume_emoji && (
-                <FluentEmoji char={folder.resume_emoji} size={14} className="shrink-0" />
-              )}
-              <span className="truncate">{folder.resume_hint}</span>
-            </div>
-          )}
+          {/* Row 2: LLM-generated mood + recap (height reserved for consistent cards) */}
+          <div
+            className="flex items-center gap-1.5 text-sm text-dim mt-1 h-5 leading-snug"
+            title={folder.resume_hint || ""}
+          >
+            {folder.resume_emoji && (
+              <FluentEmoji char={folder.resume_emoji} size={14} className="shrink-0" />
+            )}
+            <span className="truncate">{folder.resume_hint || ""}</span>
+          </div>
 
           {/* Row 3: status pill */}
           <div className="flex items-center gap-1.5 mt-1.5">
