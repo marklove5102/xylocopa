@@ -79,3 +79,4 @@ filter-callbacks.py
 research-*.txt
 .git.bak/
 frontend/dev-dist/
+frontend/vite.demo.config.js
