@@ -180,10 +180,13 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
 @router.post("/api/v2/tasks", response_model=TaskOut, status_code=201)
 async def create_task_v2(body: TaskCreate, db: Session = Depends(get_db)):
     """Create a new task. Starts as INBOX unless auto_dispatch is set."""
-    # Auto-generate title from description if blank
-    title = body.title.strip() if body.title else ""
+    # Auto-generate title from description if blank.
+    # Whitespace is collapsed to single spaces — titles must be single-line
+    # so content_matcher's task-prompt regex can strip the wrapper on JSONL
+    # sync (newlines in title break the dedup match → duplicate user bubble).
+    title = re.sub(r"\s+", " ", body.title).strip() if body.title else ""
     if not title and body.description:
-        desc = body.description.strip()
+        desc = re.sub(r"\s+", " ", body.description).strip()
         if len(desc) <= 60:
             title = desc
         else:
