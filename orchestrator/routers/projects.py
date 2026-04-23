@@ -756,8 +756,15 @@ Then pick an emoji that matches the actual work:
 Avoid frustrated faces (no 😩 😮‍💨 😤)."""
 
 
-def _collect_recent_turns(agent_id: str, db: Session, limit: int = 8) -> list[str] | None:
-    """Pull the last `limit` user+agent turns as short transcript lines, or None."""
+def _collect_recent_turns(agent_id: str, db: Session, limit: int = 8) -> dict | None:
+    """Snapshot for the LLM: original task, latest user intent, and recent turns.
+
+    Returns a dict with three anchors so the model doesn't drift to whatever the
+    last 8 turns happen to be about:
+      - task:     the agent's original prompt (stable through the whole session)
+      - intent:   the most recent user message (what was just asked)
+      - turns:    the last `limit` USER+AGENT turns, chronological
+    """
     msgs = (
         db.query(Message)
         .filter(
@@ -771,23 +778,34 @@ def _collect_recent_turns(agent_id: str, db: Session, limit: int = 8) -> list[st
     )
     if not msgs:
         return None
+
+    def _clip(text: str, n: int = 400) -> str:
+        text = " ".join((text or "").split())
+        return text[:n] + "…" if len(text) > n else text
+
+    latest_user = next((m for m in msgs if m.role == MessageRole.USER), None)
+    intent = _clip(latest_user.content, 300) if latest_user else None
+
     msgs.reverse()  # chronological
-    lines = []
+    turns = []
     for m in msgs:
-        text = (m.content or "").strip()
+        text = _clip(m.content or "")
         if not text:
             continue
-        # Squash whitespace; cap per-line to keep total prompt small
-        text = " ".join(text.split())
-        if len(text) > 400:
-            text = text[:400] + "…"
         role = "user" if m.role == MessageRole.USER else "agent"
-        lines.append(f"{role}: {text}")
-    return lines or None
+        turns.append(f"{role}: {text}")
+    if not turns:
+        return None
+
+    agent = db.get(Agent, agent_id)
+    task = (agent.name or "").strip() if agent else ""
+    task = _clip(task, 200)
+
+    return {"task": task, "intent": intent, "turns": turns}
 
 
-async def _call_llm_for_hint(transcript: list[str]) -> tuple[str | None, str | None]:
-    """Call gpt-4o-mini to summarize a short transcript. Returns (emoji, hint) or (None, None)."""
+async def _call_llm_for_hint(snapshot: dict) -> tuple[str | None, str | None]:
+    """Call gpt-4o-mini with three anchors (task / intent / turns). Returns (emoji, hint)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None, None
@@ -797,11 +815,21 @@ async def _call_llm_for_hint(transcript: list[str]) -> tuple[str | None, str | N
         logger.warning("openai package missing — skipping resume hint")
         return None, None
 
-    user_prompt = (
-        "Here are the last few turns of an agent's conversation. "
-        "Summarize what was just worked on.\n\n"
-        + "\n\n".join(transcript)
+    parts = []
+    if snapshot.get("task"):
+        parts.append(f"SESSION TASK (what this whole agent is for):\n  {snapshot['task']}")
+    if snapshot.get("intent"):
+        parts.append(f"LATEST USER INTENT (what was just asked):\n  {snapshot['intent']}")
+    parts.append(
+        "RECENT TURNS (last few messages, chronological):\n"
+        + "\n".join(f"  {t}" for t in snapshot["turns"])
     )
+    parts.append(
+        "Summarize what was just worked on. Anchor the summary to the SESSION "
+        "TASK and LATEST USER INTENT — don't drift to whatever tangent the last "
+        "turns happen to be about."
+    )
+    user_prompt = "\n\n".join(parts)
 
     client = AsyncOpenAI(api_key=api_key)
     try:
@@ -858,10 +886,10 @@ async def _refresh_resume_hint(agent_id: str):
             name = agent.name or ""
             if name.startswith("You are ") or len(name) > 200:
                 return
-            transcript = _collect_recent_turns(agent_id, db)
-            if not transcript:
+            snapshot = _collect_recent_turns(agent_id, db)
+            if not snapshot:
                 return
-            emoji, hint = await _call_llm_for_hint(transcript)
+            emoji, hint = await _call_llm_for_hint(snapshot)
             if not hint:
                 return
             proj = db.get(Project, agent.project)
