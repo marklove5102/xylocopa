@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2 } from "../lib/api";
 import { renderMarkdown, relativeTime } from "../lib/formatters";
 import { modelDisplayName } from "../lib/constants";
@@ -47,6 +47,7 @@ function isImagePath(p) { return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(p);
 
 export default function FloatingTaskCard({ taskId, onClose, onAction }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [task, setTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -285,7 +286,7 @@ export default function FloatingTaskCard({ taskId, onClose, onAction }) {
                     ))}
                     <button
                       type="button"
-                      onClick={() => { onClose(); navigate(`/agents/${task.attempt_agents[sel].agent_id}`); }}
+                      onClick={() => { onClose(); navigate(`/agents/${task.attempt_agents[sel].agent_id}`, { state: { from: location.pathname + location.search } }); }}
                       className="ml-auto text-[11px] font-medium text-cyan-500 hover:text-cyan-400 transition-colors"
                     >
                       Enter Chat &rarr;

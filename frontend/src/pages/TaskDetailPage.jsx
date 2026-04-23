@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2, dispatchTask, cancelTask } from "../lib/api";
 import { TASK_STATUS_COLORS, TASK_STATUS_TEXT_COLORS, projectBadgeColor, modelDisplayName, POLL_INTERVAL } from "../lib/constants";
 import { relativeTime, renderMarkdown, durationDisplay, elapsedDisplay, DATE_SHORT } from "../lib/formatters";
@@ -14,6 +14,7 @@ import useDraft from "../hooks/useDraft";
 export default function TaskDetailPage({ theme, onToggleTheme }) {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [task, setTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -417,7 +418,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 <code className="text-[10px] text-faint font-mono">{task.agent_id.slice(0, 8)}</code>
                 <button
                   type="button"
-                  onClick={() => navigate(`/agents/${task.agent_id}`)}
+                  onClick={() => navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } })}
                   className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 text-xs text-cyan-400 hover:bg-cyan-500/20 transition-colors font-medium"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -468,7 +469,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                     {arts.verify_agent_id && (
                       <button
                         type="button"
-                        onClick={() => navigate(`/agents/${arts.verify_agent_id}`)}
+                        onClick={() => navigate(`/agents/${arts.verify_agent_id}`, { state: { from: location.pathname + location.search } })}
                         className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
                       >
                         View verification agent
@@ -489,7 +490,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                 <a
                   href={`/agents/${task.merge_agent_id}`}
                   className="text-xs text-accent hover:underline ml-auto"
-                  onClick={(e) => { e.preventDefault(); navigate(`/agents/${task.merge_agent_id}`); }}
+                  onClick={(e) => { e.preventDefault(); navigate(`/agents/${task.merge_agent_id}`, { state: { from: location.pathname + location.search } }); }}
                 >
                   View merge agent
                 </a>

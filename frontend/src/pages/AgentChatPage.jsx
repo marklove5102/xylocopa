@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Component } from "react";
 import { Bell, BellOff } from "lucide-react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAgent,
   fetchDisplay,
@@ -2299,6 +2299,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const { id: routeId } = useParams();
   const id = propAgentId || routeId;
   const navigate = useNavigate();
+  const location = useLocation();
   const visible = usePageVisible();
   const [agent, setAgent] = useState(null);
   const [taskData, setTaskData] = useState(null);
@@ -3493,7 +3494,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => { if (onClose) onClose(); else navigate("/agents"); }}
+              onClick={() => { if (onClose) onClose(); else navigate(location.state?.from || "/agents"); }}
               className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
             >
               {embedded ? (
@@ -3684,7 +3685,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               {(isStopped || isError) && agent?.successor_id && (
                 <button
                   type="button"
-                  onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`)}
+                  onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: { from: location.pathname + location.search } })}
                   className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                 >
                   Continued
@@ -3739,7 +3740,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           {agent.parent_id && (
             <button
               type="button"
-              onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.parent_id) : navigate(`/agents/${agent.parent_id}`)}
+              onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.parent_id) : navigate(`/agents/${agent.parent_id}`, { state: { from: location.pathname + location.search } })}
               className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
             >
               <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -3843,7 +3844,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     {!isSelCurrent && (
                       <button
                         type="button"
-                        onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`)}
+                        onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`, { state: { from: location.pathname + location.search } })}
                         className="ml-auto text-[10px] text-orange-500 dark:text-orange-400 hover:underline"
                       >
                         Enter Chat →

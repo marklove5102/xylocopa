@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useId } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import useDraft from "../hooks/useDraft";
@@ -92,6 +92,7 @@ function MergeDropdown({ branchName, currentName, isMerging, disabled, onMerge }
 
 export default function GitPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // --- State ---
   const [projects, setProjects] = useState([]);
@@ -213,7 +214,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           skip_permissions: true,
           prompt,
         });
-        navigate(`/agents/${agent.id}`);
+        navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
       } catch (err) {
         addToast(`Merge error: ${err.message}`, "error");
       } finally {
@@ -265,7 +266,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `4) Commit and push to origin/${currentBranch}. ` +
           `Report what was committed and pushed.`,
       });
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       addToast(`Push error: ${err.message}`, "error");
     } finally {
@@ -318,7 +319,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `4) git branch -d <branch>. ` +
           `List worktrees first with 'git worktree list' to get exact paths.`,
       });
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       addToast(`Merge All error: ${err.message}`, "error");
     } finally {
@@ -362,7 +363,7 @@ export default function GitPage({ theme, onToggleTheme }) {
           `\n4) Run 'git branch -a' to show the final state.` +
           `\nReport a summary of what was merged, deleted, and skipped.`,
       });
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       addToast(`Cleanup error: ${err.message}`, "error");
     } finally {

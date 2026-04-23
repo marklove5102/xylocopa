@@ -463,7 +463,7 @@ function NewAgentForm({ showToast, navigate }) {
       }
       clearAllDrafts();
       clearAttachments();
-      navigate(`/agents/${agentId}`);
+      navigate(`/agents/${agentId}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {
@@ -485,7 +485,7 @@ function NewAgentForm({ showToast, navigate }) {
       clearAllDrafts();
       clearAttachments();
       const when = new Date(scheduledAt);
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     } finally {

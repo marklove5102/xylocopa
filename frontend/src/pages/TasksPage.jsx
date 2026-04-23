@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, batchProcessTasks } from "../lib/api";
 import PageHeader from "../components/PageHeader";
@@ -13,6 +13,7 @@ const INBOX_POLL_INTERVAL = 5000;
 
 export default function TasksPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({});
@@ -176,7 +177,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       const res = await batchProcessTasks(taskIds);
       if (res.agent_id) {
         if (selecting) exitSelectMode();
-        navigate(`/agents/${res.agent_id}`);
+        navigate(`/agents/${res.agent_id}`, { state: { from: location.pathname + location.search } });
       } else {
         showToast(res.message || "No tasks to process");
       }

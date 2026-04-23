@@ -336,7 +336,7 @@ export default function NewTaskPage({ embedded = false }) {
         el.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)';
         el.style.transform = 'translateY(100%)';
       }
-      setTimeout(() => navigate(`/agents/${dispatched.agent_id}`), 250);
+      setTimeout(() => navigate(`/agents/${dispatched.agent_id}`, { state: { from: location.pathname + location.search } }), 250);
     } catch (err) {
       showToast("Launch failed: " + err.message, "error");
     } finally {

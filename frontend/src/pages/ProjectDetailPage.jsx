@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAllFolders,
   fetchProjectAgents,
@@ -228,6 +228,7 @@ function formatSessionTime(unixMs) {
 
 function SessionRow({ session, project, projectActive, onResume, onError, onToggleStar }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [copied, setCopied] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -273,7 +274,7 @@ function SessionRow({ session, project, projectActive, onResume, onError, onTogg
         sync_session: true,
       });
       if (onResume) onResume();
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       setSyncing(false);
       if (onError) onError(err.message);
@@ -289,7 +290,7 @@ function SessionRow({ session, project, projectActive, onResume, onError, onTogg
     }
     // If already linked to an agent, navigate directly
     if (session.linked_agent_id) {
-      navigate(`/agents/${session.linked_agent_id}`);
+      navigate(`/agents/${session.linked_agent_id}`, { state: { from: location.pathname + location.search } });
       return;
     }
     // Otherwise, create a new agent that resumes this session
@@ -302,7 +303,7 @@ function SessionRow({ session, project, projectActive, onResume, onError, onTogg
         resume_session_id: session.session_id,
       });
       if (onResume) onResume();
-      navigate(`/agents/${agent.id}`);
+      navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } });
     } catch (err) {
       setResuming(false);
       if (onError) onError(err.message);
@@ -405,6 +406,7 @@ function SessionRow({ session, project, projectActive, onResume, onError, onTogg
 export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const { name } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const visible = usePageVisible();
 
   // Remember last-viewed project so the tab bar can auto-navigate back.
@@ -1093,7 +1095,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 key={agent.id}
                 agent={agent}
                 hideProjectTag
-                onClick={() => navigate(`/agents/${agent.id}`)}
+                onClick={() => navigate(`/agents/${agent.id}`, { state: { from: location.pathname + location.search } })}
               />
             ))}
           </div>

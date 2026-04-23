@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { projectBadgeColor, modelDisplayName } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
 import { updateTaskV2, cancelTask } from "../../lib/api";
@@ -23,6 +23,7 @@ function isImagePath(path) { return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(
 
 function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand, onRefresh }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const subState = task.planning_status || (!task.agent_id ? "queued" : "planning");
   const projColor = task.project_name ? projectBadgeColor(task.project_name) : "";
   const isExpanded = expanded && !selecting;
@@ -189,7 +190,7 @@ function PlanningCard({ task, selecting, selected, onToggle, expanded, onExpand,
                 {task.agent_id && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`); }}
+                    onClick={(e) => { e.stopPropagation(); navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } }); }}
                     className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center hover:bg-cyan-400 active:scale-90 transition-all"
                     title="View Conversation"
                   >

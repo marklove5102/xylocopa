@@ -23,7 +23,7 @@ export default function AttentionButton() {
       // Jump to oldest unread (FIFO — list[0] is oldest)
       const next = list[0];
       if (next) {
-        navigate(`/agents/${next.id}`);
+        navigate(`/agents/${next.id}`, { state: { from: location.pathname + location.search } });
         return;
       }
     }

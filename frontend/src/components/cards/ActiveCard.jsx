@@ -1,10 +1,11 @@
 import { memo, useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { elapsedDisplay } from "../../lib/formatters";
 import CardShell, { cardPadding } from "./CardShell";
 
 export default memo(function ActiveCard({ task, selecting, selected, onToggle }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [elapsed, setElapsed] = useState(task.elapsed_seconds || 0);
 
   useEffect(() => {
@@ -15,7 +16,7 @@ export default memo(function ActiveCard({ task, selecting, selected, onToggle })
 
   const handleClick = () => {
     if (selecting) { onToggle?.(task.id); return; }
-    if (task.agent_id) navigate(`/agents/${task.agent_id}`);
+    if (task.agent_id) navigate(`/agents/${task.agent_id}`, { state: { from: location.pathname + location.search } });
   };
 
   return (

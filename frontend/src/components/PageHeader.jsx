@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import useHealthStatus from "../hooks/useHealthStatus";
 import { useMonitor } from "../contexts/MonitorContext";
 import { restartServer, fetchHealth, fetchQueueStatus, updateProjectSettings, fetchViewingStatsWeek } from "../lib/api";
@@ -62,6 +62,7 @@ function QueueItem({ status, label, sub, dim, onClick }) {
 
 /* ── Queue Capacity Popover ── */
 function QueuePopover({ onClose, containerRef, navigate }) {
+  const location = useLocation();
   const [data, setData] = useState(null);
   const [showDone, setShowDone] = useState(false);
 
@@ -230,7 +231,7 @@ function QueuePopover({ onClose, containerRef, navigate }) {
                 label={a.task_title || a.name}
                 sub={(a.project || "").slice(0, 8)}
                 dim={!a.task_id}
-                onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`); }} />
+                onClick={() => { onClose(); navigate(`/agents/${a.agent_id}`, { state: { from: location.pathname + location.search } }); }} />
             ))}
           </div>
         )}
