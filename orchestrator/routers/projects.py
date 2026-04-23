@@ -724,32 +724,39 @@ _resume_hint_in_flight: set[str] = set()  # dedupe concurrent refreshes
 
 _RESUME_SYSTEM = """You describe what a programmer was last working on in a project.
 
-Write a 4-6 word past-tense phrase about the most recent real work session
-(~25 characters). Match the language of the agent names.
+ALWAYS respond in English regardless of the source language.
 
-If the most recent agent is just a triage/automation/meta script, OR there's
-no meaningful session to describe, respond with the single word: paused
+Tone: playful, casual, a little cheeky. Like a friend recapping your day,
+not a status report. Past tense. 4-6 words, ~25 characters.
 
-Examples of good hints (real work):
-  "fixed the emoji picker bug"
-  "优化了项目列表布局"
-  "explored fuzzy matching libs"
+If there are zero recent agents to summarize, respond with: snoozing
+Otherwise, ALWAYS describe the most recent real user task — never default
+to "snoozing" just because task names are in another language. Translate
+whatever the agent was working on into a playful English recap.
 
-Examples of bad hints (avoid these — they're vague filler):
+Good hints (playful past tense):
+  "polished those project cards"
+  "wrestled COLMAP into shape"
+  "chased a sneaky null pointer"
+  "shipped dark mode, finally"
+  "rabbit-holed on the picker"
+  "snoozing"
+
+Bad hints (avoid these — too formal or vague):
+  "Optimized the project list visuals"
   "Recent work has paused for reflection"
-  "Quiet pause, no recent progress"
   "Project on hold"
-For all of those, respond literally: paused
+  "Working on the emoji picker"
 
-Then pick an emoji that matches the work content (not the mood):
-- code work: 🔧 🛠 🐛
+Then pick an emoji that matches the actual work:
+- code / fixing: 🔧 🛠 🐛
 - design / UI: 🎨 ✨
 - exploring / research: 🔍 🤔
 - shipping / done: 🚀 🎉 🏆
 - iterating: 🌀 🧩
 - complex / hard: 🤯
-- paused: 💤
-- (use other relevant emoji from your knowledge if a more specific one fits)
+- snoozing: 💤
+- (use any other relevant emoji you know)
 
 Avoid frustrated faces (no 😩 😮‍💨 😤)."""
 
@@ -778,9 +785,15 @@ def _gather_resume_signals(project_name: str, db: Session) -> dict | None:
         db.query(Agent)
         .filter(Agent.project == project_name, Agent.is_subagent == False)  # noqa: E712
         .order_by(Agent.last_message_at.desc().nullslast())
-        .limit(5)
+        .limit(10)
         .all()
     )
+    # Drop triage/automation agents (their "names" are the actual system prompt).
+    # Real user-task agents have short, descriptive names.
+    def _is_meta(a):
+        n = a.name or ""
+        return n.startswith("You are ") or len(n) > 200
+    recent_agents = [a for a in recent_agents if not _is_meta(a)][:5]
     if not recent_agents:
         return None
 
