@@ -730,11 +730,12 @@ what to do next — only describe the vibe of recent activity.
 Emoji mood palette (pick whichever fits best, one glyph):
 - breakthrough / big win: 🎉 🚀 ✨ 💥 🏆
 - steady momentum: 💪 🔥 ⚡ 📈
-- debugging: 🐛 🔧 🛠
+- debugging / fixing: 🐛 🔧 🛠
 - exploring / thinking: 🤔 🧐 🔍
-- stuck / frustrated: 😩 🌀 🤯 😮‍💨
+- iterating / working through it: 🌀 🧩
 - quiet / paused: ☕ 💤 🌙
 
+Avoid faces that look frustrated or upset (no 😩 🤯 😮‍💨 😤).
 The hint is at most 40 characters. Match the language of the agent names
 (English, Chinese, mixed)."""
 
