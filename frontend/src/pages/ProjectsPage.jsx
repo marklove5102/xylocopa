@@ -28,6 +28,56 @@ function DragHandle({ listeners, attributes }) {
   );
 }
 
+function ProjectStatusBar({ folder, className = "" }) {
+  const weeklyTotal = folder.weekly_total || 0;
+  const completed = folder.weekly_completed || 0;
+  const failed = Math.max(0, weeklyTotal - completed);
+  const taskTotal = folder.active ? (folder.task_total || 0) : 0;
+  const taskCompleted = folder.task_completed || 0;
+  const taskPending = Math.max(0, taskTotal - taskCompleted);
+  const running = folder.active ? (folder.agent_active || 0) : 0;
+
+  const pctCompleted = weeklyTotal > 0 ? (completed / weeklyTotal) * 100 : 0;
+  const pctFailed = weeklyTotal > 0 ? (failed / weeklyTotal) * 100 : 0;
+
+  const hint = weeklyTotal > 0
+    ? `Week: ${completed} completed, ${failed} failed${running > 0 ? ` · ${running} running now` : ""}`
+    : running > 0
+      ? `${running} agent${running !== 1 ? "s" : ""} running`
+      : taskPending > 0
+        ? `${taskPending} task${taskPending !== 1 ? "s" : ""} queued`
+        : folder.active ? "Idle this week" : "No recent activity";
+
+  return (
+    <div
+      className={`relative h-1.5 rounded-full overflow-hidden bg-zinc-200/70 dark:bg-zinc-700/40 ${className}`}
+      title={hint}
+    >
+      {pctCompleted > 0 && (
+        <div
+          className="absolute top-0 left-0 h-full bg-emerald-400"
+          style={{ width: `${pctCompleted}%` }}
+        />
+      )}
+      {pctFailed > 0 && (
+        <div
+          className="absolute top-0 h-full bg-rose-400/80"
+          style={{ left: `${pctCompleted}%`, width: `${pctFailed}%` }}
+        />
+      )}
+      {weeklyTotal === 0 && taskPending > 0 && (
+        <div
+          className="absolute top-0 left-0 h-full bg-amber-400/70"
+          style={{ width: `${Math.min(100, taskPending * 6)}%` }}
+        />
+      )}
+      {running > 0 && (
+        <div className="absolute inset-0 bg-cyan-400/20 animate-pulse" />
+      )}
+    </div>
+  );
+}
+
 function SortableFolderCard(props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.folder.name });
   const style = {
@@ -46,7 +96,6 @@ function SortableFolderCard(props) {
 
 const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd }) {
   const running = folder.active ? (folder.agent_active || 0) : 0;
-  const taskTotal = folder.active ? (folder.task_total || 0) : 0;
 
   return (
     <button
@@ -62,49 +111,54 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
           <span className="relative">!</span>
         </span>
       )}
-      <div className="flex items-center gap-3 px-4 py-3">
+      <div className="flex items-start gap-4 px-5 py-4">
         {dragHandleProps && <DragHandle {...dragHandleProps} />}
         <ProjectRing
           emoji={folder.emoji}
           hasActiveAgents={running > 0}
-          size={28}
+          size={32}
+          className="self-center"
         />
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className={`text-[15px] font-semibold truncate ${folder.active ? "text-heading" : "text-dim"}`}>
-              {folder.display_name || folder.name}
-            </h3>
-            {running > 0 && (
-              <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-500 dark:text-cyan-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-glow" />
-                {running}
+          {/* Row 1: title + running pulse + time */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className={`text-[16px] font-semibold truncate ${folder.active ? "text-heading" : "text-dim"}`}>
+                {folder.display_name || folder.name}
+              </h3>
+              {running > 0 && (
+                <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-500 dark:text-cyan-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-glow" />
+                  {running}
+                </span>
+              )}
+            </div>
+            {folder.last_activity && (
+              <span className="text-[11px] text-faint shrink-0">
+                {relativeTime(folder.last_activity)}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-faint">
+
+          {/* Row 2: task-status color bar */}
+          <ProjectStatusBar folder={folder} className="mt-2" />
+
+          {/* Row 3: status pill */}
+          <div className="flex items-center gap-1.5 mt-2">
             {folder.active ? (
-              taskTotal > 0 ? (
-                <span><span className="text-dim font-medium">{taskTotal}</span> task{taskTotal !== 1 ? "s" : ""}</span>
-              ) : running > 0 ? (
-                <span className="text-dim">Working…</span>
-              ) : (
-                <span>Idle</span>
-              )
-            ) : folder.agent_count > 0 ? (
-              <span>Inactive · <span className="text-dim">{folder.agent_count}</span> agent{folder.agent_count !== 1 ? "s" : ""}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
+                Active
+              </span>
             ) : (
-              <span>No history</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-zinc-500/15 text-zinc-500 dark:text-zinc-400">
+                Inactive
+              </span>
             )}
           </div>
         </div>
 
-        {folder.last_activity && (
-          <span className="text-[11px] text-faint shrink-0">
-            {relativeTime(folder.last_activity)}
-          </span>
-        )}
-        <svg className="w-4 h-4 text-faint shrink-0 -mr-1" fill="none"
+        <svg className="w-4 h-4 text-faint shrink-0 self-center -mr-1" fill="none"
           stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
