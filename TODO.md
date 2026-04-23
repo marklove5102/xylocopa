@@ -38,7 +38,7 @@ handler uses, then unlink the files. Covers the exact failure above.
 
 **Fix B (larger, true tmux polling).** The docstring at
 `routers/hooks.py:1125` claims a "polling-based tmux scan fallback" exists
-as a complement to the push path — it does not. Implement it: periodically
+as a complement to the push path, it does not. Implement it: periodically
 `tmux list-panes -a -F '#{pane_pid} #{session_name}'`, walk each pane's
 child process tree for a `claude` executable, compare session names against
 `xy-*`/`ah-*` prefix and the `agents.tmux_pane` column, and write unlinked
@@ -57,8 +57,8 @@ Unify the two divergent project-listing endpoints (`/api/projects` reads DB,
 `/api/projects/folders` scans filesystem) into a single reconcile pipeline,
 and add a manually-triggered orphan cleanup script.
 
-**Status.** The immediate user-visible symptom — xylocopa repo missing
-from the Projects grid — was hand-patched on 2026-04-18 by deleting the
+**Status.** The immediate user-visible symptom, xylocopa repo missing
+from the Projects grid, was hand-patched on 2026-04-18 by deleting the
 stale `agenthive` DB row and creating
 `~/xylocopa-projects/xylocopa → /home/jyao073/xylocopa` symlink. This
 TODO is structural prevention, not a pending bug.
@@ -71,7 +71,7 @@ falls outside `PROJECTS_DIR` (e.g. xylocopa self-hosting) appear in the
 picker but not the grid. Manual fs deletes leave DB orphans; manual fs
 adds leave unregistered dirs. `registry.yaml` is a third source of truth
 seeded into DB on startup (`main.py:79`), and `_remove_from_registry()`
-writes back — so all three must stay in sync.
+writes back, so all three must stay in sync.
 
 **Proposed design.**
 - Single reconcile pass on app startup + manual refresh button:

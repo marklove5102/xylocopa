@@ -6,9 +6,9 @@ These instructions are run on the **client device** (the machine or phone you br
 scp user@server-ip:~/xylocopa-main/certs/selfsigned.crt ~/xylocopa.crt
 ```
 
-> **Tip:** If you're unsure how to install certificates on your OS, paste the relevant section below into Claude or another AI assistant — it can walk you through the steps interactively.
+> **Tip:** If you're unsure how to install certificates on your OS, paste the relevant section below into Claude or another AI assistant, it can walk you through the steps interactively.
 
-> **Migrating from AgentHive?** Existing `agenthive.crt` / `agenthive-ca.crt` installations remain trusted — no action needed. Newly issued certs use the `xylocopa.crt` filename.
+> **Migrating from AgentHive?** Existing `agenthive.crt` / `agenthive-ca.crt` installations remain trusted, no action needed. Newly issued certs use the `xylocopa.crt` filename.
 
 ## Android
 

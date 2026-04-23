@@ -14,7 +14,7 @@ Open a [GitHub issue](https://github.com/jyao97/xylocopa/issues) with:
 
 ## Suggesting Features
 
-Open a [GitHub issue](https://github.com/jyao97/xylocopa/issues) and label it as a feature request. Describe the use case and why the feature would be valuable. If you have ideas about implementation, include them — but the "why" matters more than the "how."
+Open a [GitHub issue](https://github.com/jyao97/xylocopa/issues) and label it as a feature request. Describe the use case and why the feature would be valuable. If you have ideas about implementation, include them, but the "why" matters more than the "how."
 
 ## Development Setup
 
@@ -74,7 +74,7 @@ cd frontend && npx vitest run
 ## Architecture
 
 Before making backend changes, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-It's a contributor's map of the codebase — especially the **four-layer message
+It's a contributor's map of the codebase, especially the **four-layer message
 sync pipeline** (JSONL → DB → display file → WebUI) and the single content-sync
 entry point (`AgentDispatcher.wake_sync`). A number of non-obvious invariants
 live there; violating them tends to produce subtle bugs rather than loud
@@ -84,7 +84,7 @@ errors.
 
 - Follow existing patterns in the codebase. Don't introduce new conventions.
 - Match the indentation, naming, and structure of surrounding code.
-- No unnecessary refactors or renames — keep changes focused on the task.
+- No unnecessary refactors or renames, keep changes focused on the task.
 
 ## State & Sync Logic
 
@@ -108,7 +108,7 @@ filesystem, another browser tab, another agent), these rules are non-negotiable:
 ## Submitting a Pull Request
 
 1. Fork the repository and create a branch from `master`.
-2. Keep PRs small and focused — one logical change per PR.
+2. Keep PRs small and focused, one logical change per PR.
 3. Write a clear description of what the PR does and why.
 4. Make sure tests pass before submitting.
 5. Use the commit message format: `[scope] brief description` (e.g., `[frontend] fix image zoom gesture`).
