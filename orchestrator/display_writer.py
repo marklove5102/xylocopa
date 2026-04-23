@@ -11,11 +11,15 @@ Design:
     - File writes use fcntl.flock to prevent interleaved lines
 
 Functions:
-    flush_agent       — append undisplayed messages to the display file
-    update_last       — append a replacement line for a streaming update
-    rebuild_agent     — rebuild the display file (append-only: new seq block)
-    delete_agent      — remove the display file
-    startup_rebuild_all — rebuild all active agents on server startup
+    flush_agent            — append undisplayed messages to the display file
+    update_last            — append a replacement line for a streaming update
+    flush_queued_entry     — append a `_queued` line for a pre-delivery msg
+    update_queued_entry    — append a `_queued + _replace` line
+    mark_deleted           — append a `{_deleted: true}` tombstone
+    promote_to_delivered   — atomically tombstone queued + write delivered
+    rebuild_agent          — rebuild the display file (append-only: new seq block)
+    delete_agent           — remove the display file
+    startup_rebuild_all    — rebuild all active agents on server startup
 """
 
 import fcntl
@@ -99,14 +103,11 @@ def transform_for_display(role: str | None, content: str | None,
     return content, metadata
 
 
-def _serialize_message(msg: Message, seq: int, replace: bool = False) -> str:
-    """Serialize a Message to a JSON line for the display file.
+def _prepare_display_fields(msg: Message) -> tuple[str | None, str | None, dict | None]:
+    """Parse meta_json, resolve tool_use_id, and apply display transforms.
 
-    Fields: id, seq, role, kind, content, source, status, metadata,
-    tool_use_id, created_at, completed_at, delivered_at.
-    If replace=True, add "_replace": true.
+    Returns (role_val, content, metadata).
     """
-    # Parse metadata from meta_json
     metadata = None
     if msg.meta_json:
         try:
@@ -122,10 +123,24 @@ def _serialize_message(msg: Message, seq: int, replace: bool = False) -> str:
                 tool_use_id = item["tool_use_id"]
                 break
 
-    # Apply display transformations (attachment stripping, stop-note
-    # parsing, task-notification XML, display_content override).
     role_val = msg.role.value if msg.role else None
     content, metadata = transform_for_display(role_val, msg.content, metadata)
+
+    # Stash resolved tool_use_id back onto msg attr for serializers without
+    # re-running the extraction. Non-persisting — just a local attribute.
+    msg._resolved_tool_use_id = tool_use_id
+    return role_val, content, metadata
+
+
+def _serialize_message(msg: Message, seq: int, replace: bool = False) -> str:
+    """Serialize a delivered Message to a JSON line for the display file.
+
+    Fields: id, seq, role, kind, content, source, status, metadata,
+    tool_use_id, created_at, completed_at, delivered_at.
+    If replace=True, add "_replace": true.
+    """
+    role_val, content, metadata = _prepare_display_fields(msg)
+    tool_use_id = getattr(msg, "_resolved_tool_use_id", None)
 
     obj = {
         "id": msg.id,
@@ -145,6 +160,43 @@ def _serialize_message(msg: Message, seq: int, replace: bool = False) -> str:
         obj["_replace"] = True
 
     return json.dumps(obj, separators=(",", ":"))
+
+
+def _serialize_queued(msg: Message, replace: bool = False) -> str:
+    """Serialize a pre-delivery (queued) Message as a `_queued` JSONL line.
+
+    No `seq` field — queued entries are not part of the main partition.
+    Carries the same fields the frontend's queued-bubble render consumes
+    from the DB fallback MessageOut: id, role, content, status, source,
+    metadata, created_at, scheduled_at, delivered_at (null), tool_use_id,
+    kind.
+    """
+    role_val, content, metadata = _prepare_display_fields(msg)
+    tool_use_id = getattr(msg, "_resolved_tool_use_id", None)
+
+    obj = {
+        "id": msg.id,
+        "_queued": True,
+        "role": role_val,
+        "kind": msg.kind if hasattr(msg, "kind") else None,
+        "content": content,
+        "source": msg.source,
+        "status": msg.status.value if msg.status else None,
+        "metadata": metadata,
+        "tool_use_id": tool_use_id,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
+        "completed_at": msg.completed_at.isoformat() if msg.completed_at else None,
+        "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
+    }
+    if replace:
+        obj["_replace"] = True
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def _serialize_tombstone(message_id: str) -> str:
+    """Serialize a tombstone marker removing `message_id` from display."""
+    return json.dumps({"id": message_id, "_deleted": True}, separators=(",", ":"))
 
 
 def _write_locked(path: str, lines: list[str]):
@@ -283,6 +335,148 @@ def update_last(agent_id: str, message_id: str):
         flush_agent(agent_id)
 
 
+def flush_queued_entry(agent_id: str, message_id: str):
+    """Append a `_queued` line for a pre-delivery message.
+
+    Precondition: caller committed a Message row with `delivered_at IS NULL`
+    and `display_seq IS NULL`. Does NOT allocate `display_seq` — the entry
+    sits in the queued partition until `promote_to_delivered` runs.
+    """
+    db = SessionLocal()
+    try:
+        msg = db.get(Message, message_id)
+        if not msg or msg.agent_id != agent_id:
+            return
+        if msg.display_seq is not None:
+            logger.warning(
+                "flush_queued_entry: msg %s already has display_seq=%d — skipping",
+                message_id, msg.display_seq,
+            )
+            return
+
+        os.makedirs(DISPLAY_DIR, exist_ok=True)
+        path = _display_path(agent_id)
+        line = _serialize_queued(msg)
+        _write_locked(path, [line])
+    except Exception:
+        logger.exception(
+            "Failed to write queued display entry for agent %s msg %s",
+            agent_id[:8], message_id,
+        )
+    finally:
+        db.close()
+
+
+def update_queued_entry(agent_id: str, message_id: str):
+    """Append a `_queued + _replace` line updating a pre-delivery message.
+
+    Used for content edits, PENDING→QUEUED transitions, and interactive-card
+    metadata changes before delivery. Caller must have committed DB first.
+    If the message has already been promoted (display_seq is not NULL), logs
+    a warning and no-ops — Phase 2 branching should prevent this case.
+    """
+    db = SessionLocal()
+    try:
+        msg = db.get(Message, message_id)
+        if not msg or msg.agent_id != agent_id:
+            return
+        if msg.display_seq is not None:
+            logger.warning(
+                "update_queued_entry: msg %s already promoted (display_seq=%d) — no-op",
+                message_id, msg.display_seq,
+            )
+            return
+
+        os.makedirs(DISPLAY_DIR, exist_ok=True)
+        path = _display_path(agent_id)
+        line = _serialize_queued(msg, replace=True)
+        _write_locked(path, [line])
+    except Exception:
+        logger.exception(
+            "Failed to update queued display entry for agent %s msg %s",
+            agent_id[:8], message_id,
+        )
+    finally:
+        db.close()
+
+
+def mark_deleted(agent_id: str, message_id: str):
+    """Append a tombstone marker. Readers drop any entry whose winning line
+    has `_deleted: true`. No DB interaction — semantics are caller's choice.
+    """
+    try:
+        os.makedirs(DISPLAY_DIR, exist_ok=True)
+        path = _display_path(agent_id)
+        _write_locked(path, [_serialize_tombstone(message_id)])
+    except Exception:
+        logger.exception(
+            "Failed to write tombstone for agent %s msg %s",
+            agent_id[:8], message_id,
+        )
+
+
+def promote_to_delivered(agent_id: str, message_id: str):
+    """Atomically move a queued entry to the delivered partition.
+
+    Under a single flock: append (a) tombstone `{id, _deleted: true}` and
+    (b) the full regular entry with freshly allocated `display_seq`. Then
+    commit `display_seq` on the DB row.
+
+    Precondition: DB row has `delivered_at` set. If `display_seq` is already
+    set (raced — another path promoted first), degrades to `update_last`
+    behavior (append a `_replace` line with the existing seq).
+    """
+    db = SessionLocal()
+    try:
+        msg = db.get(Message, message_id)
+        if not msg or msg.agent_id != agent_id:
+            return
+
+        os.makedirs(DISPLAY_DIR, exist_ok=True)
+        path = _display_path(agent_id)
+
+        # Race-guard: already promoted — degrade to replace-in-place.
+        if msg.display_seq is not None:
+            logger.debug(
+                "promote_to_delivered: msg %s already promoted (seq=%d) — degrading to update_last",
+                message_id, msg.display_seq,
+            )
+            line = _serialize_message(msg, msg.display_seq, replace=True)
+            _write_locked(path, [line])
+            return
+
+        # Allocate next display_seq using the same rule as flush_agent.
+        max_seq = db.query(func.max(Message.display_seq)).filter(
+            Message.agent_id == agent_id,
+        ).scalar()
+        next_seq = (max_seq or 0) + 1
+
+        tombstone = _serialize_tombstone(message_id)
+        delivered_line = _serialize_message(msg, next_seq)
+
+        # Single flock covers tombstone + delivered entry so readers never
+        # observe the id present in both partitions simultaneously.
+        try:
+            _write_locked(path, [tombstone, delivered_line])
+        except OSError:
+            logger.exception(
+                "promote_to_delivered: file write failed for agent %s msg %s",
+                agent_id[:8], message_id,
+            )
+            return
+
+        msg.display_seq = next_seq
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Failed to promote queued→delivered for agent %s msg %s",
+            agent_id[:8], message_id,
+        )
+    finally:
+        db.close()
+
+
 def rebuild_agent(agent_id: str):
     """Rebuild display file from scratch.
 
@@ -314,6 +508,41 @@ def rebuild_agent(agent_id: str):
         pass  # file may not exist yet — flush_agent will create it
 
     flush_agent(agent_id)
+
+    # Also re-emit any pre-delivery queued entries so the queued partition
+    # survives rebuild. Reader dedup by id handles any overlap safely.
+    db = SessionLocal()
+    try:
+        queued = (
+            db.query(Message)
+            .filter(
+                Message.agent_id == agent_id,
+                Message.delivered_at.is_(None),
+                Message.status != MessageStatus.CANCELLED,
+                Message.source.in_(("web", "plan_continue", "task")),
+                Message.display_seq.is_(None),
+            )
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        if not queued:
+            return
+        os.makedirs(DISPLAY_DIR, exist_ok=True)
+        lines = [_serialize_queued(m) for m in queued]
+        try:
+            _write_locked(path, lines)
+        except OSError:
+            logger.exception(
+                "rebuild_agent: failed to append queued entries for agent %s",
+                agent_id[:8],
+            )
+    except Exception:
+        logger.exception(
+            "rebuild_agent: failed to query queued messages for agent %s",
+            agent_id[:8],
+        )
+    finally:
+        db.close()
 
 
 def delete_agent(agent_id: str):

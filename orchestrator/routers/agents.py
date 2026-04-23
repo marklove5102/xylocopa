@@ -2544,7 +2544,8 @@ async def get_agent_display(
     except OSError:
         return empty
 
-    # Parse lines, dedup by id (last occurrence wins for _replace entries)
+    # Parse lines, dedup by id (last occurrence wins across ALL entry types:
+    # regular, _replace, _queued, _queued+_replace, _deleted tombstone).
     seen: dict[str, DisplayEntry] = {}
     for line in raw.split("\n"):
         line = line.strip()
@@ -2562,24 +2563,41 @@ async def get_agent_display(
             continue
         seen[entry.id] = entry
 
-    messages = list(seen.values())
+    # Partition the winners: delivered (has seq, not queued, not deleted),
+    # queued (_queued true, not deleted). Drop tombstoned entries entirely.
+    displayed: list[DisplayEntry] = []
+    queued_from_file: list[DisplayEntry] = []
+    for entry in seen.values():
+        if entry.deleted:
+            continue
+        if entry.queued:
+            queued_from_file.append(entry)
+        elif entry.seq is not None:
+            displayed.append(entry)
+        # else: malformed — skip silently
 
-    # Queued messages: sent from web/plan but not yet in the display file
-    queued = (
-        db.query(Message)
-        .filter(
-            Message.agent_id == agent_id,
-            Message.source.in_(("web", "plan_continue", "task")),
-            Message.display_seq.is_(None),
+    # Fallback to DB query when the file has no queued partition yet. Phase
+    # 2A will gate this behind a feature flag; Phase 1 keeps dual-path so
+    # nothing regresses before writer callsites migrate.
+    if queued_from_file:
+        queued_out: list = queued_from_file
+    else:
+        queued_rows = (
+            db.query(Message)
+            .filter(
+                Message.agent_id == agent_id,
+                Message.source.in_(("web", "plan_continue", "task")),
+                Message.display_seq.is_(None),
+            )
+            .order_by(Message.created_at.asc())
+            .all()
         )
-        .order_by(Message.created_at.asc())
-        .all()
-    )
+        queued_out = [_apply_display_content(m) for m in queued_rows]
 
     return DisplayResponse(
-        messages=messages,
+        messages=displayed,
         next_offset=next_offset,
-        queued=[_apply_display_content(m) for m in queued],
+        queued=queued_out,
         has_earlier=has_earlier,
     )
 

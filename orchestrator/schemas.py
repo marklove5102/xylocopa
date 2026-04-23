@@ -215,20 +215,29 @@ class MessageOut(BaseModel):
 
 class DisplayEntry(BaseModel):
     id: str
-    seq: int
-    role: MessageRole
+    # seq is optional: absent on queued/tombstone entries. Only delivered
+    # entries carry a seq; the reader partitions on its presence.
+    seq: int | None = None
+    role: MessageRole | None = None
     kind: str | None = None
-    content: str
+    content: str | None = None
     source: str | None = None
-    status: MessageStatus
+    status: MessageStatus | None = None
     metadata: dict | None = None
     tool_use_id: str | None = None
-    created_at: datetime
+    created_at: datetime | None = None
     completed_at: datetime | None = None
+    scheduled_at: datetime | None = None
     delivered_at: datetime | None = None
     session_seq: int | None = None
+    # Partition markers (leading underscores in JSON → aliased fields).
+    queued: bool | None = Field(default=None, alias="_queued")
+    replace: bool | None = Field(default=None, alias="_replace")
+    deleted: bool | None = Field(default=None, alias="_deleted")
 
-    @field_validator("created_at", "completed_at", "delivered_at", mode="before")
+    model_config = {"populate_by_name": True}
+
+    @field_validator("created_at", "completed_at", "scheduled_at", "delivered_at", mode="before")
     @classmethod
     def ensure_utc_display(cls, v):
         if v is not None and isinstance(v, datetime) and v.tzinfo is None:
@@ -239,7 +248,7 @@ class DisplayEntry(BaseModel):
 class DisplayResponse(BaseModel):
     messages: list[DisplayEntry]
     next_offset: int
-    queued: list[MessageOut]
+    queued: list[MessageOut | DisplayEntry]
     has_earlier: bool
 
 
