@@ -733,9 +733,10 @@ Emoji mood palette (pick whichever fits best, one glyph):
 - debugging / fixing: 🐛 🔧 🛠
 - exploring / thinking: 🤔 🧐 🔍
 - iterating / working through it: 🌀 🧩
+- mind-blown / complex challenge: 🤯
 - quiet / paused: ☕ 💤 🌙
 
-Avoid faces that look frustrated or upset (no 😩 🤯 😮‍💨 😤).
+Avoid faces that look frustrated or upset (no 😩 😮‍💨 😤).
 The hint is at most 40 characters. Match the language of the agent names
 (English, Chinese, mixed)."""
 

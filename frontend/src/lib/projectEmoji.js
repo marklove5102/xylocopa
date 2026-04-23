@@ -152,6 +152,7 @@ export const FLUENT_MAP = {
   "🧐": "Face with monocle",
   "🔍": "Magnifying glass tilted left",
   "🌀": "Cyclone",
+  "🤯": "Exploding head",
   "💤": "Zzz",
   "😊": "Smiling face with smiling eyes",
   "🙂": "Slightly smiling face",
