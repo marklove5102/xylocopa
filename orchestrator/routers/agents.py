@@ -2794,12 +2794,23 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
 async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Cancel a pending/queued/scheduled message."""
+    """Cancel or delete a message.
+
+    PENDING/QUEUED → soft-cancel (status → CANCELLED, bubble greyed in place).
+    CANCELLED       → hard delete (row removed from DB).
+    """
     msg = db.get(Message, message_id)
     if not msg or msg.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="Message not found")
+    if msg.status == MessageStatus.CANCELLED:
+        db.delete(msg)
+        db.commit()
+        logger.info("Message %s hard-deleted for agent %s", message_id, agent_id)
+        from websocket import emit_message_update
+        await emit_message_update(agent_id, message_id, "DELETED")
+        return {"detail": "Message deleted"}
     if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
-        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be cancelled")
+        raise HTTPException(status_code=400, detail="Only PENDING, QUEUED, or CANCELLED messages can be removed")
     msg.status = MessageStatus.CANCELLED
     db.commit()
     logger.info("Message %s cancelled for agent %s", message_id, agent_id)

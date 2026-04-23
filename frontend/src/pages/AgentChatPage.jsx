@@ -1157,10 +1157,13 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   }, [editing]);
 
   const canModify = isScheduled || isPending;
+  // Cancelled bubbles only get a "delete" action (hard remove from DB).
+  const canRemoveCancelled = isCancelled;
+  const canShowActions = canModify || canRemoveCancelled;
 
   const handleLongPressStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
-    if (!canModify) return;
+    if (!canShowActions) return;
     longPressTimer.current = setTimeout(() => {
       setShowActions(true);
     }, LONG_PRESS_DELAY);
@@ -1174,7 +1177,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     // Skip if the finger moved significantly (scroll gesture, not a tap)
     const endY = e.changedTouches?.[0]?.clientY ?? 0;
     const movedTooFar = Math.abs(endY - touchStartYRef.current) > 10;
-    if (!canModify && !movedTooFar) {
+    if (!canShowActions && !movedTooFar) {
       const now = Date.now();
       if (now - lastTapRef.current < DOUBLE_TAP_WINDOW) {
         handleDoubleClick();
@@ -1183,7 +1186,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   };
   const handleDoubleClick = () => {
-    if (canModify) {
+    if (canShowActions) {
       setShowActions(true);
       return;
     }
@@ -1321,7 +1324,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
-      <div className={`max-w-[min(85%,30rem)] min-w-0 relative overflow-hidden ${isUser ? "flex flex-col items-end" : ""}`}>
+      <div className={`max-w-[min(85%,30rem)] min-w-0 relative ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className={isUser ? "flex items-center gap-2 max-w-full" : undefined}>
         {isUndeliveredTimedOut && (
           <div className="flex-shrink-0 text-red-400" title="Message not delivered — Claude may not have received this">
@@ -1495,7 +1498,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {!isUser && message.metadata?.interactive?.length > 0 && (
           <InteractiveBubbles metadata={message.metadata} agentId={agentId} onAnswered={onRefresh} messageContent={message.content} project={project} />
         )}
-        {/* Action popover for scheduled/pending messages */}
+        {/* Action popover for scheduled/pending/cancelled messages */}
         {showActions && (
           <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
@@ -1511,20 +1514,22 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   </svg>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleEdit}
-                title="Edit"
-                className="px-3 py-2 text-heading hover:bg-input transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
+              {canModify && (
+                <button
+                  type="button"
+                  onClick={handleEdit}
+                  title="Edit"
+                  className="px-3 py-2 text-heading hover:bg-input transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleCancel}
-                title="Cancel"
+                title={isCancelled ? "Delete" : "Cancel"}
                 className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -3154,6 +3159,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
     if (event.type === "message_update") {
       const { message_id, status, error_message, completed_at } = event.data;
+      if (status === "DELETED") {
+        setMessages((prev) => prev.filter((m) => m.id !== message_id));
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) => (m.id === message_id
           ? { ...m, status, ...(error_message ? { error_message } : {}), ...(completed_at ? { completed_at } : {}) }
@@ -3297,12 +3306,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Cancel a scheduled/pending message
+  // Cancel a scheduled/pending message, or hard-delete an already-cancelled one.
   const handleCancelMessage = async (messageId) => {
+    const wasAlreadyCancelled = messages.find((m) => m.id === messageId)?.status === "CANCELLED";
     try {
       await cancelMessage(id, messageId);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      showToast("Message cancelled");
+      showToast(wasAlreadyCancelled ? "Message deleted" : "Message cancelled");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
