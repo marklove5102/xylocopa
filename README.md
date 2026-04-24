@@ -11,7 +11,7 @@
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea): the blue carpenter bee._
 
-**Tasks in. Agents out. Lessons kept.**
+Xylocopa aims to help you navigate attention across many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) projects. Inspired by [GTD](https://gettingthingsdone.com/what-is-gtd/) — except here, agents do the work, not you.
 
 A star helps others find it :)
 
@@ -96,7 +96,7 @@ Xylocopa wraps the same `claude` CLI you already use, launched inside tmux sessi
 
 ### Built for Reliability
 
-Xylocopa hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s native event system (no polling, no heuristics). Message delivery uses stop-hook dispatch with guaranteed ordering; session lifecycle is tracked via SessionStart/SessionEnd. Each agent runs in its own tmux session on a dedicated git worktree. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations even under `--dangerously-skip-permissions`.
+Xylocopa hooks into Claude Code's native event system (no polling, no heuristics). Message delivery uses stop-hook dispatch with guaranteed ordering; session lifecycle is tracked via SessionStart/SessionEnd. Each agent runs in its own tmux session on a dedicated git worktree. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations even under `--dangerously-skip-permissions`.
 
 ### Durable by Default
 
