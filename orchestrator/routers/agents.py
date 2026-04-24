@@ -942,9 +942,11 @@ async def _launch_tmux_background(
         # Two phases:
         #   a) Detect the claude process in the pane
         #   b) Wait for the TUI input prompt (❯) to appear in the pane content
+        # Poll every 200ms — real TUI startup is ~400ms in trusted dirs,
+        # so sleep(1) wasted ~2s of the first-prompt latency.
         process_detected = False
-        for _ in range(_TUI_STARTUP_TIMEOUT):
-            await asyncio.sleep(1)
+        for _ in range(_TUI_STARTUP_TIMEOUT * 5):
+            await asyncio.sleep(0.2)
             pane_map = _build_tmux_claude_map()
             if pane_id in pane_map and not pane_map[pane_id]["is_orchestrator"]:
                 process_detected = True
@@ -969,8 +971,8 @@ async def _launch_tmux_background(
         # was regenerated.  If detected, we press Enter to accept it.
         tui_ready = False
         trust_dialog_handled = False
-        for _ in range(_TUI_STARTUP_TIMEOUT):
-            await asyncio.sleep(1)
+        for _ in range(_TUI_STARTUP_TIMEOUT * 5):
+            await asyncio.sleep(0.2)
             pane_text = capture_tmux_pane(pane_id)
             if pane_text is None:
                 continue
