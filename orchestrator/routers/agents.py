@@ -2900,8 +2900,9 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
     from display_writer import mark_deleted as _cancel_mark_deleted
     _cancel_mark_deleted(agent_id, message_id)
     logger.info("Message %s cancelled for agent %s", message_id, agent_id)
-    from websocket import emit_message_update
-    await emit_message_update(agent_id, message_id, "CANCELLED")
+    # No WS message_update event — the tombstone in the display file is the
+    # single source of truth for cancellation; the old status-broadcast
+    # was a legacy dual-path signal that the frontend no longer consumes.
     return {"detail": "Message cancelled"}
 
 
