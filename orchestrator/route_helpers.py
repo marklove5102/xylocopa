@@ -29,8 +29,12 @@ TMUX_CMD_TIMEOUT = 5
 # Maximum seconds to wait for Claude TUI to start / initialize
 TUI_STARTUP_TIMEOUT = 30
 
-# Seconds to settle after TUI REPL mount before sending prompt
-TUI_SETTLE_DELAY = 3
+# Seconds to settle after TUI REPL mount before sending prompt.
+# The status bar detection in _launch_tmux_background is the
+# "REPL fully mounted" signal; showSetupScreens finishes ~200ms
+# earlier, so a small buffer here is enough to be sure the input
+# handler is wired up. Larger values just pad first-prompt latency.
+TUI_SETTLE_DELAY = 0.5
 
 # Max file size for project browser (bytes)
 BROWSE_MAX_FILE_SIZE = 512 * 1024  # 512 KB
