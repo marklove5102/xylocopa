@@ -159,6 +159,19 @@ class _AgentBase(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("created_at", "last_message_at", "deferred_to", mode="before")
+    @classmethod
+    def ensure_utc_agent(cls, v):
+        """Ensure datetime fields carry UTC tzinfo (SQLite drops it).
+
+        Why: naive datetimes serialize without a timezone designator, and
+        `new Date("2026-04-24T16:00:00")` is interpreted as LOCAL time by
+        browsers — breaking `deferred_to > now` comparisons in the UI.
+        """
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
 
 class AgentOut(_AgentBase):
     cli_sync: bool = True
