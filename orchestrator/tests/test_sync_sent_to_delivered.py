@@ -95,7 +95,8 @@ def _mk_sync_context(agent_id: str):
 # ---------------------------------------------------------------------------
 
 
-def test_sync_matches_sent_row_and_marks_delivered(sync_env):
+@pytest.mark.anyio
+async def test_sync_matches_sent_row_and_marks_delivered(sync_env):
     """A sent-state DB row matching a JSONL user turn transitions to delivered."""
     from sync_engine import _promote_or_create_user_msg
 
@@ -159,7 +160,8 @@ def test_sync_matches_sent_row_and_marks_delivered(sync_env):
         db.close()
 
 
-def test_sync_creates_cli_on_no_match(sync_env):
+@pytest.mark.anyio
+async def test_sync_creates_cli_on_no_match(sync_env):
     """With no sent candidates, a JSONL user turn creates a fresh CLI row."""
     from sync_engine import _promote_or_create_user_msg
 
@@ -192,7 +194,8 @@ def test_sync_creates_cli_on_no_match(sync_env):
         db.close()
 
 
-def test_sync_skips_row_already_delivered(sync_env):
+@pytest.mark.anyio
+async def test_sync_skips_row_already_delivered(sync_env):
     """Rows with delivered_at already set are excluded from the match pool."""
     from sync_engine import _promote_or_create_user_msg
 
@@ -240,7 +243,8 @@ def test_sync_skips_row_already_delivered(sync_env):
         db.close()
 
 
-def test_sync_uuid_dedup_skips_already_imported(sync_env):
+@pytest.mark.anyio
+async def test_sync_uuid_dedup_skips_already_imported(sync_env):
     """UUID dedup path: a matching jsonl_uuid returns None with no insert."""
     from sync_engine import _promote_or_create_user_msg
 
