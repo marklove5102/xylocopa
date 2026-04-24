@@ -30,7 +30,7 @@ Query, Tailwind), SQLite, tmux.
 | `models.py` | SQLAlchemy ORM (Agent, Message, Project, Task, …) |
 | `schemas.py` | Pydantic request/response models |
 | `permissions.py` | In-memory permission manager for supervised (non-Auto) agents |
-| `notify.py` / `push.py` | Web Push (VAPID) + Telegram notifications |
+| `notify.py` / `push.py` | Web Push (VAPID) notifications |
 | `mcp_server.py` | MCP server exposing cross-session reference tool |
 
 ## Message sync pipeline

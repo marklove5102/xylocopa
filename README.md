@@ -49,7 +49,7 @@ Watch everything in real time, from desk or phone.
 - **Dual-directional CLI sync**: CLI sessions show up in the web app; web sessions are resumable from the CLI via `tmux attach -t xy-<id>` (legacy `ah-` still recognized).
 
   ![CLI sync demo](docs/cli-sync.gif)
-- **Smart notifications**: Web Push and Telegram, suppressed when you're already viewing the agent (WebSocket or tmux). Permission requests always cut through.
+- **Smart notifications**: Web Push, suppressed when you're already viewing the agent (WebSocket or tmux). Permission requests always cut through.
 - **System monitoring**: disk, memory, GPU, token usage.
 
 ### 4. Review
@@ -126,7 +126,7 @@ Nothing you run through Xylocopa is ephemeral. Every layer is designed to surviv
 
 | Category | What you get |
 |---|---|
-| **Smart Notifications** | Hook-based notification system with dual-channel in-use detection, automatically notifies when you're away and stays quiet when you're present. Web Push (VAPID) and Telegram. Per-agent mute, global toggles. |
+| **Smart Notifications** | Hook-based notification system with dual-channel in-use detection, automatically notifies when you're away and stays quiet when you're present. Web Push (VAPID). Per-agent mute, global toggles. |
 | **Task Management** | Inbox with drag-to-reorder. Voice input. Lightning capture. Draft persistence. Per-project organization. Retry with auto-summarization. |
 | **Agent Control** | Start, stop, **one-click resume** of STOPPED/ERROR agents (re-sync to existing tmux or relaunch via `claude --resume`). Per-agent model selection (Opus/Sonnet/Haiku). Configurable timeouts and permission modes. AI batch dispatch. RAG-powered context from past sessions. Cross-session reference via MCP, agents read each other's curated display files (~54× fewer tokens than raw JSONL), keeping cross-references fast and context-window-friendly. |
 | **Chat Interface** | Rich markdown rendering (code blocks, tables, images). Inline media preview. Plan mode with approve/reject. Interactive tool confirmation cards. |
