@@ -2861,20 +2861,22 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
 async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Soft-cancel or hide a user message.
+    """Soft-cancel a pre-delivery message.
 
-    PENDING/QUEUED → mark status CANCELLED, then tombstone on the display
-    file so the bubble vanishes.
-    CANCELLED      → idempotent: just append a tombstone. Covers orphan
-    rows from pre-refactor code paths whose bubble is still visible in
-    the display file.
-    Anything else (COMPLETED/EXECUTING/...) → 400.
+    Only PENDING/QUEUED messages can be cancelled. The DB row is marked
+    CANCELLED and a `_deleted` tombstone is appended to the display file
+    so the queued bubble disappears immediately. Hard-delete is no longer
+    needed — the tombstone makes the message vanish from the UI.
+
+    Intentionally strict: any other status (including already-CANCELLED)
+    returns 400 so orphan / inconsistent state surfaces loudly instead
+    of being silently papered over.
     """
     msg = db.get(Message, message_id)
     if not msg or msg.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED, MessageStatus.CANCELLED):
-        raise HTTPException(status_code=400, detail="Only pre-delivery messages can be cancelled")
+    if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
+        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be cancelled")
     msg.status = MessageStatus.CANCELLED
     db.commit()
     from display_writer import mark_deleted as _cancel_mark_deleted

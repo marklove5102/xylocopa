@@ -180,7 +180,11 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
             logger.debug("Agent %s: dedup skip uuid=%s", ctx.agent_id[:8], jsonl_uuid)
             return None
 
-    # 2. Fetch promotion candidates (unlinked web/task messages)
+    # 2. Fetch promotion candidates (unlinked web/task messages).
+    # Exclude CANCELLED: a cancelled row must not be promoted — doing so
+    # sets delivered_at while status stays CANCELLED, creating an orphan
+    # visible in the main display partition. If content matches a later
+    # JSONL turn, treat it as a fresh CLI-typed user input instead.
     candidates = (
         db.query(Message)
         .filter(
@@ -192,6 +196,7 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                 Message.source == "task",
             ),
             Message.jsonl_uuid.is_(None),
+            Message.status != MessageStatus.CANCELLED,
         )
         .order_by(Message.created_at.asc())
         .all()
@@ -575,16 +580,21 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         ctx.last_offset = current_size
         ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
 
-        # Flush new messages to display file
-        from display_writer import flush_agent as _flush_display
-        _flush_display(ctx.agent_id)
-
-        # Flush deferred promotions — post-commit so the display_writer
-        # session sees the new delivered_at / status values.
+        # Order matters: promote_to_delivered MUST run before flush_agent.
+        # _promote_or_create_user_msg set delivered_at on the web row, so
+        # flush_agent would otherwise pick it up (USER + delivered_at set,
+        # display_seq NULL), allocate a display_seq, and steal the slot —
+        # turning promote_to_delivered into a no-op degrade-to-replace and
+        # leaving an orphan regular entry with no tombstone.
         if _deferred_promotions:
             from display_writer import promote_to_delivered as _promote_display
             for _promoted_id in _deferred_promotions:
                 _promote_display(ctx.agent_id, _promoted_id)
+
+        # Flush remaining undisplayed messages (AGENT/SYSTEM and any USER
+        # turns not promoted from a pre-existing web row).
+        from display_writer import flush_agent as _flush_display
+        _flush_display(ctx.agent_id)
 
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.

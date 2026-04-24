@@ -172,25 +172,24 @@ def test_cancel_appends_tombstone_and_queued_entry_vanishes(agent):
     assert queued == [], "tombstone should remove entry from queued partition"
 
 
-def test_cancel_endpoint_rejects_completed_messages(clean_db):
-    """cancel_message rejects post-delivery statuses (COMPLETED/EXECUTING/...).
-    Pre-delivery statuses (PENDING/QUEUED/CANCELLED) are all accepted."""
+def test_cancel_endpoint_soft_cancels_only_pre_delivery(clean_db):
+    """cancel_message strictly rejects non-PENDING/QUEUED status — including
+    already-CANCELLED. Orphan state must surface loudly (400), not be
+    silently papered over by a second cancel writing a tombstone."""
     from fastapi import HTTPException
     from routers.agents import cancel_message
 
     db = SessionLocal()
     try:
         proj = Project(name="cancel-endpoint", display_name="x", path="/tmp/x")
-        db.add(proj)
-        db.flush()
+        db.add(proj); db.flush()
         a = Agent(id=_short_id(), project="cancel-endpoint", name="a",
                   mode=AgentMode.AUTO, status=AgentStatus.IDLE)
-        db.add(a)
-        db.commit()
+        db.add(a); db.commit()
         aid = a.id
         m = Message(
             id=_short_id(), agent_id=aid, role=MessageRole.USER,
-            content="already-delivered", status=MessageStatus.COMPLETED,
+            content="already-cancelled", status=MessageStatus.CANCELLED,
             source="web",
         )
         db.add(m); db.commit()
@@ -206,45 +205,6 @@ def test_cancel_endpoint_rejects_completed_messages(clean_db):
         assert exc.value.status_code == 400
     finally:
         db2.close()
-
-
-def test_cancel_endpoint_idempotent_for_already_cancelled(clean_db):
-    """Cancelling an already-CANCELLED message is a no-op DB-wise but still
-    appends a tombstone. Covers orphan rows from pre-refactor code paths
-    whose bubble is still visible in the display file."""
-    from routers.agents import cancel_message
-
-    db = SessionLocal()
-    try:
-        proj = Project(name="cancel-idem", display_name="x", path="/tmp/x")
-        db.add(proj); db.flush()
-        a = Agent(id=_short_id(), project="cancel-idem", name="a",
-                  mode=AgentMode.AUTO, status=AgentStatus.IDLE)
-        db.add(a); db.commit()
-        aid = a.id
-        m = Message(
-            id=_short_id(), agent_id=aid, role=MessageRole.USER,
-            content="orphan", status=MessageStatus.CANCELLED,
-            source="web", display_seq=99,  # simulates orphan in main partition
-        )
-        db.add(m); db.commit()
-        mid = m.id
-    finally:
-        db.close()
-
-    import asyncio
-    db2 = SessionLocal()
-    try:
-        resp = asyncio.run(cancel_message(aid, mid, db2))
-        assert resp == {"detail": "Message cancelled"}
-    finally:
-        db2.close()
-
-    # Tombstone must be in the file so the reader hides it.
-    with open(display_writer._display_path(aid)) as f:
-        lines = [l for l in f if mid in l]
-    tombstones = [l for l in lines if '"_deleted":true' in l.replace(" ", "")]
-    assert len(tombstones) == 1
 
 
 # ─────────────────────────── modify flow ────────────────────────────
@@ -420,6 +380,73 @@ def test_sync_engine_no_deferred_when_no_match():
     assert result is not None, "a new CLI Message should be returned"
     assert result.source == "cli"
     assert deferred == [], "no web message was promoted"
+
+
+def test_sync_engine_skips_cancelled_promotion_candidates(agent):
+    """Content matcher must exclude CANCELLED messages from promotion
+    candidates — promoting a cancelled row sets delivered_at but leaves
+    status=CANCELLED, creating an orphan visible in the main display
+    partition. A later-typed CLI turn with matching content must create
+    a fresh CLI row, not resurrect the cancelled one."""
+    from sync_engine import _promote_or_create_user_msg
+
+    # Seed a CANCELLED web message with specific content
+    msg_id = _mk_message(agent, content="ghost message",
+                         status=MessageStatus.CANCELLED)
+
+    class _Ctx:
+        agent_id = agent
+    ctx = _Ctx()
+
+    deferred: list[str] = []
+    db = SessionLocal()
+    try:
+        result = _promote_or_create_user_msg(
+            db, ctx, "ghost message", jsonl_uuid="uuid-" + _short_id(),
+            seq=0, meta=None, kind=None, jsonl_ts=None,
+            deferred_promotions=deferred,
+        )
+    finally:
+        db.close()
+
+    # Cancelled row must NOT be promoted
+    assert deferred == [], "CANCELLED message must not be a promotion candidate"
+    assert result is not None, "a fresh CLI Message should be created instead"
+    assert result.source == "cli"
+    # The cancelled row stays untouched (delivered_at NULL, status CANCELLED)
+    db = SessionLocal()
+    try:
+        cancelled = db.get(Message, msg_id)
+        assert cancelled.status == MessageStatus.CANCELLED
+        assert cancelled.delivered_at is None
+        assert cancelled.session_seq is None
+    finally:
+        db.close()
+
+
+def test_sync_engine_promote_runs_before_flush(agent):
+    """Regression for the orphan bug: promote_to_delivered must be invoked
+    BEFORE flush_agent in the sync post-commit step. If flush_agent runs
+    first, it picks up the promoted-but-not-yet-displayed USER message
+    (delivered_at set, display_seq NULL), allocates a seq, and writes a
+    regular entry — stealing the slot and turning promote_to_delivered
+    into a no-op degrade-to-replace. The bubble ends up in the main
+    partition without a tombstone — an orphan.
+
+    This test inspects the literal source of sync_import_new_turns and
+    asserts promote_to_delivered appears before flush_agent.
+    """
+    import inspect
+    import sync_engine
+    src = inspect.getsource(sync_engine.sync_import_new_turns)
+    promote_idx = src.find("promote_to_delivered")
+    flush_idx = src.find("flush_agent as _flush_display")
+    assert promote_idx > 0, "promote_to_delivered must be called"
+    assert flush_idx > 0, "flush_agent must be called"
+    assert promote_idx < flush_idx, (
+        "promote_to_delivered must run BEFORE flush_agent — otherwise "
+        "flush_agent steals the display_seq and creates an orphan"
+    )
 
 
 # ─────────────────────────── feature flag ────────────────────────────
