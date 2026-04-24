@@ -34,8 +34,8 @@ git clone https://github.com/jyao97/xylocopa.git
 cd xylocopa
 
 # Set up Python
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r orchestrator/requirements.txt
 
 # Set up frontend

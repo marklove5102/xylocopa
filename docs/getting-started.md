@@ -163,7 +163,7 @@ It's similar to the New Task sheet, with two differences worth calling out:
 - **Schedule** (🕐, amber), fire the agent at a future time instead of immediately. Pick a date/time and the agent will auto-launch when the clock hits it. Useful for "kick off the nightly refactor at 2am when I'm not using the machine."
 - **Task toggle** (cyan when on), decides whether this run is tracked as a **Task** record. Off = an ephemeral agent session with no task attached. On = a Task is created and linked, so it shows up in the inbox/task lists with a summary afterwards. Leave it off for quick throwaway questions ("explain this function"); turn it on for anything you might want to come back to or retry.
 
-Model, Effort, Worktree, and Auto work exactly like in the New Task sheet (see [section 2](#2-capture-a-task)).
+Model, Effort, Worktree, and Auto work exactly like in the New Task sheet (see [section 1](#1-capture-a-task)).
 
 ---
 

@@ -145,7 +145,7 @@ Nothing you run through Xylocopa is ephemeral, not your conversations, not your 
 - **Node.js** 18+ and npm
 - **Python** 3.11+
 - **tmux** (usually pre-installed; `sudo apt install tmux` if not)
-- **Claude Code CLI**: `npm install -g @anthropic-ai/claude-code`
+- **Claude Code CLI**: `npm install -g @anthropic-ai/claude-code`, then run `claude` once interactively to log in (Xylocopa reuses the credentials in `~/.claude/`)
 - **Claude subscription**: Claude Max or Pro (uses your existing subscription, no separate API billing)
 - **OpenAI API key** _(optional, for voice input)_
 

@@ -12,7 +12,7 @@ scp user@server-ip:~/xylocopa-main/certs/selfsigned.crt ~/xylocopa.crt
 
 ## Android
 
-1. Transfer `selfsigned.crt` to the device
+1. Transfer `xylocopa.crt` to the device (the file you scp'd above)
 2. **Settings > Security > Encryption & credentials > Install a certificate > CA certificate**
 3. Select the file and confirm
 
