@@ -1110,9 +1110,8 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const isScheduled = isUser && message.scheduled_at && message.status === "PENDING";
   const isPending = isUser && (message.status === "PENDING" || message.status === "QUEUED") && !message.scheduled_at;
   const isQueued = isUser && message.status === "QUEUED";
-  const isCancelled = isUser && message.status === "CANCELLED";
   const isSlashCommand = isUser && (message.content || "").trimStart().startsWith("/");
-  const isWebUndelivered = isUser && message.source === "web" && !message.delivered_at && !isPending && !isScheduled && !isQueued && !isCancelled && !isSlashCommand;
+  const isWebUndelivered = isUser && message.source === "web" && !message.delivered_at && !isPending && !isScheduled && !isQueued && !isSlashCommand;
   const UNDELIVERED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   const isUndeliveredTimedOut = isWebUndelivered && (serverNow() - new Date(message.created_at).getTime()) > UNDELIVERED_TIMEOUT_MS;
 
@@ -1158,13 +1157,10 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   }, [editing]);
 
   const canModify = isScheduled || isPending;
-  // Cancelled bubbles only get a "delete" action (hard remove from DB).
-  const canRemoveCancelled = isCancelled;
-  const canShowActions = canModify || canRemoveCancelled;
 
   const handleLongPressStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
-    if (!canShowActions) return;
+    if (!canModify) return;
     longPressTimer.current = setTimeout(() => {
       setShowActions(true);
     }, LONG_PRESS_DELAY);
@@ -1178,7 +1174,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     // Skip if the finger moved significantly (scroll gesture, not a tap)
     const endY = e.changedTouches?.[0]?.clientY ?? 0;
     const movedTooFar = Math.abs(endY - touchStartYRef.current) > 10;
-    if (!canShowActions && !movedTooFar) {
+    if (!canModify && !movedTooFar) {
       const now = Date.now();
       if (now - lastTapRef.current < DOUBLE_TAP_WINDOW) {
         handleDoubleClick();
@@ -1187,7 +1183,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   };
   const handleDoubleClick = () => {
-    if (canShowActions) {
+    if (canModify) {
       setShowActions(true);
       return;
     }
@@ -1195,6 +1191,14 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
       setCopied(true);
       setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
     }).catch(() => {});
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.content || "").then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
+    }).catch(() => {});
+    setShowActions(false);
   };
 
   const handleCancel = () => {
@@ -1337,17 +1341,15 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         <div
           className={`rounded-2xl px-4 py-2.5 ${
             isUser
-              ? isCancelled
-                ? "bg-gray-400 text-white rounded-br-md"
-                : isScheduled
-                  ? "bg-amber-600/80 text-white rounded-br-md"
-                  : isPending
-                    ? "bg-cyan-600/60 text-white/80 rounded-br-md"
-                    : isUndeliveredTimedOut
-                      ? "bg-red-600/40 text-white/70 rounded-br-md"
-                      : isWebUndelivered
-                        ? "bg-cyan-600/70 text-white/80 rounded-br-md"
-                        : "bg-cyan-600 text-white rounded-br-md"
+              ? isScheduled
+                ? "bg-amber-600/80 text-white rounded-br-md"
+                : isPending
+                  ? "bg-cyan-600/60 text-white/80 rounded-br-md"
+                  : isUndeliveredTimedOut
+                    ? "bg-red-600/40 text-white/70 rounded-br-md"
+                    : isWebUndelivered
+                      ? "bg-cyan-600/70 text-white/80 rounded-br-md"
+                      : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
           } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
@@ -1400,9 +1402,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           )}
           <div className={`text-xs mt-1 flex items-center gap-1.5 ${
             isUser
-              ? isCancelled
-                ? "text-white/70"
-                : isScheduled ? "text-amber-200" : "text-cyan-200"
+              ? isScheduled ? "text-amber-200" : "text-cyan-200"
               : "text-dim"
           }`}>
             {isScheduled ? (
@@ -1421,16 +1421,11 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 {queueTotal > 1 ? `queued (${queuePosition} of ${queueTotal})` : "queued"}
               </span>
             )}
-            {isCancelled && (
-              <span className="text-white/70">cancelled</span>
-            )}
             {message.source && (
               <span className={`px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
-                isCancelled
-                  ? "bg-white/10 text-white/70"
-                  : message.source === "web"
-                    ? "bg-cyan-500/20 text-cyan-300"
-                    : "bg-emerald-500/20 text-emerald-300"
+                message.source === "web"
+                  ? "bg-cyan-500/20 text-cyan-300"
+                  : "bg-emerald-500/20 text-emerald-300"
               }`}>
                 {message.source}
               </span>
@@ -1441,7 +1436,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             {message.status === "TIMEOUT" && (
               <span className="text-orange-400">Timed out</span>
             )}
-            {isUser && message.source === "web" && !isCancelled && (isSlashCommand ? (
+            {isUser && message.source === "web" && (isSlashCommand ? (
               message.delivered_at && (
                 message.completed_at ? (
                   <span className="ml-auto text-green-400" title={`Executed ${new Date(message.completed_at).toLocaleTimeString()}`}>
@@ -1499,7 +1494,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {!isUser && message.metadata?.interactive?.length > 0 && (
           <InteractiveBubbles metadata={message.metadata} agentId={agentId} onAnswered={onRefresh} messageContent={message.content} project={project} />
         )}
-        {/* Action popover for scheduled/pending/cancelled messages */}
+        {/* Action popover for scheduled/pending messages */}
         {showActions && (
           <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
@@ -1515,22 +1510,30 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   </svg>
                 </button>
               )}
-              {canModify && (
-                <button
-                  type="button"
-                  onClick={handleEdit}
-                  title="Edit"
-                  className="px-3 py-2 text-heading hover:bg-input transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleCopy}
+                title="Copy"
+                className="px-3 py-2 text-heading hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={handleEdit}
+                title="Modify"
+                className="px-3 py-2 text-heading hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={handleCancel}
-                title={isCancelled ? "Delete" : "Cancel"}
+                title="Delete"
                 className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -2671,25 +2674,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [messages, agent?.status]);
   hasPendingInteractiveRef.current = hasPendingInteractive;
 
-  // Bottom-area user messages: active queue (PENDING/QUEUED) + recently
-  // soft-cancelled (greyed in place, kept visible per user feedback).
-  // CANCELLED messages stay in this list so the bubble doesn't disappear
-  // when the user hits Esc — they just turn grey.
+  // Bottom-area user messages: active queue (PENDING/QUEUED). Backend filters
+  // CANCELLED at the display-file layer, so it never reaches this list.
   const queuedMessages = useMemo(
     () => messages.filter((m) =>
       m.role === "USER" && !m.scheduled_at &&
-      (m.status === "QUEUED" || m.status === "PENDING" || m.status === "CANCELLED"),
+      (m.status === "QUEUED" || m.status === "PENDING"),
     ),
     [messages],
   );
   // Subset that still needs dispatch — drives escape-button urgency and
-  // bulk cancel. CANCELLED is excluded (already cancelled, no action needed).
-  const activeQueuedMessages = useMemo(
-    () => queuedMessages.filter(
-      (m) => m.status === "QUEUED" || m.status === "PENDING",
-    ),
-    [queuedMessages],
-  );
+  // bulk cancel. Same as queuedMessages now that CANCELLED is filtered upstream.
+  const activeQueuedMessages = queuedMessages;
 
   // Polling — faster when executing, pauses when page hidden
   useEffect(() => {
@@ -3161,10 +3157,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
     if (event.type === "message_update") {
       const { message_id, status, error_message, completed_at } = event.data;
-      if (status === "DELETED") {
-        setMessages((prev) => prev.filter((m) => m.id !== message_id));
-        return;
-      }
       setMessages((prev) =>
         prev.map((m) => (m.id === message_id
           ? { ...m, status, ...(error_message ? { error_message } : {}), ...(completed_at ? { completed_at } : {}) }
@@ -3308,13 +3300,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Cancel a scheduled/pending message, or hard-delete an already-cancelled one.
+  // Cancel a scheduled/pending message. Backend returns 400 if already cancelled,
+  // so this path is only reachable for PENDING/QUEUED/scheduled messages.
   const handleCancelMessage = async (messageId) => {
-    const wasAlreadyCancelled = messages.find((m) => m.id === messageId)?.status === "CANCELLED";
     try {
       await cancelMessage(id, messageId);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      showToast(wasAlreadyCancelled ? "Message deleted" : "Message cancelled");
+      showToast("Message cancelled");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
