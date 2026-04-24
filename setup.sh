@@ -7,7 +7,7 @@ set -euo pipefail
 #   ./setup.sh
 #
 # Usage (curl one-liner — clones + installs):
-#   curl -fsSL https://raw.githubusercontent.com/jyao97/xylocopa/main/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/jyao97/xylocopa/master/setup.sh | bash
 
 REPO="https://github.com/jyao97/xylocopa.git"
 # XYLOCOPA_DIR is the canonical override; AGENTHIVE_DIR is accepted as a legacy alias.
