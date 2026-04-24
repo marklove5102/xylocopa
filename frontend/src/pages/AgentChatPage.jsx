@@ -3626,7 +3626,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
                 >
                   {muted ? (
-                    <BellOff className="w-3.5 h-3.5 text-dim hover:text-cyan-400 transition-colors" />
+                    <BellOff className="w-3.5 h-3.5 text-zinc-400 hover:text-zinc-300 transition-colors" />
                   ) : (
                     <Bell className="w-3.5 h-3.5 text-cyan-400" />
                   )}
@@ -3643,7 +3643,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   >
                     <Hourglass
                       className={`w-3.5 h-3.5 transition-colors ${
-                        deferredTo ? "text-indigo-400" : "text-dim hover:text-indigo-400"
+                        deferredTo ? "text-indigo-400" : "text-zinc-400 hover:text-zinc-300"
                       }`}
                       strokeWidth={1.75}
                     />
@@ -3670,7 +3670,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                     </svg>
                   ) : (
-                    <svg className="w-3.5 h-3.5 text-dim hover:text-amber-400 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                    <svg className="w-3.5 h-3.5 text-zinc-400 hover:text-zinc-300 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                     </svg>
                   )}
@@ -3681,7 +3681,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   type="button"
                   onClick={onToggleTheme}
                   title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-heading hover:bg-input transition-colors"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
                 >
                   {theme === "dark" ? (
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
