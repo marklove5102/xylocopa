@@ -7,7 +7,9 @@
 
 > [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Known Issues**](#known-issues) · [**Roadmap**](#roadmap) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
 >
-> New here? Start with the beginner walkthrough: [**Getting Started Guide**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
+> **New here?** [**Getting Started**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
+>
+> **Going deeper?** [**A Day with Xylocopa**](docs/workflow.md) (5-minute worked example) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md)
 
 **Xylocopa: capture tasks, dispatch to agents, keep the context.** 🐝
 
@@ -16,6 +18,8 @@ _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea
 Xylocopa aims to reduce the friction of navigating multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) projects, keeping track of what you asked, what got done, and what to try next. Capture tasks into an inbox, group them by project, and dispatch to agents running in parallel on isolated worktrees. When an attempt misses the mark, retry with a summary of what was tried, so the project carries forward what was learned instead of starting over each session.
 
 Tasks in. Agents out. Lessons kept.
+
+If you run `claude` across several projects and want the sessions to feel like one workflow instead of a pile of terminal tabs, this is for you.
 
 If you find Xylocopa useful, a star helps others discover it :)
 
@@ -80,6 +84,22 @@ Knowledge accumulates, across sessions, across projects, across time.
 
 ## Why Xylocopa?
 
+### Why not just use `claude`?
+
+Vanilla `claude` CLI works fine for one-off sessions. It starts to fray once you run more than one in parallel, across more than one project, over more than a few days.
+
+**Attention across agents and projects.** Three `claude` sessions in three terminal tabs, which one is waiting for your approval? Which is still thinking? Xylocopa has a single **Attention button** that morphs into a blue count badge for unread or waiting agents across all projects; tap to jump to the oldest, long-press to open 2/3/4-pane split-screen. Each project has its own dashboard with an emoji, an LLM-generated resume hint of what the agents did recently, weekly success rate, and an in-project search bar across agents, messages, and files. Push notifications fire when an agent stops, muted if you're already looking at that session.
+
+**Idea capture on the go.** You can't start a `claude` session on your phone in a meeting. Xylocopa is a PWA: dictate by voice (Whisper-transcribed), ⚡ quick-save to inbox, triage later at the desk. Every keystroke auto-drafts to localStorage across 13+ input surfaces; close the app mid-thought, reopen, it's still there.
+
+**Finding and resuming old work.** `claude --resume <uuid>` works if you remember the UUID. Xylocopa has full-text search across every session you've ever run, per-project or global, with star-to-pin. One-click resume brings STOPPED or ERROR agents back, either re-syncing to the existing tmux pane or relaunching via `claude --resume` in a fresh one.
+
+**Retry instead of rewrite.** When an agent misses the mark, vanilla setup means retyping the prompt and re-explaining what went wrong. Xylocopa's Try → Summarize → Retry auto-generates a summary of what was tried from the session itself; you edit, the next agent picks up with it in context. Durable lessons roll into per-project `PROGRESS.md`, automatically surfaced to future agents via RAG.
+
+**Rich content and token-efficient cross-agent references.** `claude` dumps image paths as text. Xylocopa renders images, PDFs, and media inline with thumbnails, plus LaTeX math (KaTeX) and a per-session file browser. Tell one agent "check xy session `<id>`" and it reads another agent's curated display file via a built-in MCP server, about **54× fewer tokens** than raw JSONL (thinking blocks stripped, tool calls compressed to one-line summaries).
+
+The chat is still there; `claude` still runs the show. Xylocopa is the task, attention, and memory layer around it.
+
 ### Lessons Compound
 
 Most agent tools assume the agent gets it right. Xylocopa assumes it won't. When an agent misses the mark, one click summarizes what was tried, and the next agent picks up from there. Iterate until done, and the lessons accumulate per project (in `PROGRESS.md`), not per session, so future agents start with what you've already learned.
@@ -139,14 +159,6 @@ Nothing you run through Xylocopa is ephemeral, not your conversations, not your 
 
 A few things worth knowing before running this on your dev machine.
 
-### Can agents read my secrets?
-
-Yes, by default. Agents inherit your user's read permissions and can `cat` anything you can: `~/.aws/credentials`, `~/.ssh/`, `.env` files, dotfiles in your project. The deterministic [safety hook](#safety-guardrails) hard-blocks destructive **writes** (`rm -rf`, out-of-project edits, force pushes), but does **not** filter reads. Treat agents like any local script you'd run: assume they can read everything you can. If that's not acceptable for a sensitive project, run Xylocopa under a separate user account or in a VM.
-
-### What about Pro / Max plan rate limits?
-
-Running 5 to 10 parallel Opus agents will burn through Anthropic's session-based quota much faster than typical interactive use. If you hit limits, switch most agents to Sonnet or Haiku and reserve Opus for hard tasks (per-task model selection is built into the dispatch flow).
-
 ### Where does my data live?
 
 - **SQLite DB**: `data/orchestrator.db` in the install directory (tasks, projects, agent metadata, configs)
@@ -175,10 +187,6 @@ rm -rf ~/xylocopa-projects
 ```
 
 Project code, git history, and Claude Code session JSONL files in `~/.claude/projects/` are untouched by the uninstall.
-
-### What happens when Claude Code updates?
-
-Xylocopa hooks into the public Claude Code event surface (`PreToolUse`, `SessionStart`/`SessionEnd`, `Stop`, `UserPromptSubmit`). Minor version bumps generally Just Work. If a Claude Code update changes hook semantics, Xylocopa's session sync may stall: stop the affected agent, run `claude --version` to confirm the update, and restart the orchestrator (`./run.sh restart`). File an issue if anything breaks.
 
 ## Getting Started
 
@@ -252,8 +260,6 @@ If you want the full app experience on iPhone (home screen icon, fullscreen, pus
 
 1. Open `https://<machine-ip>:3000` in Safari (bypass the certificate warning via **Advanced → Visit Website**, then refresh).
 2. Follow the on-screen guide on the login page to install the CA certificate and the Xylocopa app.
-
-> **Important:** Install the CA certificate **before** installing the App. The App opens in fullscreen without a browser address bar, if the certificate isn't trusted first, you'll be stuck on a warning page with no way to navigate.
 
 #### Installing the CA Certificate
 
