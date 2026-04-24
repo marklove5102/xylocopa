@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Component } from "react";
-import { Bell, BellOff } from "lucide-react";
+import { Bell, BellOff, Hourglass } from "lucide-react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAgent,
@@ -3637,18 +3637,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     type="button"
                     onClick={() => setShowDeferPicker(v => !v)}
                     title={deferredTo
-                      ? `Notifications deferred until ${new Date(deferredTo).toLocaleString()}`
-                      : "Defer notifications"}
+                      ? `Hidden until ${new Date(deferredTo).toLocaleString()}`
+                      : "Defer (hide until later)"}
                     className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
                   >
-                    <svg
+                    <Hourglass
                       className={`w-3.5 h-3.5 transition-colors ${
                         deferredTo ? "text-indigo-400" : "text-dim hover:text-indigo-400"
                       }`}
-                      fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                    </svg>
+                      strokeWidth={1.75}
+                    />
                   </button>
                   {showDeferPicker && (
                     <SendLaterPicker

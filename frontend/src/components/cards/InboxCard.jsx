@@ -1,4 +1,5 @@
 import { memo, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { Hourglass } from "lucide-react";
 import { modelDisplayName, MODEL_OPTIONS } from "../../lib/constants";
 import { relativeTime } from "../../lib/formatters";
 import { updateTaskV2, uploadFile, cancelTask, dispatchTask, regenerateTaskSummary } from "../../lib/api";
@@ -689,9 +690,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                         task.deferred_to ? "bg-indigo-500 text-white" : "bg-elevated text-dim hover:text-heading"
                       }`}
                       title="Defer task">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                      </svg>
+                      <Hourglass className="w-4 h-4" strokeWidth={2} />
                     </button>
                     {showDeferPicker && (
                       <SendLaterPicker
