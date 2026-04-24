@@ -2577,7 +2577,16 @@ async def get_agent_display(
             queued_from_file.append(entry)
         elif entry.seq is not None:
             displayed.append(entry)
-        # else: malformed — skip silently
+        else:
+            # Neither _queued, _deleted, nor seq — this is a writer bug.
+            # Log loudly so it surfaces in monitoring instead of becoming
+            # an invisible message loss.
+            logger.warning(
+                "get_agent_display: malformed entry for agent %s id=%s "
+                "(no seq, no _queued, no _deleted) — skipping. This is a "
+                "writer-side bug; investigate display_writer output.",
+                agent_id[:8], entry.id,
+            )
 
     # Fallback to DB query when the file has no queued partition yet, gated
     # behind XY_QUEUED_FALLBACK. Phase 2A writer sites always emit queued
@@ -3425,7 +3434,9 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
         raise HTTPException(status_code=500, detail="Failed to send interrupt to tmux")
     # CC v2.1.83 restores the interrupted prompt text to its input bar.
     # Clear it so stale text doesn't linger or get accidentally re-submitted.
-    send_tmux_keys(agent.tmux_pane, ["C-u"])
+    # End-then-C-u: CC's Ink TUI treats C-u as readline-style kill-to-start,
+    # so a bare C-u is a no-op if the restore parks the cursor at position 0.
+    send_tmux_keys(agent.tmux_pane, ["End", "C-u"])
 
     # Interrupt confirmation and dispatch are handled by the sync engine:
     # CC writes "[Request interrupted by user]" to JSONL → sync imports it

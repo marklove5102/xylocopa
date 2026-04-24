@@ -1362,7 +1362,14 @@ def send_tmux_message(pane_id: str, text: str) -> bool:
     import time
 
     try:
-        # Clear any existing text in the input line first
+        # Clear any existing text in the input line first.
+        # End-then-C-u is required: CC's Ink TUI treats C-u as readline-style
+        # "kill cursor-to-start", so a cursor parked at position 0 (as
+        # happens after an interrupted-prompt restore) makes a bare C-u a
+        # no-op. End moves cursor to the tail first, guaranteeing a full wipe.
+        _sp.run(["tmux", "send-keys", "-t", pane_id, "End"],
+                capture_output=True, text=True, timeout=5)
+        time.sleep(0.05)
         _sp.run(["tmux", "send-keys", "-t", pane_id, "C-u"],
                 capture_output=True, text=True, timeout=5)
         time.sleep(0.05)
