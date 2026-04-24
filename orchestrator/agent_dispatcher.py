@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 import time as _time
 from datetime import datetime, timedelta, timezone
 
@@ -4212,45 +4211,6 @@ Here are the day's conversations (with timestamps):
                     kill_tmux=False, emit=False, cancel_tasks=False,
                 )
                 continue
-
-                # Re-queue EXECUTING messages so the original prompt is
-                # re-dispatched automatically instead of being lost.
-                # Also salvage any partial output from the crashed process.
-                executing_msgs = db.query(Message).filter(
-                    Message.agent_id == agent.id,
-                    Message.status == MessageStatus.EXECUTING,
-                ).all()
-                for m in executing_msgs:
-                    # Try to recover partial output from the predictable file
-                    partial_file = os.path.join(tempfile.gettempdir(), f"claude-output-{m.id}.log")
-                    if os.path.exists(partial_file):
-                        try:
-                            with open(partial_file, "r", errors="replace") as f:
-                                partial_logs = f.read()
-                            if partial_logs.strip():
-                                partial_text, partial_meta = _extract_result(partial_logs)
-                                if partial_text and partial_text != "(no output)":
-                                    partial_msg = Message(
-                                        agent_id=agent.id,
-                                        role=MessageRole.AGENT,
-                                        content=f"*(partial — interrupted by restart)*\n\n{partial_text}",
-                                        status=MessageStatus.COMPLETED,
-                                        meta_json=partial_meta,
-                                        delivered_at=_utcnow(),
-                                    )
-                                    db.add(partial_msg)
-                                    logger.info(
-                                        "Recovered partial output for message %s (%d chars)",
-                                        m.id, len(partial_text),
-                                    )
-                            # Clean up the temp file
-                            os.unlink(partial_file)
-                        except OSError as e:
-                            logger.warning("Failed to clean up partial output %s: %s", partial_file, e)
-
-                    m.status = MessageStatus.PENDING
-                    m.completed_at = None
-                    m.error_message = None
 
             # Re-link STOPPED agents whose tmux session is still alive.
             # These were skipped by the alive_statuses query above.

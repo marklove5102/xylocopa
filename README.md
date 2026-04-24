@@ -104,7 +104,6 @@ Nothing you run through Xylocopa is ephemeral. Every layer is designed to surviv
 
 - **30s incremental session cache** ([`session_cache.py`](orchestrator/session_cache.py)): active JSONL is append-only-cached like git packfiles; truncated lines auto-repaired on restore.
 - **Unlimited retention**: sets `cleanupPeriodDays=36500` in `~/.claude/settings.json` so Claude Code never deletes history.
-- **Partial output salvage on crash** ([`agent_dispatcher.py`](orchestrator/agent_dispatcher.py)): `_recover_agents()` extracts partial stdout from `/tmp/claude-output-*.log` and persists it before re-queueing.
 - **Tmux-anchored recovery**: agents with live tmux panes are re-linked without interruption on restart, your agents survive the web app.
 - **One-click resume** ([`routers/agents.py`](orchestrator/routers/agents.py)): STOPPED/ERROR agents resume via re-sync or `claude --resume`.
 - **Periodic backups** ([`backup.py`](orchestrator/backup.py)): DB + configs + session history, runtime-configurable interval and retention.
@@ -138,7 +137,7 @@ Nothing you run through Xylocopa is ephemeral. Every layer is designed to surviv
 | **Session History** | Every conversation persisted and searchable. Star sessions. Resume any agent anytime. Full-text search. |
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
 | <a id="safety-guardrails"></a>**Safety Guardrails** | Deterministic `PreToolUse` hook hard-blocks destructive operations, `rm -rf`, `git push --force`, `git reset --hard` outside worktrees, `git clean -f`, `git checkout -- .` / `git restore .`, `DROP TABLE` / `TRUNCATE`, and any `Write`/`Edit` to paths outside the project directory. Enforced even when **Auto mode** (`--dangerously-skip-permissions`) is on. |
-| **Reliability & Recovery** | 30s incremental session JSONL cache (append-only, like git packfiles). **Unlimited retention**: `cleanupPeriodDays=36500` prevents Claude from deleting your history. Orchestrator-restart recovery re-links live tmux agents without interrupting them. Partial output salvaged from killed processes. Automatic periodic DB + config + session backups (runtime-configurable interval & retention). Truncated JSONL auto-repaired. Orphan worktree/tmux cleanup. See [Durable by Default](#durable-by-default) for source pointers. |
+| **Reliability & Recovery** | 30s incremental session JSONL cache (append-only, like git packfiles). **Unlimited retention**: `cleanupPeriodDays=36500` prevents Claude from deleting your history. Orchestrator-restart recovery re-links live tmux agents without interrupting them. Automatic periodic DB + config + session backups (runtime-configurable interval & retention). Truncated JSONL auto-repaired. Orphan worktree/tmux cleanup. See [Durable by Default](#durable-by-default) for source pointers. |
 
 ## Before You Install
 
