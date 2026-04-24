@@ -2034,13 +2034,22 @@ Here are the day's conversations (with timestamps):
                                            error_message=reason))
 
     def _fail_pending_messages(self, db: Session, agent_id: str, reason: str):
-        """Fail all PENDING/EXECUTING messages for an agent."""
+        """Fail all EXECUTING messages for an agent. Also tombstones any
+        pre-delivery entries (`_pre` lines in the display file) so the user
+        doesn't see zombie queued bubbles on a dead agent.
+
+        PENDING DB rows no longer exist under the Phase 2 model — legacy
+        rows are migrated on startup (see `main._migrate_predelivery_legacy`).
+        Kept in the filter as a defensive belt-and-suspenders.
+        """
         pending = db.query(Message).filter(
             Message.agent_id == agent_id,
             Message.status.in_([MessageStatus.PENDING, MessageStatus.EXECUTING]),
         ).all()
         for m in pending:
             self._fail_message(m, reason)
+
+        self._fail_all_predelivery(agent_id, reason=reason)
 
     def _add_system_message(self, db, agent_id, content, *, status=MessageStatus.COMPLETED, error_message=None):
         """Add a system message with consistent fields."""

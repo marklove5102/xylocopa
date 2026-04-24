@@ -13,12 +13,15 @@ Design:
 Functions:
     flush_agent            — append undisplayed messages to the display file
     update_last            — append a replacement line for a streaming update
-    flush_queued_entry     — append a `_queued` line for a pre-delivery msg
-    update_queued_entry    — append a `_queued + _replace` line
-    update_after_metadata_change — branch on display_seq: queued vs delivered
-    mark_deleted           — append a `{_deleted: true}` tombstone
-    promote_to_delivered   — atomically tombstone queued + write delivered
-    rebuild_agent          — rebuild the display file (append-only: new seq block)
+    update_after_metadata_change — append a `_replace` line after meta_json
+                                    patch on a delivered message
+    predelivery_create     — append a `_queued + _pre` line (no DB row)
+    predelivery_update     — append a `_queued + _pre + _replace` line
+    predelivery_cancel     — soft-cancel (status='cancelled', still visible)
+    predelivery_tombstone  — hard-delete (append `_deleted: true`)
+    predelivery_promote_to_sent — atomic _pre → sent transition
+    predelivery_list / predelivery_get — read helpers (in-memory)
+    rebuild_agent          — rebuild the display file, preserving _pre entries
     delete_agent           — remove the display file
     startup_rebuild_all    — rebuild all active agents on server startup
 """
@@ -363,93 +366,14 @@ def update_last(agent_id: str, message_id: str):
         flush_agent(agent_id)
 
 
-def flush_queued_entry(agent_id: str, message_id: str):
-    """Append a `_queued` line for a pre-delivery message.
-
-    Precondition: caller committed a Message row with `display_seq IS NULL`.
-    Raises RuntimeError if the precondition is violated — do not catch; the
-    caller is buggy and the failure must surface, not be silently absorbed.
-    """
-    db = SessionLocal()
-    try:
-        msg = db.get(Message, message_id)
-        if not msg:
-            raise RuntimeError(
-                f"flush_queued_entry: msg {message_id} not found in DB "
-                "(caller must commit before calling)"
-            )
-        if msg.agent_id != agent_id:
-            raise RuntimeError(
-                f"flush_queued_entry: msg {message_id} belongs to agent "
-                f"{msg.agent_id}, not {agent_id}"
-            )
-        if msg.display_seq is not None:
-            raise RuntimeError(
-                f"flush_queued_entry contract violation: msg {message_id} "
-                f"already has display_seq={msg.display_seq}. This function "
-                "is only for pre-delivery messages."
-            )
-
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        path = _display_path(agent_id)
-        line = _serialize_queued(msg)
-        _write_locked(path, [line])
-    finally:
-        db.close()
-
-
-def update_queued_entry(agent_id: str, message_id: str):
-    """Append a `_queued + _replace` line updating a pre-delivery message.
-
-    Used for content edits, PENDING→QUEUED transitions, and interactive-card
-    metadata changes before delivery. Caller must have committed DB first.
-    Raises RuntimeError if the message has already been promoted — that
-    indicates the caller should have taken the post-delivery `update_last`
-    branch instead.
-    """
-    db = SessionLocal()
-    try:
-        msg = db.get(Message, message_id)
-        if not msg:
-            raise RuntimeError(
-                f"update_queued_entry: msg {message_id} not found in DB"
-            )
-        if msg.agent_id != agent_id:
-            raise RuntimeError(
-                f"update_queued_entry: msg {message_id} belongs to agent "
-                f"{msg.agent_id}, not {agent_id}"
-            )
-        if msg.display_seq is not None:
-            raise RuntimeError(
-                f"update_queued_entry contract violation: msg {message_id} "
-                f"already promoted (display_seq={msg.display_seq}). Caller "
-                "should branch on display_seq and use update_last for "
-                "post-delivery updates."
-            )
-
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        path = _display_path(agent_id)
-        line = _serialize_queued(msg, replace=True)
-        _write_locked(path, [line])
-    finally:
-        db.close()
-
-
 def update_after_metadata_change(agent_id: str, message_id: str):
-    """Append a replacement line after the caller committed a metadata
-    (meta_json) patch on a message that may be pre- or post-delivery.
+    """Append a `_replace` line after the caller committed a meta_json
+    patch on a post-delivery message (interactive AGENT card).
 
-    Branches on `display_seq`:
-      - NULL  → `update_queued_entry` (the `_queued + _replace` line)
-      - set   → `update_last`          (a regular `_replace` line)
-
-    Caller must have committed the DB change before calling. Picking the
-    wrong branch would violate the writer contracts (e.g. a `_replace`
-    line with no preceding regular entry, or a `_queued` line on an
-    already-promoted message — which `update_queued_entry` now raises on
-    per the "fail loudly" policy).
-
-    Silently no-ops if the row has been deleted between commit and call.
+    Under the Phase 2 model, pre-delivery messages have no DB row — so this
+    helper only handles the post-delivery path and delegates to
+    `update_last`. Silently no-ops if the row has been deleted between
+    commit and call.
     """
     db = SessionLocal()
     try:
@@ -457,91 +381,21 @@ def update_after_metadata_change(agent_id: str, message_id: str):
         if msg is None:
             # Defensive: row deleted between caller's commit and this call.
             return
-        has_seq = msg.display_seq is not None
+        if msg.display_seq is None:
+            # Defensive: caller passed a pre-delivery id. Under the new
+            # model this shouldn't happen (pre-delivery has no DB row); log
+            # loudly so we catch regressions rather than silently no-op.
+            logger.warning(
+                "update_after_metadata_change: msg %s has no display_seq "
+                "(agent %s) — skipping. Pre-delivery metadata patches must "
+                "go through predelivery_update instead.",
+                message_id, agent_id[:8],
+            )
+            return
     finally:
         db.close()
 
-    if has_seq:
-        update_last(agent_id, message_id)
-    else:
-        update_queued_entry(agent_id, message_id)
-
-
-def mark_deleted(agent_id: str, message_id: str):
-    """Append a tombstone marker. Readers drop any entry whose winning line
-    has `_deleted: true`. No DB interaction — semantics are caller's choice.
-    """
-    try:
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        path = _display_path(agent_id)
-        _write_locked(path, [_serialize_tombstone(message_id)])
-    except Exception:
-        logger.exception(
-            "Failed to write tombstone for agent %s msg %s",
-            agent_id[:8], message_id,
-        )
-
-
-def promote_to_delivered(agent_id: str, message_id: str):
-    """Move a queued entry to the delivered partition.
-
-    Fresh promotion path (msg.display_seq is None): under a single flock,
-    append tombstone `{id, _deleted: true}` + the full regular entry with a
-    freshly allocated `display_seq`; then commit `display_seq` on the DB row.
-
-    Already-promoted path (msg.display_seq is set): log a warning and
-    degrade to `update_last`. Legitimate cause is a startup rebuild that
-    re-flushed an already-delivered row before sync had a chance to link
-    its jsonl_uuid — on the next sync wake, sync tries to promote again
-    and must not kill the loop. Keeping this function idempotent is the
-    robustness net for "hook-wrote-delivered-at-before-restart" races.
-    """
-    db = SessionLocal()
-    try:
-        msg = db.get(Message, message_id)
-        if not msg:
-            raise RuntimeError(
-                f"promote_to_delivered: msg {message_id} not found in DB"
-            )
-        if msg.agent_id != agent_id:
-            raise RuntimeError(
-                f"promote_to_delivered: msg {message_id} belongs to agent "
-                f"{msg.agent_id}, not {agent_id}"
-            )
-        if msg.display_seq is not None:
-            logger.warning(
-                "promote_to_delivered: msg %s already has display_seq=%d — "
-                "degrading to update_last. Expected on post-restart UUID "
-                "catch-up; investigate if frequent in steady state.",
-                message_id, msg.display_seq,
-            )
-            db.close()
-            update_last(agent_id, message_id)
-            return
-
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        path = _display_path(agent_id)
-
-        # Allocate next display_seq using the same rule as flush_agent.
-        max_seq = db.query(func.max(Message.display_seq)).filter(
-            Message.agent_id == agent_id,
-        ).scalar()
-        next_seq = (max_seq or 0) + 1
-
-        tombstone = _serialize_tombstone(message_id)
-        delivered_line = _serialize_message(msg, next_seq)
-
-        # Single flock covers tombstone + delivered entry so readers never
-        # observe the id present in both partitions simultaneously.
-        _write_locked(path, [tombstone, delivered_line])
-
-        msg.display_seq = next_seq
-        db.commit()
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+    update_last(agent_id, message_id)
 
 
 # ---------------------------------------------------------------------------
@@ -875,10 +729,6 @@ def rebuild_agent(agent_id: str):
     from the DB would drop them. After the DB-driven flush completes,
     the preserved entries are appended back and the in-memory pre-
     delivery index is rebuilt for this agent.
-
-    Also re-emits any legacy pre-delivery rows that still live in the DB
-    as a backwards-compat path during the Phase 1→2 transition — Phase 3
-    will remove this fallback.
     """
     path = _display_path(agent_id)
 
@@ -927,42 +777,6 @@ def rebuild_agent(agent_id: str):
     with _predelivery_lock:
         _predelivery_index[agent_id] = dict(preserved_pre)
         _predelivery_index_ready.add(agent_id)
-
-    # 3. Backwards-compat: re-emit legacy DB-backed pre-delivery rows so
-    #    anything the caller hasn't migrated to the file yet still shows
-    #    up as a queued bubble. Phase 3 of the refactor removes this.
-    db = SessionLocal()
-    try:
-        queued = (
-            db.query(Message)
-            .filter(
-                Message.agent_id == agent_id,
-                Message.delivered_at.is_(None),
-                Message.status != MessageStatus.CANCELLED,
-                Message.source.in_(("web", "plan_continue", "task")),
-                Message.display_seq.is_(None),
-            )
-            .order_by(Message.created_at.asc())
-            .all()
-        )
-        if not queued:
-            return
-        os.makedirs(DISPLAY_DIR, exist_ok=True)
-        lines = [_serialize_queued(m) for m in queued]
-        try:
-            _write_locked(path, lines)
-        except OSError:
-            logger.exception(
-                "rebuild_agent: failed to append queued entries for agent %s",
-                agent_id[:8],
-            )
-    except Exception:
-        logger.exception(
-            "rebuild_agent: failed to query queued messages for agent %s",
-            agent_id[:8],
-        )
-    finally:
-        db.close()
 
 
 def delete_agent(agent_id: str):

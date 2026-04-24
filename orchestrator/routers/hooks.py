@@ -912,8 +912,9 @@ async def hook_agent_permission(request: Request):
                         break
                 _m.meta_json = json.dumps(_meta)
                 _db_to.commit()
-                # Branch on display_seq: pre-delivery → update_queued_entry,
-                # post-delivery → update_last. The helper checks the DB.
+                # Post-delivery metadata patch → update_last (via helper).
+                # Pre-delivery interactive cards go through predelivery_update
+                # directly; this path is reserved for delivered AGENT cards.
                 from display_writer import (
                     flush_agent as _flush_to,
                     update_after_metadata_change as _update_to,

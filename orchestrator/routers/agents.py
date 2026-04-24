@@ -1218,21 +1218,12 @@ async def _launch_tmux_background(
             # set EXECUTING via _start_generating, don't overwrite it.
             if agent.status != AgentStatus.EXECUTING:
                 agent.status = AgentStatus.IDLE
-            _init_msg = (
-                db.query(Message)
-                .filter(
-                    Message.agent_id == agent_id,
-                    Message.role == MessageRole.USER,
-                    Message.status == MessageStatus.PENDING,
-                    Message.delivered_at.is_(None),
-                )
-                .order_by(Message.created_at.asc())
-                .first()
-            )
-            if _init_msg:
-                _init_msg.delivered_at = _utcnow()
-                _init_msg.status = MessageStatus.COMPLETED
-                _init_msg.completed_at = _utcnow()
+            # Under the Phase 2 predelivery model, the initial task message
+            # is either already COMPLETED (task launch path writes that
+            # directly) or lives as a _pre entry in the display file
+            # (web-originated). No PENDING DB rows exist at this point —
+            # the sync engine's ContentMatcher handles delivered_at via
+            # UserPromptSubmit. No init-msg patch needed here.
             try:
                 db.commit()
             except IntegrityError:
@@ -1242,11 +1233,6 @@ async def _launch_tmux_background(
                     "Session %s UNIQUE constraint violation" % session_id[:12]
                 )
                 return
-
-            # Update display file with delivery status
-            if _init_msg:
-                from display_writer import update_last
-                update_last(agent_id, _init_msg.id)
 
             ad._emit(emit_agent_update(agent_id, "IDLE", agent.project))
         finally:
