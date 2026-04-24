@@ -2945,6 +2945,101 @@ Here are the day's conversations (with timestamps):
             Message.status.in_([MessageStatus.COMPLETED, MessageStatus.EXECUTING]),
         ).first() is None
 
+    def _prepare_predelivery_entry(
+        self,
+        db: Session,
+        agent: Agent,
+        project: Project,
+        content: str,
+        *,
+        source: str | None = "web",
+        status: str = "queued",
+        scheduled_at: datetime | None = None,
+        wrap_prompt: bool = False,
+        include_history: bool = False,
+        msg_id: str | None = None,
+    ) -> tuple[dict, str, list[str]]:
+        """Build a pre-delivery entry dict (NOT a DB row) plus the prompt to
+        send to tmux.  Companion to `_prepare_dispatch` for the Phase 2
+        pre-delivery refactor — callers use `display_writer.predelivery_create`
+        to persist the returned dict.
+
+        Returns ``(entry_dict, prompt, insights_list)`` where:
+        - *entry_dict*: ready for `predelivery_create(agent_id, entry)`.
+        - *prompt*: the text to send to Claude (wrapped or raw).
+        - *insights_list*: RAG insights found (may be empty).
+
+        The caller is responsible for:
+        - Picking the final status ('queued' | 'scheduled') and any
+          `scheduled_at` value (already placed on the entry here).
+        - Calling `predelivery_create(agent_id, entry_dict)`.
+        - Emitting WS + kicking the dispatcher.
+        """
+        import uuid as _uuid
+
+        # 1. RAG insights — only for the first user message
+        insights_list: list[str] = []
+        task: Task | None = db.get(Task, agent.task_id) if agent.task_id else None
+        if content and self._is_first_user_message(db, agent.id):
+            if task:
+                query_text = f"{task.title} {task.description or ''}"
+                insights_list = query_insights(
+                    db, project.name, query_text, limit=15, pad_recent=True,
+                )
+            elif project.ai_insights:
+                insights_list = query_insights_ai(db, project.name, content)
+            else:
+                insights_list = query_insights(db, project.name, content, limit=10)
+
+        # 2. Build metadata dict (same shape as DB meta_json would hold).
+        metadata: dict = {}
+        if insights_list:
+            metadata["insights"] = insights_list
+        if (source == "task" and task and task.retry_context
+                and (task.attempt_number or 0) > 1):
+            metadata["display_content"] = re.sub(
+                r'^User feedback:\s*', '', task.retry_context, flags=re.IGNORECASE,
+            )
+
+        # 3. Build prompt (optionally wrapped with project context)
+        prompt = content
+        if wrap_prompt:
+            is_first = self._is_first_user_message(db, agent.id)
+            if task and is_first:
+                task_body, _ = self._build_task_prompt(
+                    task, db=None, insights_list=insights_list,
+                )
+                prompt = self._build_agent_prompt(
+                    agent, project, task_body,
+                    include_history=include_history, db=db,
+                    insights_list=[],
+                )
+            else:
+                prompt = self._build_agent_prompt(
+                    agent, project, content,
+                    include_history=include_history, db=db,
+                    insights_list=insights_list,
+                )
+
+        # 4. Update agent preview
+        agent.last_message_preview = content[:200]
+        agent.last_message_at = _utcnow()
+
+        # 5. Compose the entry dict
+        entry_id = msg_id or _uuid.uuid4().hex[:12]
+        scheduled_iso = scheduled_at.isoformat() if scheduled_at else None
+        entry: dict = {
+            "id": entry_id,
+            "role": "USER",
+            "content": content,
+            "source": source,
+            "status": status,
+            "created_at": _utcnow().isoformat(),
+            "scheduled_at": scheduled_iso,
+            "metadata": metadata or None,
+        }
+        return entry, prompt, insights_list
+
     def _prepare_dispatch(
         self,
         db: Session,
