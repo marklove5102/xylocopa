@@ -5,23 +5,15 @@
 [![React 19](https://img.shields.io/badge/react-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
 
-> [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Known Issues**](#known-issues) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
->
-> **New here?** [**Getting Started**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
->
-> **Going deeper?** [**A Day with Xylocopa**](docs/workflow.md) (5-minute worked example) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md)
+> [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 
-**Xylocopa: capture tasks, dispatch to agents, keep the context.** 🐝
+**Capture tasks, dispatch to agents, keep the context.** 🐝
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea): the blue carpenter bee._
 
-Xylocopa aims to reduce the friction of navigating multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) projects, keeping track of what you asked, what got done, and what to try next. Capture tasks into an inbox, group them by project, and dispatch to agents running in parallel on isolated worktrees. When an attempt misses the mark, retry with a summary of what was tried, so the project carries forward what was learned instead of starting over each session.
+**Tasks in. Agents out. Lessons kept.** A task, attention, and memory layer on top of [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so multiple projects and agents feel like one workflow instead of a pile of terminal tabs.
 
-Tasks in. Agents out. Lessons kept.
-
-If you run `claude` across several projects and want the sessions to feel like one workflow instead of a pile of terminal tabs, this is for you.
-
-If you find Xylocopa useful, a star helps others discover it :)
+A star helps others find it :)
 
 ## The Loop
 
