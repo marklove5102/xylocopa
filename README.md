@@ -7,7 +7,7 @@
 
 > [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 
-**Switch projects and attention fast across many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.** 🐝
+**Many projects. One attention.** 🐝
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea): the blue carpenter bee._
 
@@ -96,7 +96,7 @@ Xylocopa wraps the same `claude` CLI you already use, launched inside tmux sessi
 
 ### Built for Reliability
 
-Xylocopa hooks into Claude Code's native event system (no polling, no heuristics). Message delivery uses stop-hook dispatch with guaranteed ordering; session lifecycle is tracked via SessionStart/SessionEnd. Each agent runs in its own tmux session on a dedicated git worktree. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations even under `--dangerously-skip-permissions`.
+Xylocopa hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s native event system (no polling, no heuristics). Message delivery uses stop-hook dispatch with guaranteed ordering; session lifecycle is tracked via SessionStart/SessionEnd. Each agent runs in its own tmux session on a dedicated git worktree. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations even under `--dangerously-skip-permissions`.
 
 ### Durable by Default
 
