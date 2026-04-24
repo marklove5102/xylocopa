@@ -1107,11 +1107,25 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   }
 
   const isUser = message.role === "USER";
-  const isScheduled = isUser && message.scheduled_at && message.status === "PENDING";
-  const isPending = isUser && (message.status === "PENDING" || message.status === "QUEUED") && !message.scheduled_at;
-  const isQueued = isUser && message.status === "QUEUED";
+  // Normalize status for comparison: the Phase 2 refactor introduces
+  // lowercase pre-delivery statuses ('queued', 'scheduled', 'cancelled',
+  // 'sent', 'delivered', 'executed') alongside the legacy uppercase
+  // MessageStatus values. Match on both during the transition.
+  const status = message.status || "";
+  const isScheduled = isUser && message.scheduled_at && (
+    status === "scheduled" || status === "PENDING"
+  );
+  const isPreQueued = isUser && !message.scheduled_at && (
+    status === "queued" || status === "PENDING"
+  );
+  const isCancelled = isUser && (status === "cancelled" || status === "CANCELLED");
+  const isSent = isUser && (status === "sent" || status === "QUEUED");
+  const isExecuted = isUser && status === "executed";
+  // Legacy aliases still used throughout the render below.
+  const isPending = isPreQueued || isSent;
+  const isQueued = isSent;
   const isSlashCommand = isUser && (message.content || "").trimStart().startsWith("/");
-  const isWebUndelivered = isUser && message.source === "web" && !message.delivered_at && !isPending && !isScheduled && !isQueued && !isSlashCommand;
+  const isWebUndelivered = isUser && message.source === "web" && !message.delivered_at && !isPending && !isScheduled && !isQueued && !isSlashCommand && !isCancelled;
   const UNDELIVERED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   const isUndeliveredTimedOut = isWebUndelivered && (serverNow() - new Date(message.created_at).getTime()) > UNDELIVERED_TIMEOUT_MS;
 
@@ -1156,11 +1170,23 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   }, [editing]);
 
-  const canModify = isScheduled || isPending;
+  // Action menu visibility rules for the two-stage delete model:
+  //   queued/scheduled → Copy / Modify / Delete (+ Send Now for scheduled)
+  //   cancelled        → Copy / Delete (hard tombstone)
+  //   sent+            → Copy only
+  const isPreDelivery = isPreQueued || isScheduled || isCancelled;
+  const canEdit = isPreQueued || isScheduled; // controls Modify button
+  const canDelete = isPreQueued || isScheduled || isCancelled;
+  const canSendNow = isScheduled;
+  // `canModify` gates the action popover opening at all — anything with
+  // any action button (including Copy-only) should still show the menu,
+  // but keeping the name for minimal diff: open the popover for any
+  // pre-delivery state + any user message (Copy-only path).
+  const canModify = canEdit; // legacy name: controls edit-path UI only
 
   const handleLongPressStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
-    if (!canModify) return;
+    if (!canEdit && !isCancelled) return;
     longPressTimer.current = setTimeout(() => {
       setShowActions(true);
     }, LONG_PRESS_DELAY);
@@ -1183,7 +1209,11 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   };
   const handleDoubleClick = () => {
-    if (canModify) {
+    // Pre-delivery (queued/scheduled/cancelled): open the action menu so
+    // the user can Modify / Delete / Send Now / Copy. Post-send bubbles
+    // (sent/delivered/executed) get direct-copy — their only available
+    // action today is Copy, and an immediate copy is the snappier UX.
+    if (canEdit || isCancelled) {
       setShowActions(true);
       return;
     }
@@ -1341,15 +1371,17 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         <div
           className={`rounded-2xl px-4 py-2.5 ${
             isUser
-              ? isScheduled
-                ? "bg-amber-600/80 text-white rounded-br-md"
-                : isPending
-                  ? "bg-cyan-600/60 text-white/80 rounded-br-md"
-                  : isUndeliveredTimedOut
-                    ? "bg-red-600/40 text-white/70 rounded-br-md"
-                    : isWebUndelivered
-                      ? "bg-cyan-600/70 text-white/80 rounded-br-md"
-                      : "bg-cyan-600 text-white rounded-br-md"
+              ? isCancelled
+                ? "bg-gray-400 text-white rounded-br-md"
+                : isScheduled
+                  ? "bg-amber-600/80 text-white rounded-br-md"
+                  : isPending
+                    ? "bg-cyan-600/60 text-white/80 rounded-br-md"
+                    : isUndeliveredTimedOut
+                      ? "bg-red-600/40 text-white/70 rounded-br-md"
+                      : isWebUndelivered
+                        ? "bg-cyan-600/70 text-white/80 rounded-br-md"
+                        : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
           } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
@@ -1402,7 +1434,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
           )}
           <div className={`text-xs mt-1 flex items-center gap-1.5 ${
             isUser
-              ? isScheduled ? "text-amber-200" : "text-cyan-200"
+              ? isCancelled ? "text-gray-100" : isScheduled ? "text-amber-200" : "text-cyan-200"
               : "text-dim"
           }`}>
             {isScheduled ? (
@@ -1416,16 +1448,21 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             ) : (
               relativeTime(message.completed_at || message.created_at)
             )}
-            {isPending && (
+            {isCancelled && (
+              <span className="text-gray-200/90">cancelled</span>
+            )}
+            {!isCancelled && isPreQueued && (
               <span className="text-cyan-300/70">
                 {queueTotal > 1 ? `queued (${queuePosition} of ${queueTotal})` : "queued"}
               </span>
             )}
             {message.source && (
               <span className={`px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
-                message.source === "web"
-                  ? "bg-cyan-500/20 text-cyan-300"
-                  : "bg-emerald-500/20 text-emerald-300"
+                isCancelled
+                  ? "bg-gray-500/40 text-gray-100"
+                  : message.source === "web"
+                    ? "bg-cyan-500/20 text-cyan-300"
+                    : "bg-emerald-500/20 text-emerald-300"
               }`}>
                 {message.source}
               </span>
@@ -1436,10 +1473,14 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
             {message.status === "TIMEOUT" && (
               <span className="text-orange-400">Timed out</span>
             )}
-            {isUser && message.source === "web" && (isSlashCommand ? (
-              message.delivered_at && (
-                message.completed_at ? (
-                  <span className="ml-auto text-green-400" title={`Executed ${new Date(message.completed_at).toLocaleTimeString()}`}>
+            {/* Check icon: three-state delivery indicator (skipped for
+                pre-delivery states — queued/scheduled/cancelled — and
+                slash commands which share the same state machine but have
+                their own executed double-check below). */}
+            {isUser && message.source === "web" && !isPreDelivery && (isSlashCommand ? (
+              (message.delivered_at || status === "delivered" || isExecuted) && (
+                (message.completed_at || isExecuted) ? (
+                  <span className="ml-auto text-green-400" title={`Executed ${message.completed_at ? new Date(message.completed_at).toLocaleTimeString() : ""}`}>
                     <svg className="w-4 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 28 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L16 7" />
                       <path strokeLinecap="round" strokeLinejoin="round" d="M10 13l4 4L24 7" />
@@ -1453,17 +1494,35 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   </span>
                 )
               )
-            ) : (
-              <span className={`ml-auto ${message.delivered_at ? "text-green-400" : isUndeliveredTimedOut ? "text-red-400" : "text-cyan-300/40"}`}
-                    title={message.delivered_at ? `Delivered ${new Date(message.delivered_at).toLocaleTimeString()}` : isUndeliveredTimedOut ? "Undelivered" : "Sending..."}>
+            ) : isExecuted ? (
+              <span className="ml-auto text-green-400" title={`Executed ${message.completed_at ? new Date(message.completed_at).toLocaleTimeString() : ""}`}>
+                <svg className="w-4 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 28 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L16 7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 13l4 4L24 7" />
+                </svg>
+              </span>
+            ) : status === "delivered" || message.delivered_at ? (
+              <span className="ml-auto text-green-400" title={`Delivered ${message.delivered_at ? new Date(message.delivered_at).toLocaleTimeString() : ""}`}>
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  {message.delivered_at ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  ) : isUndeliveredTimedOut ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" opacity="0.5" />
-                  )}
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            ) : status === "sent" || isSent ? (
+              <span className="ml-auto text-gray-400 opacity-50" title="Sent">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            ) : isUndeliveredTimedOut ? (
+              <span className="ml-auto text-red-400" title="Undelivered">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </span>
+            ) : (
+              <span className="ml-auto text-cyan-300/40" title="Sending...">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" opacity="0.5" />
                 </svg>
               </span>
             ))}
@@ -1494,11 +1553,11 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {!isUser && message.metadata?.interactive?.length > 0 && (
           <InteractiveBubbles metadata={message.metadata} agentId={agentId} onAnswered={onRefresh} messageContent={message.content} project={project} />
         )}
-        {/* Action popover for scheduled/pending messages */}
+        {/* Action popover — gated by message status (two-stage delete model) */}
         {showActions && (
           <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
-              {isScheduled && (
+              {canSendNow && (
                 <button
                   type="button"
                   onClick={handleSendNow}
@@ -1520,26 +1579,30 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </button>
-              <button
-                type="button"
-                onClick={handleEdit}
-                title="Modify"
-                className="px-3 py-2 text-heading hover:bg-input transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                title="Delete"
-                className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleEdit}
+                  title="Modify"
+                  className="px-3 py-2 text-heading hover:bg-input transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  title="Delete"
+                  className="px-3 py-2 text-red-400 hover:bg-red-600/10 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowActions(false)}
@@ -2695,18 +2758,28 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [messages, agent?.status]);
   hasPendingInteractiveRef.current = hasPendingInteractive;
 
-  // Bottom-area user messages: active queue (PENDING/QUEUED). Backend filters
-  // CANCELLED at the display-file layer, so it never reaches this list.
+  // Bottom-area user messages: active queue (queued / scheduled / cancelled).
+  // Under the Phase 2 pre-delivery refactor, the file's `status` field uses
+  // the lowercase strings 'queued' | 'scheduled' | 'cancelled'. We keep the
+  // uppercase 'QUEUED' / 'PENDING' fallbacks for legacy rows during the
+  // transition. `scheduled_at` filtering stays the same — only non-scheduled
+  // entries land in the unshaped "queued" list, scheduled entries show
+  // inline.
   const queuedMessages = useMemo(
     () => messages.filter((m) =>
-      m.role === "USER" && !m.scheduled_at &&
-      (m.status === "QUEUED" || m.status === "PENDING"),
+      m.role === "USER" && !m.scheduled_at && (
+        m.status === "queued" || m.status === "cancelled"
+        || m.status === "QUEUED" || m.status === "PENDING"
+      ),
     ),
     [messages],
   );
   // Subset that still needs dispatch — drives escape-button urgency and
-  // bulk cancel. Same as queuedMessages now that CANCELLED is filtered upstream.
-  const activeQueuedMessages = queuedMessages;
+  // bulk cancel. Excludes cancelled entries (they are terminal pre-delivery).
+  const activeQueuedMessages = useMemo(
+    () => queuedMessages.filter((m) => m.status !== "cancelled" && m.status !== "CANCELLED"),
+    [queuedMessages],
+  );
 
   // Polling — faster when executing, pauses when page hidden
   useEffect(() => {
