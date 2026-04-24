@@ -4,7 +4,13 @@ Five things popped into my head between coffee and standup. Here's what I did wi
 
 ## 1. Dump everything into the inbox
 
-Hit **+**, type each one, hit **Save**. No project, no priorities, no thinking about who's going to do them. Two seconds each.
+Hit **+** for each one, type, hit **Save**. No project, no priorities, no thinking about who's going to do them. Two seconds each:
+
+- a contact form for the home page
+- the 404 page bug on mobile
+- the blog post draft about Bun
+- the domain renewal coming up next Friday
+- the electricity bill
 
 <p align="center"><img src="getting-started/02-inbox.png" alt="Inbox with several queued tasks" width="320"></p>
 

@@ -23,7 +23,7 @@ If you find Xylocopa useful, a star helps others discover it :)
 
 Classic [GTD](https://gettingthingsdone.com/what-is-gtd/) moves ideas through a five-step loop (capture, clarify, organize, reflect, engage), all performed by one human. Xylocopa keeps the loop but rewires the executor: **you capture and decide, your agents execute, and the system reflects and remembers.** The five steps below are GTD for an era where the work itself can be delegated to AI.
 
-Traditional task management tracks what **you** need to do. Xylocopa tracks what your **agents** are doing.
+Traditional task management tracks what **you** plan to do. Xylocopa tracks the tasks **and** the agents executing them, so each project remembers what was tried, not just what's pending.
 
 ### 1. Capture
 
@@ -134,6 +134,51 @@ Nothing you run through Xylocopa is ephemeral, not your conversations, not your 
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
 | <a id="safety-guardrails"></a>**Safety Guardrails** | Deterministic `PreToolUse` hook hard-blocks destructive operations, `rm -rf`, `git push --force`, `git reset --hard` outside worktrees, `git clean -f`, `git checkout -- .` / `git restore .`, `DROP TABLE` / `TRUNCATE`, and any `Write`/`Edit` to paths outside the project directory. Enforced even when **Auto mode** (`--dangerously-skip-permissions`) is on. |
 | **Reliability & Recovery** | 30s incremental session JSONL cache (append-only, like git packfiles). **Unlimited retention**: `cleanupPeriodDays=36500` prevents Claude from deleting your history. Orchestrator-restart recovery re-links live tmux agents without interrupting them. Partial output salvaged from killed processes. Automatic periodic DB + config + session backups (runtime-configurable interval & retention). Truncated JSONL auto-repaired. Orphan worktree/tmux cleanup. See [Durable by Default](#durable-by-default) for source pointers. |
+
+## Before You Install
+
+A few things worth knowing before running this on your dev machine.
+
+### Can agents read my secrets?
+
+Yes, by default. Agents inherit your user's read permissions and can `cat` anything you can: `~/.aws/credentials`, `~/.ssh/`, `.env` files, dotfiles in your project. The deterministic [safety hook](#safety-guardrails) hard-blocks destructive **writes** (`rm -rf`, out-of-project edits, force pushes), but does **not** filter reads. Treat agents like any local script you'd run: assume they can read everything you can. If that's not acceptable for a sensitive project, run Xylocopa under a separate user account or in a VM.
+
+### What about Pro / Max plan rate limits?
+
+Running 5 to 10 parallel Opus agents will burn through Anthropic's session-based quota much faster than typical interactive use. If you hit limits, switch most agents to Sonnet or Haiku and reserve Opus for hard tasks (per-task model selection is built into the dispatch flow).
+
+### Where does my data live?
+
+- **SQLite DB**: `data/orchestrator.db` in the install directory (tasks, projects, agent metadata, configs)
+- **Agent sessions**: `~/.claude/projects/<encoded-path>/*.jsonl` (Claude Code's native session JSONL; Xylocopa doesn't duplicate these)
+- **Per-project memory**: `<project>/PROGRESS.md` inside each project's git repo
+- **Backups**: `backups/` (rolling DB + session snapshots, see [Durable by Default](#durable-by-default))
+- **Uploaded files**: `~/.xylocopa/uploads/`
+
+To capture everything in one snapshot, back up the install directory and `~/.claude/projects/` together.
+
+### How do I uninstall it?
+
+```bash
+# Stop the services
+pm2 delete xylocopa-backend xylocopa-frontend && pm2 save
+
+# Remove the install
+rm -rf ~/xylocopa-main          # or wherever you cloned it
+rm -rf ~/.xylocopa              # uploaded files
+
+# Optional: remove your project directories too
+rm -rf ~/xylocopa-projects
+
+# Optional: restore Claude Code's default session-cleanup window
+# (Xylocopa sets cleanupPeriodDays=36500 in ~/.claude/settings.json)
+```
+
+Project code, git history, and Claude Code session JSONL files in `~/.claude/projects/` are untouched by the uninstall.
+
+### What happens when Claude Code updates?
+
+Xylocopa hooks into the public Claude Code event surface (`PreToolUse`, `SessionStart`/`SessionEnd`, `Stop`, `UserPromptSubmit`). Minor version bumps generally Just Work. If a Claude Code update changes hook semantics, Xylocopa's session sync may stall: stop the affected agent, run `claude --version` to confirm the update, and restart the orchestrator (`./run.sh restart`). File an issue if anything breaks.
 
 ## Getting Started
 

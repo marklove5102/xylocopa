@@ -102,7 +102,7 @@ Then pick how to leave the sheet. The six buttons on the input bar (left → rig
 | 📥 | **Save to inbox & close** | Park it in the inbox, close the sheet. Default for "I'll deal with this later." |
 | ⚡ | **Quick save to inbox** | Park it in the inbox, **keep the sheet open** so you can type the next idea immediately. Use this when you have five thoughts to dump in a row. |
 
-The three colored buttons on the right are the three ways to leave this sheet. Pick by intent:
+The three **colored** buttons on the right (✈️ Launch, 📥 Save, ⚡ Quick) are the three ways to leave this sheet. Pick by intent:
 
 - You're capturing an idea on the go → **⚡ Quick save** (stay here for the next one) or **📥 Save** (one and done).
 - You want the agent to start **right now** → **✈️ Launch agent** (requires a project, see step 2).
