@@ -2580,6 +2580,63 @@ async def wake_agent_sync(agent_id: str, request: Request, db: Session = Depends
     raise HTTPException(status_code=409, detail="No active sync loop for this agent")
 
 
+def _allocate_message_id() -> str:
+    """Allocate a fresh 12-hex message id (same pattern as Message._new_uuid)."""
+    import uuid as _uuid
+    return _uuid.uuid4().hex[:12]
+
+
+def _synthetic_message_out(agent_id: str, entry: dict) -> MessageOut:
+    """Build a MessageOut from a pre-delivery entry dict (no DB row).
+
+    Maps pre-delivery status ('queued' | 'scheduled') to the corresponding
+    legacy MessageStatus enum value so existing frontend code that still
+    reads uppercase strings continues to work during Phase 2 transition.
+    """
+    # Map the new lowercase pre-delivery statuses to the legacy uppercase
+    # MessageStatus values the response model still uses. Scheduled sends
+    # surface as PENDING (matching today's behavior for _dispatch_tmux_scheduled).
+    raw_status = entry.get("status") or "queued"
+    status_map = {
+        "queued": MessageStatus.PENDING,
+        "scheduled": MessageStatus.PENDING,
+        "cancelled": MessageStatus.CANCELLED,
+        "sent": MessageStatus.QUEUED,
+        "delivered": MessageStatus.COMPLETED,
+        "executed": MessageStatus.COMPLETED,
+    }
+    status = status_map.get(raw_status, MessageStatus.PENDING)
+
+    # created_at / scheduled_at may be strings (ISO) from the entry dict;
+    # the MessageOut validator normalizes tzinfo but we need to convert
+    # strings to datetimes first so Pydantic accepts them.
+    def _parse_ts(v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    payload = {
+        "id": entry["id"],
+        "agent_id": agent_id,
+        "role": MessageRole.USER,
+        "content": entry.get("content", ""),
+        "status": status,
+        "source": entry.get("source"),
+        "metadata": entry.get("metadata"),
+        "created_at": _parse_ts(entry.get("created_at")) or datetime.now(timezone.utc),
+        "scheduled_at": _parse_ts(entry.get("scheduled_at")),
+        "delivered_at": None,
+        "completed_at": None,
+        "tool_use_id": None,
+    }
+    return MessageOut.model_validate(payload)
+
+
 @router.post("/api/agents/{agent_id}/messages", response_model=MessageOut, status_code=201)
 async def send_agent_message(
     agent_id: str,
@@ -2587,7 +2644,14 @@ async def send_agent_message(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Send a follow-up message to an agent."""
+    """Send a follow-up message to an agent.
+
+    Pre-delivery refactor (Phase 2): this endpoint writes a pre-delivery
+    entry to the per-agent display file via `display_writer.predelivery_*`
+    and returns a synthetic MessageOut. No DB row is created here — the
+    dispatcher creates the DB row at the moment of tmux send (promoting
+    the pre-delivery entry to sent).
+    """
     import slash_commands
     if slash_commands.is_slash_command(body.content) and not slash_commands.is_allowed(body.content):
         raise HTTPException(status_code=400, detail=slash_commands.rejection_message(body.content))
@@ -2598,29 +2662,24 @@ async def send_agent_message(
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is stopped")
 
-    # --- Scheduled messages: store as PENDING for _dispatch_tmux_scheduled ---
+    # --- Scheduled messages: store as pre-delivery 'scheduled' entry ---
     scheduled_at = None
     if body.scheduled_at:
-        from datetime import datetime, timezone
         try:
             scheduled_at = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
 
-    # --- Tmux agents: send via tmux immediately (even while generating) ---
+    # Verify tmux pane (no-send: we just don't want a stale pane reference).
+    # Note: unlike pre-refactor behavior, we do NOT call send_tmux_message
+    # directly from this endpoint — that's the dispatcher's job now.
     has_tmux = (
         agent.status in (AgentStatus.IDLE, AgentStatus.STARTING, AgentStatus.EXECUTING)
         and agent.tmux_pane
         and not scheduled_at
     )
     if has_tmux:
-        from agent_dispatcher import (
-            _detect_tmux_pane_for_session,
-            send_tmux_message,
-            verify_tmux_pane,
-        )
-        from websocket import emit_new_message
-
+        from agent_dispatcher import _detect_tmux_pane_for_session, verify_tmux_pane
         if not verify_tmux_pane(agent.tmux_pane):
             recovered_pane = None
             if agent.session_id:
@@ -2629,7 +2688,6 @@ async def send_agent_message(
                     candidate = _detect_tmux_pane_for_session(agent.session_id, project.path)
                     if candidate and verify_tmux_pane(candidate):
                         recovered_pane = candidate
-
             if recovered_pane:
                 agent.tmux_pane = recovered_pane
                 db.commit()
@@ -2642,149 +2700,56 @@ async def send_agent_message(
                 db.commit()
                 has_tmux = False
 
-        if has_tmux:
-            agent_is_busy = bool(agent.generating_msg_id) or agent.status == AgentStatus.EXECUTING
+    # Build the pre-delivery entry.
+    project = db.get(Project, agent.project)
+    if not project:
+        raise HTTPException(status_code=400, detail="Project not found")
 
-            if not agent_is_busy:
-                # --- IDLE: send via tmux immediately ---
-                # After C-c interrupt, CC needs time to finish processing
-                # (write file-history-snapshot, return to input prompt).
-                # If we send too soon, CC treats it as enqueued input and
-                # skips all hooks (UserPromptSubmit + Stop).
-                import time as _time
-                POST_ESC_GRACE = 2.0  # seconds
-                last_esc = _last_escape.get(agent_id, 0)
-                since_esc = _time.time() - last_esc
-                if 0 < since_esc < POST_ESC_GRACE:
-                    await asyncio.sleep(POST_ESC_GRACE - since_esc)
+    status = "scheduled" if scheduled_at else "queued"
+    msg_id = _allocate_message_id()
 
-                ok = send_tmux_message(agent.tmux_pane, body.content)
-                if not ok:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to send via tmux",
-                    )
-
-                # Create message in DB
-                project = db.get(Project, agent.project)
-                if not project:
-                    raise HTTPException(status_code=400, detail="Project not found")
-                ad = getattr(request.app.state, "agent_dispatcher", None)
-                if ad:
-                    msg, _, _ = ad._prepare_dispatch(
-                        db, agent, project, body.content,
-                        source="web",
-                        wrap_prompt=False,
-                    )
-                else:
-                    msg = Message(
-                        agent_id=agent.id,
-                        role=MessageRole.USER,
-                        content=body.content,
-                        source="web",
-                    )
-                    db.add(msg)
-                # QUEUED = sent via tmux, awaiting JSONL delivery confirmation.
-                # Slash commands also get QUEUED — delivery is confirmed the same
-                # way (sync engine matches the turn in JSONL).
-                msg.status = MessageStatus.QUEUED
-                # delivered_at stays NULL — sync engine sets it from JSONL timestamp
-                if ad:
-                    msg.dispatch_seq = ad.next_dispatch_seq(db, agent.id)
-                db.commit()
-                db.refresh(msg)
-                if ad:
-                    ad._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
-                    if msg.meta_json:
-                        import json as _json
-                        from websocket import emit_metadata_update
-                        ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
-                # Write queued partition entry. display_seq stays NULL until
-                # UserPromptSubmit triggers promote_to_delivered.
-                from display_writer import flush_queued_entry as _msg_flush_queued
-                _msg_flush_queued(agent.id, msg.id)
-                logger.info("Message %s queued to agent %s via tmux pane %s", msg.id, agent.id, agent.tmux_pane)
-                return msg
-
-            # --- BUSY: agent is generating — store as PENDING for stop-hook dispatch ---
-            project = db.get(Project, agent.project)
-            if not project:
-                raise HTTPException(status_code=400, detail="Project not found")
-            ad = getattr(request.app.state, "agent_dispatcher", None)
-            if ad:
-                msg, _, _ = ad._prepare_dispatch(
-                    db, agent, project, body.content,
-                    source="web",
-                    wrap_prompt=False,
-                )
-            else:
-                msg = Message(
-                    agent_id=agent.id,
-                    role=MessageRole.USER,
-                    content=body.content,
-                    source="web",
-                )
-                db.add(msg)
-            msg.status = MessageStatus.PENDING
-            db.commit()
-            db.refresh(msg)
-            if ad:
-                ad._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
-                if msg.meta_json:
-                    import json as _json
-                    from websocket import emit_metadata_update
-                    ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
-            # Write queued partition entry so the bubble shows immediately.
-            # display_seq is only allocated at delivery via promote_to_delivered.
-            from display_writer import flush_queued_entry as _busy_flush_queued
-            _busy_flush_queued(agent.id, msg.id)
-            logger.info("Message %s stored PENDING for busy agent %s (generating %s) — stop hook will dispatch",
-                        msg.id, agent.id, agent.generating_msg_id)
-            return msg
-
-    # --- Fallback: store as PENDING (e.g., scheduled messages) ---
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
-        project = db.get(Project, agent.project)
-        if project:
-            msg, _, _ = ad._prepare_dispatch(
-                db, agent, project, body.content,
-                source="web",
-                wrap_prompt=False,
-            )
-        else:
-            msg = Message(
-                agent_id=agent.id,
-                role=MessageRole.USER,
-                content=body.content,
-                source="web",
-            )
-            db.add(msg)
-    else:
-        msg = Message(
-            agent_id=agent.id,
-            role=MessageRole.USER,
-            content=body.content,
+        entry, _prompt, insights_list = ad._prepare_predelivery_entry(
+            db, agent, project, body.content,
             source="web",
+            status=status,
+            scheduled_at=scheduled_at,
+            wrap_prompt=False,
+            msg_id=msg_id,
         )
-        db.add(msg)
-    msg.status = MessageStatus.PENDING
-    msg.scheduled_at = scheduled_at
+        # Agent preview mutations were applied to the ORM object; persist them.
+        db.commit()
+    else:
+        # Minimal fallback: no dispatcher available (shouldn't happen in prod).
+        entry = {
+            "id": msg_id,
+            "role": "USER",
+            "content": body.content,
+            "source": "web",
+            "status": status,
+            "created_at": _utcnow().isoformat(),
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
+            "metadata": None,
+        }
 
-    db.commit()
-    db.refresh(msg)
-    if ad:
-        from websocket import emit_new_message
-        ad._emit(emit_new_message(agent.id, msg.id, agent.name, agent.project))
-        if msg.meta_json:
-            import json as _json
-            from websocket import emit_metadata_update
-            ad._emit(emit_metadata_update(agent.id, msg.id, _json.loads(msg.meta_json)))
-    # Write queued partition entry — scheduled or tmux-less PENDING paths.
-    from display_writer import flush_queued_entry as _pending_flush_queued
-    _pending_flush_queued(agent.id, msg.id)
-    logger.info("Message %s pending for agent %s", msg.id, agent.id)
-    return msg
+    # Write the pre-delivery entry + emit WS + kick dispatcher.
+    from display_writer import predelivery_create
+    from websocket import emit_predelivery_created
+    predelivery_create(agent.id, entry)
+    asyncio.ensure_future(emit_predelivery_created(agent.id, entry))
+
+    if ad and not scheduled_at:
+        # IDLE / BUSY: dispatcher decides whether to send immediately or
+        # defer based on agent state. Scheduled sends are picked up by
+        # the periodic _dispatch_tmux_scheduled loop, not this call.
+        asyncio.ensure_future(ad.dispatch_pending_message(agent.id, delay=0))
+
+    logger.info(
+        "Message %s pre-delivery entry created for agent %s (status=%s)",
+        msg_id, agent.id, status,
+    )
+    return _synthetic_message_out(agent.id, entry)
 
 
 
@@ -2801,31 +2766,58 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
 async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Soft-cancel a pre-delivery message.
+    """Two-stage delete of a pre-delivery message.
 
-    Only PENDING/QUEUED messages can be cancelled. The DB row is marked
-    CANCELLED and a `_deleted` tombstone is appended to the display file
-    so the queued bubble disappears immediately. Hard-delete is no longer
-    needed — the tombstone makes the message vanish from the UI.
-
-    Intentionally strict: any other status (including already-CANCELLED)
-    returns 400 so orphan / inconsistent state surfaces loudly instead
-    of being silently papered over.
+    Pre-delivery refactor (Phase 2): queued/scheduled → soft cancel
+    (status='cancelled'; grey bubble stays visible). cancelled → hard
+    tombstone (bubble disappears). Any sent/delivered/executed message
+    cannot be deleted via this endpoint.
     """
-    msg = db.get(Message, message_id)
-    if not msg or msg.agent_id != agent_id:
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from display_writer import (
+        predelivery_cancel,
+        predelivery_get,
+        predelivery_tombstone,
+    )
+    from websocket import (
+        emit_predelivery_tombstoned,
+        emit_predelivery_updated,
+    )
+
+    entry = predelivery_get(agent_id, message_id)
+    if entry is None:
+        # Not a pre-delivery entry — check whether it's a post-send DB row.
+        db_msg = db.get(Message, message_id)
+        if db_msg and db_msg.agent_id == agent_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Only pre-delivery messages can be deleted",
+            )
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
-        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be cancelled")
-    msg.status = MessageStatus.CANCELLED
-    db.commit()
-    from display_writer import mark_deleted as _cancel_mark_deleted
-    _cancel_mark_deleted(agent_id, message_id)
-    logger.info("Message %s cancelled for agent %s", message_id, agent_id)
-    # No WS message_update event — the tombstone in the display file is the
-    # single source of truth for cancellation; the old status-broadcast
-    # was a legacy dual-path signal that the frontend no longer consumes.
-    return {"detail": "Message cancelled"}
+
+    status = entry.get("status")
+    if status in ("queued", "scheduled"):
+        predelivery_cancel(agent_id, message_id)
+        asyncio.ensure_future(
+            emit_predelivery_updated(agent_id, message_id, {"status": "cancelled"})
+        )
+        logger.info("Message %s cancelled (soft) for agent %s", message_id, agent_id)
+        return {"detail": "cancelled"}
+
+    if status == "cancelled":
+        predelivery_tombstone(agent_id, message_id)
+        asyncio.ensure_future(emit_predelivery_tombstoned(agent_id, message_id))
+        logger.info("Message %s tombstoned (hard-deleted) for agent %s", message_id, agent_id)
+        return {"detail": "deleted"}
+
+    # sent / delivered / executed — cannot cancel via this endpoint.
+    raise HTTPException(
+        status_code=400,
+        detail="Only pre-delivery messages can be deleted",
+    )
 
 
 @router.put("/api/agents/{agent_id}/messages/{message_id}", response_model=MessageOut)
@@ -2835,37 +2827,53 @@ async def update_message(
     body: UpdateMessage,
     db: Session = Depends(get_db),
 ):
-    """Update content and/or scheduled_at of a pre-delivery (PENDING/QUEUED) message."""
-    msg = db.get(Message, message_id)
-    if not msg or msg.agent_id != agent_id:
-        raise HTTPException(status_code=404, detail="Message not found")
-    if msg.status not in (MessageStatus.PENDING, MessageStatus.QUEUED):
-        raise HTTPException(status_code=400, detail="Only PENDING or QUEUED messages can be updated")
+    """Update content and/or scheduled_at of a queued/scheduled pre-delivery message."""
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
+    from display_writer import predelivery_get, predelivery_update
+    from websocket import emit_predelivery_updated
+
+    entry = predelivery_get(agent_id, message_id)
+    if entry is None or entry.get("status") not in ("queued", "scheduled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only queued/scheduled messages can be edited",
+        )
+
+    patch: dict = {}
     if body.content is not None:
-        if not body.content.strip():
+        content = body.content.strip()
+        if not content:
             raise HTTPException(status_code=400, detail="Content cannot be empty")
-        msg.content = body.content.strip()
+        patch["content"] = content
 
     if body.scheduled_at is not None:
         if body.scheduled_at == "":
-            # Clear scheduled_at (convert to immediate pending)
-            msg.scheduled_at = None
+            patch["scheduled_at"] = None
+            # Clearing schedule converts a scheduled entry back into queued.
+            if entry.get("status") == "scheduled":
+                patch["status"] = "queued"
         else:
             try:
-                msg.scheduled_at = datetime.fromisoformat(
-                    body.scheduled_at.replace("Z", "+00:00")
-                )
+                dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
+            patch["scheduled_at"] = dt.isoformat()
+            if entry.get("status") == "queued":
+                patch["status"] = "scheduled"
 
-    db.commit()
-    db.refresh(msg)
-    # Reflect the edit in the display file's queued partition.
-    from display_writer import update_queued_entry as _update_queued
-    _update_queued(agent_id, message_id)
+    if patch:
+        predelivery_update(agent_id, message_id, patch)
+        asyncio.ensure_future(
+            emit_predelivery_updated(agent_id, message_id, patch)
+        )
+
+    # Build the synthetic MessageOut from the updated entry.
+    updated = predelivery_get(agent_id, message_id) or entry
     logger.info("Message %s updated for agent %s", message_id, agent_id)
-    return msg
+    return _synthetic_message_out(agent_id, updated)
 
 
 # ---- Interactive Answer (AskUserQuestion / ExitPlanMode via tmux) ----
