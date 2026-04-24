@@ -285,6 +285,62 @@ async def emit_message_delivered(agent_id: str, message_id: str,
     })
 
 
+# ---- Pre-delivery event emitters (Phase 1 of REFACTOR_PREDELIVERY_PLAN) ----
+#
+# Phase 1 only defines these; no callers yet. Impl-B/C/D (Phase 2) will
+# wire them into routers/agents.py, agent_dispatcher.py, and sync_engine.py.
+
+
+async def emit_predelivery_created(agent_id: str, entry: dict):
+    """Notify clients that a new pre-delivery entry was created.
+
+    Frontend adds the entry to its queued state immediately — no poll
+    required.
+    """
+    await ws_manager.broadcast("predelivery_created", {
+        "agent_id": agent_id,
+        "entry": entry,
+    })
+
+
+async def emit_predelivery_updated(agent_id: str, message_id: str, patch: dict):
+    """Notify clients that a pre-delivery entry was patched (content,
+    scheduled_at, status, metadata). Frontend merges `patch` into its
+    local queued state for `message_id`.
+    """
+    await ws_manager.broadcast("predelivery_updated", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+        "patch": patch,
+    })
+
+
+async def emit_predelivery_tombstoned(agent_id: str, message_id: str):
+    """Notify clients that a pre-delivery entry was hard-deleted.
+
+    Frontend removes the entry from its queued state.
+    """
+    await ws_manager.broadcast("predelivery_tombstoned", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+    })
+
+
+async def emit_message_sent(agent_id: str, message_id: str, seq: int,
+                             entry: dict):
+    """Notify clients that a pre-delivery entry was promoted to sent.
+
+    Frontend removes the entry from its queued state and adds it to the
+    delivered partition with the newly-allocated `seq`.
+    """
+    await ws_manager.broadcast("message_sent", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+        "seq": seq,
+        "entry": entry,
+    })
+
+
 async def emit_message_update(agent_id: str, message_id: str, status: str,
                               error_message: str | None = None,
                               completed_at: str | None = None):
