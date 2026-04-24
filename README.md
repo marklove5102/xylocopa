@@ -7,11 +7,11 @@
 
 > [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 
-**Capture tasks, dispatch to agents, keep the context.** 🐝
+**Switch projects and attention fast across many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.** 🐝
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea): the blue carpenter bee._
 
-**Tasks in. Agents out. Lessons kept.** A task, attention, and memory layer on top of [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so multiple projects and agents feel like one workflow instead of a pile of terminal tabs.
+**Tasks in. Agents out. Lessons kept.**
 
 A star helps others find it :)
 
