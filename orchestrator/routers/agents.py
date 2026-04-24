@@ -2516,6 +2516,7 @@ async def get_agent_display(
                     Message.agent_id == agent_id,
                     Message.source.in_(("web", "plan_continue", "task")),
                     Message.display_seq.is_(None),
+                    Message.status != MessageStatus.CANCELLED,
                 )
                 .order_by(Message.created_at.asc())
                 .all()
@@ -2591,6 +2592,7 @@ async def get_agent_display(
                 Message.agent_id == agent_id,
                 Message.source.in_(("web", "plan_continue", "task")),
                 Message.display_seq.is_(None),
+                Message.status != MessageStatus.CANCELLED,
             )
             .order_by(Message.created_at.asc())
             .all()

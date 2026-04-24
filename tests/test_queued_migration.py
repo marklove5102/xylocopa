@@ -453,3 +453,33 @@ def test_flag_on_uses_db_fallback(agent, monkeypatch):
     # No display file, but the DB fallback kicks in.
     assert len(resp.queued) == 1
     assert resp.queued[0].content == "fallback-used"
+
+
+def test_db_fallback_filters_cancelled_status(agent, monkeypatch):
+    """Regression: DB fallback must NOT return CANCELLED messages.
+
+    Originally the fallback filter was (source, display_seq IS NULL) with no
+    status check — so a cancelled message whose tombstone made the file's
+    queued partition empty would resurface via the fallback path, defeating
+    the soft-delete UI semantics. The fix adds `status != CANCELLED`.
+    """
+    _mk_message(agent, content="should-be-hidden", status=MessageStatus.CANCELLED)
+
+    monkeypatch.setenv("XY_QUEUED_FALLBACK", "1")
+    import importlib
+    import config
+    importlib.reload(config)
+    import routers.agents as agents_router
+    importlib.reload(agents_router)
+
+    import asyncio
+    db = SessionLocal()
+    try:
+        resp = asyncio.run(agents_router.get_agent_display(
+            agent, offset=0, tail_bytes=0, db=db,
+        ))
+    finally:
+        db.close()
+
+    # CANCELLED message must not surface via the DB fallback.
+    assert len(resp.queued) == 0
