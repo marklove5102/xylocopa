@@ -2514,6 +2514,12 @@ Here are the day's conversations (with timestamps):
                 from websocket import emit_message_update
                 asyncio.ensure_future(emit_message_update(agent_id, pending_msg.id, "QUEUED"))
 
+                # Refresh queued partition entry so the display file
+                # reflects the post-dispatch status (was written at
+                # creation with status=PENDING).
+                from display_writer import update_queued_entry as _pend_update_queued
+                _pend_update_queued(agent_id, pending_msg.id)
+
                 logger.info(
                     "dispatch_pending: dispatched message %s to agent %s",
                     pending_msg.id[:8], agent_id[:8],
@@ -2896,6 +2902,11 @@ Here are the day's conversations (with timestamps):
                 due_msg.status = MessageStatus.QUEUED
                 due_msg.scheduled_at = None
                 due_msg.dispatch_seq = self.next_dispatch_seq(db, agent.id)
+                # Commit locally so update_queued_entry (opens its own
+                # session) reads the post-dispatch state. Without this the
+                # display file keeps the scheduled orange bubble even
+                # after the row flipped to QUEUED.
+                db.commit()
                 logger.info(
                     "Dispatched scheduled message %s to agent %s via tmux",
                     due_msg.id, agent.id,
@@ -2908,10 +2919,12 @@ Here are the day's conversations (with timestamps):
                         agent.id, due_msg.id,
                         json.loads(due_msg.meta_json),
                     ))
-                # Write queued partition entry — display_seq stays NULL
-                # until UserPromptSubmit triggers promote_to_delivered.
-                from display_writer import flush_queued_entry as _sched_flush_queued
-                _sched_flush_queued(agent.id, due_msg.id)
+                # Refresh queued partition entry so the UI sees the
+                # post-dispatch state (status=QUEUED, scheduled_at=None).
+                # display_seq stays NULL — UserPromptSubmit triggers
+                # promote_to_delivered later.
+                from display_writer import update_queued_entry as _sched_update_queued
+                _sched_update_queued(agent.id, due_msg.id)
             else:
                 self._fail_message(due_msg, "Failed to send via tmux")
                 logger.warning(
