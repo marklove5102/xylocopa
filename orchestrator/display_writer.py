@@ -456,17 +456,18 @@ def mark_deleted(agent_id: str, message_id: str):
 
 
 def promote_to_delivered(agent_id: str, message_id: str):
-    """Atomically move a queued entry to the delivered partition.
+    """Move a queued entry to the delivered partition.
 
-    Under a single flock: append (a) tombstone `{id, _deleted: true}` and
-    (b) the full regular entry with freshly allocated `display_seq`. Then
-    commit `display_seq` on the DB row.
+    Fresh promotion path (msg.display_seq is None): under a single flock,
+    append tombstone `{id, _deleted: true}` + the full regular entry with a
+    freshly allocated `display_seq`; then commit `display_seq` on the DB row.
 
-    Precondition: DB row exists, `delivered_at` is set, `display_seq` is
-    NULL. Raises RuntimeError if `display_seq` is already set — that means
-    another code path allocated a seq first (typically flush_agent), which
-    violates the sync post-commit ordering contract (promote_to_delivered
-    must run BEFORE flush_agent).
+    Already-promoted path (msg.display_seq is set): log a warning and
+    degrade to `update_last`. Legitimate cause is a startup rebuild that
+    re-flushed an already-delivered row before sync had a chance to link
+    its jsonl_uuid — on the next sync wake, sync tries to promote again
+    and must not kill the loop. Keeping this function idempotent is the
+    robustness net for "hook-wrote-delivered-at-before-restart" races.
     """
     db = SessionLocal()
     try:
@@ -481,12 +482,15 @@ def promote_to_delivered(agent_id: str, message_id: str):
                 f"{msg.agent_id}, not {agent_id}"
             )
         if msg.display_seq is not None:
-            raise RuntimeError(
-                f"promote_to_delivered contract violation: msg {message_id} "
-                f"already has display_seq={msg.display_seq}. Typical cause: "
-                "flush_agent ran before promote_to_delivered in the sync "
-                "post-commit block (wrong order)."
+            logger.warning(
+                "promote_to_delivered: msg %s already has display_seq=%d — "
+                "degrading to update_last. Expected on post-restart UUID "
+                "catch-up; investigate if frequent in steady state.",
+                message_id, msg.display_seq,
             )
+            db.close()
+            update_last(agent_id, message_id)
+            return
 
         os.makedirs(DISPLAY_DIR, exist_ok=True)
         path = _display_path(agent_id)
@@ -507,7 +511,10 @@ def promote_to_delivered(agent_id: str, message_id: str):
         msg.display_seq = next_seq
         db.commit()
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 def rebuild_agent(agent_id: str):
