@@ -1,6 +1,9 @@
 # Xylocopa Architecture Refactor: Queued Partition in Display File
 
-> Status: **Phase 0 blueprint — awaiting user review before Phase 1 implementation.**
+> Status: **Shipped.** Phases 1–3 landed (queued/tombstone/replace markers,
+> dual-path migration, XY_QUEUED_FALLBACK removal). A follow-up pass in
+> 2026-04-24 (see §11) layered a stronger invariant on top: hooks ring
+> the bell, sync is the sole writer for message state.
 > Companion doc: `/tmp/xy-refactor-0a-interaction-map.md` (interaction map snapshot, referenced as "0a §X" below).
 
 ## 1. Goals
@@ -117,6 +120,30 @@ All functions follow the existing contract (0a §3 Race 4): caller commits DB fi
 
 ---
 
-**Decision locked (2026-04-23)**: User confirmed **Option A** — fix the `sync_engine.py:221` pre-commit violation as part of Phase 2A. `promote_to_delivered` is called post-commit (after line 544) via deferred-write list. Eliminates the stale-display-state bug and the sole pre-commit exception to the display_writer protocol.
+**Decision locked (2026-04-23)**: User confirmed **Option A** — fix the `sync_engine.py:221` pre-commit violation as part of Phase 2A. `promote_to_delivered` is called post-commit via a deferred-write list. Eliminates the stale-display-state bug and the sole pre-commit exception to the display_writer protocol.
 
-**Ready for Phase 1 implementation.**
+## 11. Follow-up: "hook rings the bell, sync writes" (2026-04-24)
+
+After Phases 1–3 landed, the `promote_to_delivered` post-commit ordering turned out to have a second, legitimate failure mode the blueprint did not anticipate: the `UserPromptSubmit` hook committing `delivered_at` before the `jsonl_uuid` was linked, followed by a server restart. Startup rebuild would assign a fresh `display_seq` to that row, and the next sync cycle's `promote_to_delivered` would crash on the non-null-`display_seq` precondition, killing the sync loop and cascading into `EXECUTING→IDLE` status flicker.
+
+Rather than guard every call site, a stricter invariant was adopted:
+
+- **Hooks never write Message rows or the display file.** They wake sync. Sync owns the transition from JSONL observation to DB + display file.
+- **Exceptions**: interactive cards (permission / AskUserQuestion / ExitPlanMode) stay hook-owned because the payload isn't in JSONL and the hook must block to return allow/deny. Agent runtime status (`_start_generating` / `_stop_generating`) stays hook-owned because JSONL's first tool_use arrives seconds after the hook — too late for snappy UI.
+- **`promote_to_delivered` is now idempotent**: if `display_seq` is already set, it degrades to `update_last` + warning, not a raise. This is the safety net; the invariant above is what actually prevents the race in practice.
+
+Concrete migrations shipped with this follow-up:
+
+| Change | Where |
+|---|---|
+| `UserPromptSubmit` hook drops DB writes + `promote_to_delivered` call; keeps `_start_generating` + wake_sync | `routers/hooks.py` |
+| `PostCompact` hook drops /compact Message finalization + `_end_compact_activity` + display writes; sync's `sync_full_scan(reason="compact")` picks them up | `routers/hooks.py`, `sync_engine.py` |
+| `promote_to_delivered` idempotent on non-null `display_seq` | `display_writer.py` |
+| `_dispatch_tmux_scheduled` and `dispatch_pending_message` call `update_queued_entry` after PENDING→QUEUED commit | `agent_dispatcher.py` |
+
+Trade-off: the delivered green tick on web messages now arrives ~300–500 ms after `UserPromptSubmit` (JSONL flush delay + sync cycle) instead of instantly. Accepted in exchange for eliminating the restart-window race.
+
+Out of scope for this follow-up, still open:
+- Manual vs auto `/compact` differentiation via PreCompact `trigger` field (status transition on PostCompact) — tracked on agent 3944f4ba.
+- Sync-loop `finally` block's unconditional `_stop_generating` — also 3944f4ba.
+- Compaction of tombstone/replace accumulation in long-running agents — risk-register item 4, no-one has hit it.

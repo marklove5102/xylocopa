@@ -30,7 +30,7 @@ from schemas import (
     AgentBrief, AgentCreate, AgentInsightSuggestionOut, AgentOut,
     DisplayEntry, DisplayResponse,
     MessageOut, MessageSearchResponse, MessageSearchResult,
-    PaginatedMessages, SendMessage, UpdateMessage,
+    SendMessage, UpdateMessage,
 )
 from route_helpers import (
     check_project_capacity, compute_successor_id,
@@ -2408,90 +2408,6 @@ async def update_agent(agent_id: str, request: Request, db: Session = Depends(ge
     return agent
 
 
-@router.get("/api/agents/{agent_id}/messages", response_model=PaginatedMessages)
-async def get_agent_messages(
-    agent_id: str,
-    limit: int = 50,
-    before: str | None = None,
-    after: str | None = None,
-    db: Session = Depends(get_db),
-):
-    """Get conversation messages for an agent with cursor pagination.
-
-    Sort order: session_seq ASC (messages without session_seq sink to bottom).
-    - No cursor (initial load): newest `limit` messages, oldest-first.
-    - `before=<int>`: messages with session_seq < cursor (scroll-up).
-    - `after=<int>`: messages with session_seq > cursor (incremental refresh).
-    Returns { messages: [...], has_more: bool }.
-    """
-    from sqlalchemy import func
-
-    agent = db.get(Agent, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    # Sort key: session_seq if set, otherwise 999999 (unsequenced → bottom)
-    sort_key = func.coalesce(Message.session_seq, 999999)
-
-    query = db.query(Message).filter(Message.agent_id == agent_id)
-
-    if before:
-        before_seq = int(before)
-        rows = (
-            query.filter(sort_key < before_seq)
-            .order_by(sort_key.desc(), Message.created_at.desc())
-            .limit(limit + 1)
-            .all()
-        )
-        has_more = len(rows) > limit
-        messages = rows[:limit][::-1]
-    elif after:
-        after_seq = int(after)
-        messages = (
-            query.filter(sort_key > after_seq)
-            .order_by(sort_key.asc(), Message.created_at.asc())
-            .all()
-        )
-        has_more = False  # always returns everything newer
-    else:
-        # Default: newest `limit` messages
-        rows = (
-            query.order_by(sort_key.desc(), Message.created_at.desc())
-            .limit(limit + 1)
-            .all()
-        )
-        has_more = len(rows) > limit
-        messages = rows[:limit][::-1]
-        # Reset unread count only on initial load
-        if agent.unread_count > 0:
-            agent.unread_count = 0
-            db.commit()
-
-    return PaginatedMessages(messages=messages, has_more=has_more)
-
-
-def _apply_display_content(msg: Message) -> MessageOut:
-    """Serialize a queued Message to MessageOut, applying the same display
-    transformations used when writing the JSONL file (attachment stripping,
-    stop-note parsing, task-notification XML, display_content override)."""
-    from display_writer import transform_for_display
-
-    out = MessageOut.model_validate(msg)
-    meta = None
-    if msg.meta_json:
-        try:
-            meta = json.loads(msg.meta_json)
-        except (json.JSONDecodeError, ValueError):
-            logger.debug("Skipped unparseable meta_json for msg_id=%s", msg.id)
-            pass
-    role_val = msg.role.value if msg.role else None
-    content, meta = transform_for_display(role_val, out.content, meta)
-    out.content = content
-    if meta is not None:
-        out.metadata = meta
-    return out
-
-
 @router.get("/api/agents/{agent_id}/display", response_model=DisplayResponse)
 async def get_agent_display(
     agent_id: str,
@@ -2585,14 +2501,10 @@ async def get_agent_display(
                 agent_id[:8], entry.id,
             )
 
-    # Display file is now the sole source for the queued partition.
-    # (DB fallback removed in Phase 3.)
-    queued_out: list = queued_from_file
-
     return DisplayResponse(
         messages=displayed,
         next_offset=next_offset,
-        queued=queued_out,
+        queued=queued_from_file,
         has_earlier=has_earlier,
     )
 

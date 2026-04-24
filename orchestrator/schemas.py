@@ -262,13 +262,8 @@ class DisplayEntry(BaseModel):
 class DisplayResponse(BaseModel):
     messages: list[DisplayEntry]
     next_offset: int
-    queued: list[MessageOut | DisplayEntry]
+    queued: list[DisplayEntry]
     has_earlier: bool
-
-
-class PaginatedMessages(BaseModel):
-    messages: list[MessageOut]
-    has_more: bool
 
 
 class MessageSearchResult(BaseModel):
