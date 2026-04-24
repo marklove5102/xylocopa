@@ -341,6 +341,21 @@ async def emit_message_sent(agent_id: str, message_id: str, seq: int,
     })
 
 
+async def emit_message_executed(agent_id: str, message_id: str,
+                                completed_at: str):
+    """Notify clients that a sent/delivered message was executed (completed).
+
+    Used for slash commands whose completion is marked by a hook
+    (/compact PostCompact, /clear SessionStart source=clear, /loop SessionEnd).
+    Frontend transitions the entry status to 'executed' (green double check).
+    """
+    await ws_manager.broadcast("message_executed", {
+        "agent_id": agent_id,
+        "message_id": message_id,
+        "completed_at": completed_at,
+    })
+
+
 async def emit_message_update(agent_id: str, message_id: str, status: str,
                               error_message: str | None = None,
                               completed_at: str | None = None):

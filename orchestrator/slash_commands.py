@@ -338,10 +338,13 @@ def mark_completed(agent_id: str) -> str | None:
         from display_writer import update_last
         update_last(agent_id, msg.id)
 
-        from websocket import emit_message_update
+        from websocket import emit_message_executed, emit_message_update
         asyncio.ensure_future(emit_message_update(
             agent_id, msg.id, "COMPLETED",
             completed_at=msg.completed_at.isoformat(),
+        ))
+        asyncio.ensure_future(emit_message_executed(
+            agent_id, msg.id, msg.completed_at.isoformat(),
         ))
         if msg.delivered_at == now:
             from websocket import emit_message_delivered
@@ -401,8 +404,15 @@ def mark_delivered_and_completed(agent_id: str, content: str) -> str | None:
         from display_writer import update_last
         update_last(agent_id, msg.id)
 
-        from websocket import emit_message_delivered, emit_message_update
+        from websocket import (
+            emit_message_delivered,
+            emit_message_executed,
+            emit_message_update,
+        )
         asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
+        asyncio.ensure_future(emit_message_executed(
+            agent_id, msg.id, now.isoformat(),
+        ))
         asyncio.ensure_future(emit_message_update(
             agent_id, msg.id, "COMPLETED",
             completed_at=now.isoformat(),
@@ -453,10 +463,13 @@ def mark_loop_completed(agent_id: str) -> str | None:
         from display_writer import update_last
         update_last(agent_id, msg.id)
 
-        from websocket import emit_message_update
+        from websocket import emit_message_executed, emit_message_update
         asyncio.ensure_future(emit_message_update(
             agent_id, msg.id, "COMPLETED",
             completed_at=now.isoformat(),
+        ))
+        asyncio.ensure_future(emit_message_executed(
+            agent_id, msg.id, now.isoformat(),
         ))
         if msg.delivered_at == now:
             from websocket import emit_message_delivered
