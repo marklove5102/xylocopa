@@ -236,7 +236,12 @@ class DisplayEntry(BaseModel):
     kind: str | None = None
     content: str | None = None
     source: str | None = None
-    status: MessageStatus | None = None
+    # Accept both the legacy uppercase MessageStatus values
+    # ("PENDING", "QUEUED", "COMPLETED", ...) and the new lowercase
+    # pre-delivery / post-send states ("queued", "scheduled",
+    # "cancelled", "sent", "delivered", "executed"). Phase 3 of the
+    # REFACTOR_PREDELIVERY_PLAN picks a single canonical set.
+    status: str | None = None
     metadata: dict | None = None
     tool_use_id: str | None = None
     created_at: datetime | None = None
@@ -248,6 +253,10 @@ class DisplayEntry(BaseModel):
     queued: bool | None = Field(default=None, alias="_queued")
     replace: bool | None = Field(default=None, alias="_replace")
     deleted: bool | None = Field(default=None, alias="_deleted")
+    # Pre-delivery marker (Phase 1 of REFACTOR_PREDELIVERY_PLAN). Entries
+    # with `_pre: true` have no DB row — they live exclusively in the
+    # display file until a dispatcher promotes them to sent.
+    pre: bool | None = Field(default=None, alias="_pre")
 
     model_config = {"populate_by_name": True}
 
@@ -264,6 +273,11 @@ class DisplayResponse(BaseModel):
     next_offset: int
     queued: list[DisplayEntry]
     has_earlier: bool
+    # True on initial (tail_bytes) loads — `queued` is the authoritative
+    # full snapshot. False on incremental (offset) polls — `queued` is
+    # empty; the frontend must not touch its queued state from the poll
+    # response. Default True for backwards compat with existing callers.
+    queued_authoritative: bool = True
 
 
 class MessageSearchResult(BaseModel):
