@@ -90,6 +90,115 @@ def load_registry(db: Session):
     logger.info("Loaded %d projects from registry.yaml", len(projects))
 
 
+# ---- One-shot migration: predelivery legacy rows ----
+
+def _migrate_predelivery_legacy():
+    """Clean up pre-cutover DB rows that no longer belong in `messages`.
+
+    Pre-Phase-2 code created DB rows for PENDING/QUEUED/CANCELLED web/task/
+    plan_continue messages. Post-Phase-2 those states live in the display
+    file's pre-delivery zone (no DB row) or, once dispatched, as COMPLETED
+    rows. This migration reconciles residue.
+
+    Rules:
+      - PENDING (never sent to tmux): move to predelivery zone with
+        status='queued' (or 'scheduled' if scheduled_at is set); delete row.
+      - QUEUED with delivered_at set: was actually delivered, legacy status
+        is stale; flip to COMPLETED, keep row.
+      - QUEUED without delivered_at (never confirmed): move to predelivery
+        zone; delete row. CC may have received the message but we have no
+        UserPromptSubmit confirmation — user can re-send if needed.
+      - CANCELLED with display_seq: was delivered then cancelled (historical
+        quirk); flip to COMPLETED to honor the "DB only holds delivered"
+        invariant; display-file tombstone already hides the bubble.
+      - CANCELLED without display_seq: pure pre-delivery cancel; display
+        file already has the tombstone; just delete the row.
+
+    Idempotent. Runs on every startup; a clean DB makes it a no-op.
+    """
+    import json
+    from models import Message, MessageRole, MessageStatus
+    from display_writer import predelivery_create
+
+    db = SessionLocal()
+    migrated_pre = 0
+    fixed_completed = 0
+    deleted_cancelled = 0
+    try:
+        legacy = (
+            db.query(Message)
+            .filter(
+                Message.source.in_(("web", "task", "plan_continue")),
+                Message.status.in_((
+                    MessageStatus.PENDING,
+                    MessageStatus.QUEUED,
+                    MessageStatus.CANCELLED,
+                )),
+            )
+            .all()
+        )
+        for msg in legacy:
+            try:
+                if msg.status == MessageStatus.CANCELLED:
+                    if msg.display_seq is not None:
+                        msg.status = MessageStatus.COMPLETED
+                        if not msg.completed_at:
+                            msg.completed_at = msg.delivered_at
+                        fixed_completed += 1
+                    else:
+                        db.delete(msg)
+                        deleted_cancelled += 1
+                    continue
+
+                # PENDING or QUEUED
+                if msg.delivered_at is not None and msg.display_seq is not None:
+                    # Actually delivered — just fix the status label.
+                    msg.status = MessageStatus.COMPLETED
+                    if not msg.completed_at:
+                        msg.completed_at = msg.delivered_at
+                    fixed_completed += 1
+                    continue
+
+                # Move to predelivery zone.
+                entry_status = "scheduled" if msg.scheduled_at else "queued"
+                metadata = None
+                if msg.meta_json:
+                    try:
+                        metadata = json.loads(msg.meta_json)
+                    except (ValueError, TypeError):
+                        metadata = None
+                entry = {
+                    "id": msg.id,
+                    "role": "USER",
+                    "content": msg.content or "",
+                    "source": msg.source,
+                    "status": entry_status,
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                    "scheduled_at": (
+                        msg.scheduled_at.isoformat() if msg.scheduled_at else None
+                    ),
+                    "metadata": metadata,
+                }
+                predelivery_create(msg.agent_id, entry)
+                db.delete(msg)
+                migrated_pre += 1
+            except Exception:
+                logger.exception(
+                    "Predelivery migration: failed for msg %s (agent %s)",
+                    msg.id[:8], msg.agent_id[:8],
+                )
+        db.commit()
+        if migrated_pre or fixed_completed or deleted_cancelled:
+            logger.info(
+                "Predelivery migration: moved=%d, completed=%d, cancelled-deleted=%d",
+                migrated_pre, fixed_completed, deleted_cancelled,
+            )
+        else:
+            logger.info("Predelivery migration: nothing to migrate")
+    finally:
+        db.close()
+
+
 # ---- Lifespan ----
 
 @asynccontextmanager
@@ -128,6 +237,16 @@ async def lifespan(app: FastAPI):
 
     init_db()
     logger.info("Database initialized")
+
+    # One-shot migration: move legacy pre-delivery DB rows to predelivery zone.
+    # Per docs/REFACTOR_PREDELIVERY_PLAN.md §7, pre-delivery web/task/plan_continue
+    # messages no longer own DB rows. Any legacy PENDING/QUEUED/CANCELLED rows
+    # from before the cutover are reconciled here. Idempotent — after the first
+    # successful run the SELECT returns zero rows.
+    try:
+        _migrate_predelivery_legacy()
+    except Exception:
+        logger.exception("Predelivery migration failed on startup")
 
     # Rebuild display files for active agents
     try:
