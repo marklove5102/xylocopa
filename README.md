@@ -198,29 +198,32 @@ Project code, git history, and Claude Code session JSONL files in `~/.claude/pro
 - **Node.js** 18+ and npm
 - **Python** 3.11+
 - **tmux** (usually pre-installed; `sudo apt install tmux` if not)
-- **Claude Code CLI**: `npm install -g @anthropic-ai/claude-code`, then run `claude` once interactively to log in (Xylocopa reuses the credentials in `~/.claude/`)
+- **Claude Code CLI**: `npm install -g @anthropic-ai/claude-code`, then run `claude` once interactively to log in (Xylocopa reuses the credentials in `~/.claude/`). On a headless server with no browser, use `claude setup-token` instead.
 - **Claude subscription**: Claude Max or Pro (uses your existing subscription, no separate API billing)
 - **OpenAI API key** _(optional, for voice input)_
 
 #### Installation
 
+Fastest path (clones + runs the interactive installer):
+
 ```bash
-# 1. Clone
-git clone https://github.com/jyao97/xylocopa.git && cd xylocopa
+curl -fsSL https://raw.githubusercontent.com/jyao97/xylocopa/master/setup.sh | bash
+```
 
-# 2. Run automated setup (installs deps, creates venv, generates SSL certs)
-chmod +x setup.sh && ./setup.sh
+This installs into `~/xylocopa-main` and prompts for your projects directory, default Claude model, OpenAI API key (optional), and ports. It writes `.env`, generates SSL certs, installs Python and Node dependencies, and launches the services. No manual `.env` editing required.
 
-# 3. Configure
-nano .env   # Set HOST_PROJECTS_DIR (required), optionally OPENAI_API_KEY
+If you prefer to clone manually:
 
-# 4. Start
+```bash
+git clone https://github.com/jyao97/xylocopa.git ~/xylocopa-main
+cd ~/xylocopa-main
+./setup.sh        # same interactive prompts as above
 ./run.sh start
 ```
 
-Verify by opening `https://<machine-ip>:3000` on the host.
+Verify by opening `https://<machine-ip>:3000` on the host. Find your machine's LAN IP with `hostname -I` on Linux or `ipconfig getifaddr en0` on macOS.
 
-> **Tip:** You can also run `claude` in the project directory and tell it to set up Xylocopa for you :)
+> **Tip:** You can also run `claude` in an empty directory and tell it to set up Xylocopa for you :)
 
 > **Tip:** Symlink the Xylocopa repo into `~/xylocopa-projects/` to personalize your experience, let agents improve the tool while you use it.
 
