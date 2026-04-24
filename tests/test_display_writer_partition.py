@@ -202,11 +202,16 @@ def test_update_queued_entry_replaces_content(agent):
     assert queued[0].status == MessageStatus.QUEUED
 
 
-def test_update_queued_entry_noops_after_promotion(agent, caplog):
+def test_update_queued_entry_raises_after_promotion(agent):
+    """Contract: update_queued_entry must not be called on an already-
+    promoted message. Violation raises RuntimeError loudly; do not silently
+    no-op — callers should branch on display_seq and use update_last
+    for post-delivery updates.
+    """
     msg_id = _mk_message(agent, content="x")
     display_writer.flush_queued_entry(agent, msg_id)
 
-    # Simulate concurrent promotion: set display_seq directly.
+    # Simulate the message having been promoted (display_seq set).
     db = SessionLocal()
     try:
         m = db.get(Message, msg_id)
@@ -216,10 +221,10 @@ def test_update_queued_entry_noops_after_promotion(agent, caplog):
     finally:
         db.close()
 
-    # Count lines before
     before = _line_count(agent)
-    display_writer.update_queued_entry(agent, msg_id)
-    # Defensive no-op: no new line appended.
+    with pytest.raises(RuntimeError, match="already promoted"):
+        display_writer.update_queued_entry(agent, msg_id)
+    # No line appended on failure.
     assert _line_count(agent) == before
 
 
@@ -299,15 +304,17 @@ def test_promote_to_delivered_allocates_next_seq_after_existing(agent):
     assert seqs == [1, 2]
 
 
-def test_promote_race_guard_with_preset_display_seq(agent):
-    """If display_seq is already set (another path promoted first),
-    promote_to_delivered must degrade to replace-in-place — no duplicate seq,
-    no corruption.
+def test_promote_raises_when_display_seq_preset(agent):
+    """Contract: promote_to_delivered must be the ONLY path that allocates
+    display_seq. If another path (typically flush_agent running in the wrong
+    order) already set display_seq, that's a sync-ordering bug and must
+    surface loudly — not be silently absorbed by a degrade-to-replace path.
     """
     msg_id = _mk_message(agent, content="racy")
     display_writer.flush_queued_entry(agent, msg_id)
 
-    # Simulate concurrent promotion: seq already committed by another path.
+    # Simulate the exact orphan-creating scenario: another path allocated
+    # display_seq before promote_to_delivered ran.
     db = SessionLocal()
     try:
         m = db.get(Message, msg_id)
@@ -318,30 +325,11 @@ def test_promote_race_guard_with_preset_display_seq(agent):
     finally:
         db.close()
 
-    # Before: file has just the _queued line.
     before_lines = _line_count(agent)
-
-    display_writer.promote_to_delivered(agent, msg_id)
-
-    # After: one replace line appended — no tombstone, no new seq.
-    after_lines = _line_count(agent)
-    assert after_lines == before_lines + 1
-
-    # display_seq must still be 5 (not bumped / replaced).
-    db = SessionLocal()
-    try:
-        m = db.get(Message, msg_id)
-        assert m.display_seq == 5
-    finally:
-        db.close()
-
-    # Reader sees the entry on the displayed side with seq=5 (the _replace
-    # line has seq=5 and no _queued marker, so it wins over the earlier
-    # _queued line by dedup).
-    displayed, queued = _read_display_response(agent)
-    assert queued == []
-    assert len(displayed) == 1
-    assert displayed[0].seq == 5
+    with pytest.raises(RuntimeError, match="already has display_seq"):
+        display_writer.promote_to_delivered(agent, msg_id)
+    # No partial writes on contract violation.
+    assert _line_count(agent) == before_lines
 
 
 # ─────────────────────────── rebuild ────────────────────────────

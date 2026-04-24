@@ -338,31 +338,34 @@ def update_last(agent_id: str, message_id: str):
 def flush_queued_entry(agent_id: str, message_id: str):
     """Append a `_queued` line for a pre-delivery message.
 
-    Precondition: caller committed a Message row with `delivered_at IS NULL`
-    and `display_seq IS NULL`. Does NOT allocate `display_seq` — the entry
-    sits in the queued partition until `promote_to_delivered` runs.
+    Precondition: caller committed a Message row with `display_seq IS NULL`.
+    Raises RuntimeError if the precondition is violated — do not catch; the
+    caller is buggy and the failure must surface, not be silently absorbed.
     """
     db = SessionLocal()
     try:
         msg = db.get(Message, message_id)
-        if not msg or msg.agent_id != agent_id:
-            return
-        if msg.display_seq is not None:
-            logger.warning(
-                "flush_queued_entry: msg %s already has display_seq=%d — skipping",
-                message_id, msg.display_seq,
+        if not msg:
+            raise RuntimeError(
+                f"flush_queued_entry: msg {message_id} not found in DB "
+                "(caller must commit before calling)"
             )
-            return
+        if msg.agent_id != agent_id:
+            raise RuntimeError(
+                f"flush_queued_entry: msg {message_id} belongs to agent "
+                f"{msg.agent_id}, not {agent_id}"
+            )
+        if msg.display_seq is not None:
+            raise RuntimeError(
+                f"flush_queued_entry contract violation: msg {message_id} "
+                f"already has display_seq={msg.display_seq}. This function "
+                "is only for pre-delivery messages."
+            )
 
         os.makedirs(DISPLAY_DIR, exist_ok=True)
         path = _display_path(agent_id)
         line = _serialize_queued(msg)
         _write_locked(path, [line])
-    except Exception:
-        logger.exception(
-            "Failed to write queued display entry for agent %s msg %s",
-            agent_id[:8], message_id,
-        )
     finally:
         db.close()
 
@@ -372,30 +375,34 @@ def update_queued_entry(agent_id: str, message_id: str):
 
     Used for content edits, PENDING→QUEUED transitions, and interactive-card
     metadata changes before delivery. Caller must have committed DB first.
-    If the message has already been promoted (display_seq is not NULL), logs
-    a warning and no-ops — Phase 2 branching should prevent this case.
+    Raises RuntimeError if the message has already been promoted — that
+    indicates the caller should have taken the post-delivery `update_last`
+    branch instead.
     """
     db = SessionLocal()
     try:
         msg = db.get(Message, message_id)
-        if not msg or msg.agent_id != agent_id:
-            return
-        if msg.display_seq is not None:
-            logger.warning(
-                "update_queued_entry: msg %s already promoted (display_seq=%d) — no-op",
-                message_id, msg.display_seq,
+        if not msg:
+            raise RuntimeError(
+                f"update_queued_entry: msg {message_id} not found in DB"
             )
-            return
+        if msg.agent_id != agent_id:
+            raise RuntimeError(
+                f"update_queued_entry: msg {message_id} belongs to agent "
+                f"{msg.agent_id}, not {agent_id}"
+            )
+        if msg.display_seq is not None:
+            raise RuntimeError(
+                f"update_queued_entry contract violation: msg {message_id} "
+                f"already promoted (display_seq={msg.display_seq}). Caller "
+                "should branch on display_seq and use update_last for "
+                "post-delivery updates."
+            )
 
         os.makedirs(DISPLAY_DIR, exist_ok=True)
         path = _display_path(agent_id)
         line = _serialize_queued(msg, replace=True)
         _write_locked(path, [line])
-    except Exception:
-        logger.exception(
-            "Failed to update queued display entry for agent %s msg %s",
-            agent_id[:8], message_id,
-        )
     finally:
         db.close()
 
@@ -422,28 +429,34 @@ def promote_to_delivered(agent_id: str, message_id: str):
     (b) the full regular entry with freshly allocated `display_seq`. Then
     commit `display_seq` on the DB row.
 
-    Precondition: DB row has `delivered_at` set. If `display_seq` is already
-    set (raced — another path promoted first), degrades to `update_last`
-    behavior (append a `_replace` line with the existing seq).
+    Precondition: DB row exists, `delivered_at` is set, `display_seq` is
+    NULL. Raises RuntimeError if `display_seq` is already set — that means
+    another code path allocated a seq first (typically flush_agent), which
+    violates the sync post-commit ordering contract (promote_to_delivered
+    must run BEFORE flush_agent).
     """
     db = SessionLocal()
     try:
         msg = db.get(Message, message_id)
-        if not msg or msg.agent_id != agent_id:
-            return
+        if not msg:
+            raise RuntimeError(
+                f"promote_to_delivered: msg {message_id} not found in DB"
+            )
+        if msg.agent_id != agent_id:
+            raise RuntimeError(
+                f"promote_to_delivered: msg {message_id} belongs to agent "
+                f"{msg.agent_id}, not {agent_id}"
+            )
+        if msg.display_seq is not None:
+            raise RuntimeError(
+                f"promote_to_delivered contract violation: msg {message_id} "
+                f"already has display_seq={msg.display_seq}. Typical cause: "
+                "flush_agent ran before promote_to_delivered in the sync "
+                "post-commit block (wrong order)."
+            )
 
         os.makedirs(DISPLAY_DIR, exist_ok=True)
         path = _display_path(agent_id)
-
-        # Race-guard: already promoted — degrade to replace-in-place.
-        if msg.display_seq is not None:
-            logger.debug(
-                "promote_to_delivered: msg %s already promoted (seq=%d) — degrading to update_last",
-                message_id, msg.display_seq,
-            )
-            line = _serialize_message(msg, msg.display_seq, replace=True)
-            _write_locked(path, [line])
-            return
 
         # Allocate next display_seq using the same rule as flush_agent.
         max_seq = db.query(func.max(Message.display_seq)).filter(
@@ -456,23 +469,10 @@ def promote_to_delivered(agent_id: str, message_id: str):
 
         # Single flock covers tombstone + delivered entry so readers never
         # observe the id present in both partitions simultaneously.
-        try:
-            _write_locked(path, [tombstone, delivered_line])
-        except OSError:
-            logger.exception(
-                "promote_to_delivered: file write failed for agent %s msg %s",
-                agent_id[:8], message_id,
-            )
-            return
+        _write_locked(path, [tombstone, delivered_line])
 
         msg.display_seq = next_seq
         db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception(
-            "Failed to promote queued→delivered for agent %s msg %s",
-            agent_id[:8], message_id,
-        )
     finally:
         db.close()
 

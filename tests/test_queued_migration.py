@@ -424,29 +424,14 @@ def test_sync_engine_skips_cancelled_promotion_candidates(agent):
         db.close()
 
 
-def test_sync_engine_promote_runs_before_flush(agent):
-    """Regression for the orphan bug: promote_to_delivered must be invoked
-    BEFORE flush_agent in the sync post-commit step. If flush_agent runs
-    first, it picks up the promoted-but-not-yet-displayed USER message
-    (delivered_at set, display_seq NULL), allocates a seq, and writes a
-    regular entry — stealing the slot and turning promote_to_delivered
-    into a no-op degrade-to-replace. The bubble ends up in the main
-    partition without a tombstone — an orphan.
-
-    This test inspects the literal source of sync_import_new_turns and
-    asserts promote_to_delivered appears before flush_agent.
-    """
-    import inspect
-    import sync_engine
-    src = inspect.getsource(sync_engine.sync_import_new_turns)
-    promote_idx = src.find("promote_to_delivered")
-    flush_idx = src.find("flush_agent as _flush_display")
-    assert promote_idx > 0, "promote_to_delivered must be called"
-    assert flush_idx > 0, "flush_agent must be called"
-    assert promote_idx < flush_idx, (
-        "promote_to_delivered must run BEFORE flush_agent — otherwise "
-        "flush_agent steals the display_seq and creates an orphan"
-    )
+# Note: the former `test_sync_engine_promote_runs_before_flush` regression
+# test was removed. It asserted call order by string-matching the source of
+# sync_import_new_turns, which is brittle (renaming an import alias would
+# make it silently pass). The invariant is now enforced by
+# promote_to_delivered itself — it raises RuntimeError if display_seq is
+# already set (covered by test_promote_raises_when_display_seq_preset in
+# test_display_writer_partition.py). A wrong-order sync would crash the
+# import cycle loudly rather than corrupt the display file.
 
 
 # ─────────────────────────── feature flag ────────────────────────────
