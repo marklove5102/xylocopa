@@ -13,7 +13,7 @@ _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea
 
 Xylocopa aims to help you navigate attention across many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) projects. Inspired by [GTD](https://gettingthingsdone.com/what-is-gtd/) — except here, agents do the work, not you.
 
-A star helps others find it :)
+If you find Xylocopa useful, a star helps others find it :)
 
 ## The Loop
 
