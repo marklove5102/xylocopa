@@ -149,22 +149,22 @@ def _notify_interactive(ad, agent, new_turns):
 # ---------------------------------------------------------------------------
 
 def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, meta, kind, jsonl_ts=None,
-                                 deferred_promotions: list | None = None):
-    """Match a JSONL user turn to a queued web message, or create a CLI message.
+                                 deferred_updates: list | None = None):
+    """Match a JSONL user turn to a sent-state DB row, or create a CLI message.
 
-    Strategy:
-    1. UUID dedup — skip if already imported
-    2. Content-match via ContentMatcher (exact → task-stripped →
-       normalised → task-normalised)
-    3. No match → create new CLI-sourced message
+    Strategy (pre-delivery refactor):
+    1. UUID dedup — skip if already imported.
+    2. Content-match against sent-state rows — messages that were promoted
+       from the pre-delivery file on tmux send (status=QUEUED, jsonl_uuid
+       NULL, delivered_at NULL) but not yet confirmed by UserPromptSubmit.
+    3. No match → genuine CLI-typed user input, create a fresh row.
 
-    Returns Message to insert, or None if already handled (dedup/promotion).
+    Returns Message to insert, or None if already handled (dedup or
+    sent->delivered update).
 
-    When a web message is promoted, the id is appended to
-    ``deferred_promotions`` (if provided) so the caller can flush the
-    display writer AFTER ``db.commit()``. This keeps the display_writer
-    protocol (commit → then flush) intact; an inline call here would open
-    a second session that sees uncommitted data.
+    When a sent row is matched, the id is appended to ``deferred_updates``
+    (if provided) so the caller calls `update_last` AFTER db.commit() —
+    writing the `_replace` line with status='delivered'.
     """
     from content_matcher import ContentMatcher
 
@@ -180,23 +180,25 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
             logger.debug("Agent %s: dedup skip uuid=%s", ctx.agent_id[:8], jsonl_uuid)
             return None
 
-    # 2. Fetch promotion candidates (unlinked web/task messages).
-    # Exclude CANCELLED: a cancelled row must not be promoted — doing so
-    # sets delivered_at while status stays CANCELLED, creating an orphan
-    # visible in the main display partition. If content matches a later
-    # JSONL turn, treat it as a fresh CLI-typed user input instead.
+    # 2. Fetch sent-state candidates.
+    # Under the pre-delivery model, pre-delivery state (queued / scheduled
+    # / cancelled) lives in the file only — these rows do not exist in the
+    # DB. The match pool is messages that have been promoted to sent
+    # (legacy enum: MessageStatus.QUEUED) but have no jsonl_uuid yet
+    # (UserPromptSubmit hasn't confirmed them).
     candidates = (
         db.query(Message)
         .filter(
             Message.agent_id == ctx.agent_id,
             Message.role == MessageRole.USER,
+            Message.status == MessageStatus.QUEUED,
             _or(
                 Message.source == "web",
                 Message.source == "plan_continue",
                 Message.source == "task",
             ),
             Message.jsonl_uuid.is_(None),
-            Message.status != MessageStatus.CANCELLED,
+            Message.delivered_at.is_(None),
         )
         .order_by(Message.created_at.asc())
         .all()
@@ -210,12 +212,11 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                 if jsonl_uuid:
                     web_msg.jsonl_uuid = jsonl_uuid
                 web_msg.session_seq = seq
-                if not web_msg.delivered_at:
-                    web_msg.delivered_at = _parse_jsonl_ts(jsonl_ts) or _utcnow()
-                # QUEUED → COMPLETED: message appeared in JSONL = delivered
-                if web_msg.status == MessageStatus.QUEUED:
-                    web_msg.status = MessageStatus.COMPLETED
-                    web_msg.completed_at = web_msg.delivered_at
+                # sent → delivered: row already has display_seq (allocated
+                # at promote-to-sent time). Just update status + timestamps.
+                web_msg.delivered_at = _parse_jsonl_ts(jsonl_ts) or _utcnow()
+                web_msg.status = MessageStatus.COMPLETED
+                web_msg.completed_at = web_msg.delivered_at
                 db.flush()
         except IntegrityError:
             # UUID collision — skip promotion, fall through to CLI creation
@@ -225,15 +226,14 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                 ctx.agent_id[:8], web_msg.id, jsonl_uuid,
             )
         else:
-            logger.info("Agent %s: promoted web msg %s → uuid=%s (method=%s)",
+            logger.info("Agent %s: sent → delivered for msg %s → uuid=%s (method=%s)",
                         ctx.agent_id[:8], web_msg.id, jsonl_uuid, method)
 
             # Defer the display-file write until after the caller's commit.
             # Writing inline would open a second session that sees the
-            # uncommitted promotion and writes stale state (resolves
-            # ARCHITECTURE_REFACTOR.md §7 — the sole pre-commit violation).
-            if deferred_promotions is not None:
-                deferred_promotions.append(web_msg.id)
+            # uncommitted update and writes stale state.
+            if deferred_updates is not None:
+                deferred_updates.append(web_msg.id)
 
             # Emit WS delivery event
             if web_msg.delivered_at:
@@ -242,9 +242,9 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                     ctx.agent_id, web_msg.id,
                     web_msg.delivered_at.isoformat(),
                 ))
-            return None  # promoted — no insert needed
+            return None  # updated — no insert needed
 
-    # 3. No promotable web message — genuine CLI-typed input
+    # 3. No promotable sent row — genuine CLI-typed input
     _ts = _parse_jsonl_ts(jsonl_ts) or _utcnow()
     return Message(
         agent_id=ctx.agent_id,
@@ -491,10 +491,11 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _saw_interrupt = False
         _saw_stop_hook = False
         _saw_rate_limit = False
-        # Accumulate message_ids promoted (queued→delivered) this cycle so
-        # we can call promote_to_delivered AFTER db.commit(). Writing inline
-        # would violate the display_writer "commit → then flush" contract.
-        _deferred_promotions: list[str] = []
+        # Accumulate message_ids updated (sent→delivered) this cycle so we
+        # can call update_last AFTER db.commit(). Writing inline would
+        # violate the display_writer "commit → then flush" contract (the
+        # function opens its own session, which would see stale state).
+        _deferred_updates: list[str] = []
         for i, (role, content, *rest) in enumerate(new_turns):
             seq = ctx.last_turn_count + i
             meta = rest[0] if rest else None
@@ -509,7 +510,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             if role == "user":
                 msg = _promote_or_create_user_msg(
                     db, ctx, content, jsonl_uuid, seq, meta, kind, jsonl_ts,
-                    deferred_promotions=_deferred_promotions,
+                    deferred_updates=_deferred_updates,
                 )
                 if msg is None:
                     continue
@@ -568,9 +569,9 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 "Commit failed for agent %s, will retry next cycle: %s",
                 ctx.agent_id[:8], exc,
             )
-            # Drop deferred promotions — the rows never committed, so the
+            # Drop deferred updates — the rows never committed, so the
             # display file must not reflect them.
-            _deferred_promotions.clear()
+            _deferred_updates.clear()
             # DO NOT advance pointer — next cycle retries, UUID dedup
             # skips already-committed turns
             return "commit_error"
@@ -580,19 +581,17 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         ctx.last_offset = current_size
         ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
 
-        # Order matters: promote_to_delivered MUST run before flush_agent.
-        # _promote_or_create_user_msg set delivered_at on the web row, so
-        # flush_agent would otherwise pick it up (USER + delivered_at set,
-        # display_seq NULL), allocate a display_seq, and steal the slot —
-        # turning promote_to_delivered into a no-op degrade-to-replace and
-        # leaving an orphan regular entry with no tombstone.
-        if _deferred_promotions:
-            from display_writer import promote_to_delivered as _promote_display
-            for _promoted_id in _deferred_promotions:
-                _promote_display(ctx.agent_id, _promoted_id)
+        # Sent rows already carry display_seq from the promote-to-sent
+        # step. update_last appends a _replace line reflecting the new
+        # status (delivered/completed), so the display file transitions
+        # the bubble without a new seq slot.
+        if _deferred_updates:
+            from display_writer import update_last as _update_last
+            for _updated_id in _deferred_updates:
+                _update_last(ctx.agent_id, _updated_id)
 
         # Flush remaining undisplayed messages (AGENT/SYSTEM and any USER
-        # turns not promoted from a pre-existing web row).
+        # turns not matched to a sent row — i.e. genuine CLI input).
         from display_writer import flush_agent as _flush_display
         _flush_display(ctx.agent_id)
 
