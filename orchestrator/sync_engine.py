@@ -180,18 +180,23 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
             logger.debug("Agent %s: dedup skip uuid=%s", ctx.agent_id[:8], jsonl_uuid)
             return None
 
-    # 2. Fetch sent-state candidates.
-    # Under the pre-delivery model, pre-delivery state (queued / scheduled
-    # / cancelled) lives in the file only — these rows do not exist in the
-    # DB. The match pool is messages that have been promoted to sent
-    # (legacy enum: MessageStatus.QUEUED) but have no jsonl_uuid yet
-    # (UserPromptSubmit hasn't confirmed them).
+    # 2. Fetch unpromoted candidates.
+    # Two shapes end up here:
+    #   (a) pre-delivery → sent rows: status=QUEUED, delivered_at=NULL,
+    #       jsonl_uuid=NULL (web/plan_continue path).
+    #   (b) task-launched rows from _dispatch_task_tmux: status=COMPLETED
+    #       synchronously, but still delivered_at=NULL, jsonl_uuid=NULL
+    #       until the JSONL echo arrives.
+    # Both are "not yet confirmed by JSONL"; filtering only by QUEUED
+    # (case a) would orphan task-launched rows and create a duplicate
+    # `source=cli` row on JSONL import — losing the insights metadata
+    # that the task row carries.
     candidates = (
         db.query(Message)
         .filter(
             Message.agent_id == ctx.agent_id,
             Message.role == MessageRole.USER,
-            Message.status == MessageStatus.QUEUED,
+            Message.status != MessageStatus.CANCELLED,
             _or(
                 Message.source == "web",
                 Message.source == "plan_continue",
