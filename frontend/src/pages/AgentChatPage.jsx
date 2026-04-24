@@ -4012,15 +4012,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <SyncPrompt agentId={id} onSync={refreshMessages} />
         ) : (
           <>
-            {/* Lazy-load indicator at top */}
-            {loadingMore && (
-              <div className="text-center py-3 text-xs opacity-60">Loading older messages...</div>
-            )}
-            {!hasMore && messages.length > 0 && (
-              <div className="text-center py-3 text-xs opacity-40">Beginning of conversation</div>
-            )}
-
-            {/* Previous attempt summary + attempt navigation for retry agents */}
+            {/* Previous attempt summary + attempt navigation for retry agents.
+                Rendered ABOVE the lazy-load / conversation-start markers so
+                the task context stays visible regardless of how many older
+                messages are loaded. */}
             {(() => {
               const attempts = taskData?.attempt_agents || [];
               const myIdx = attempts.findIndex(a => a.agent_id === id);
@@ -4096,11 +4091,30 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               );
             })()}
 
+            {/* Lazy-load indicator sits below the Attempts bubble so that
+                pinned task context is always on top. */}
+            {loadingMore && (
+              <div className="text-center py-3 text-xs opacity-60">Loading older messages...</div>
+            )}
+            {!hasMore && messages.length > 0 && (
+              <div className="text-center py-3 text-xs opacity-40">Beginning of conversation</div>
+            )}
+
             {(() => {
               const isRetryAgent = (taskData?.attempt_agents || []).findIndex(a => a.agent_id === id) >= 1;
               const retryContext = taskData?.retry_context;
               let replacedFirstTask = false;
-              const visible = messages.filter((m) => !(m.role === "USER" && (m.status === "PENDING" || m.status === "QUEUED")) && m.kind !== "stop_hook")
+              // Exclude pre-delivery user messages (they render in the bottom
+              // queue list separately). Covers both legacy uppercase statuses
+              // (PENDING/QUEUED) and new lowercase vocabulary (queued/
+              // scheduled/cancelled) introduced by the Phase 2 refactor.
+              // Without this, a predelivery entry shows in BOTH the main
+              // flow and the bottom list → duplicate bubble.
+              const _preDeliveryStatuses = new Set([
+                "PENDING", "QUEUED", "CANCELLED",
+                "queued", "scheduled", "cancelled",
+              ]);
+              const visible = messages.filter((m) => !(m.role === "USER" && _preDeliveryStatuses.has(m.status)) && m.kind !== "stop_hook")
                 .map((m) => {
                   // For retry agents, replace first source=task user message text with retry_context,
                   // but keep all [Attached file: ...] tags from both original and retry_context
