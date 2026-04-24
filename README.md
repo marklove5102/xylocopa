@@ -5,7 +5,7 @@
 [![React 19](https://img.shields.io/badge/react-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
 
-> [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Known Issues**](#known-issues) · [**Roadmap**](#roadmap) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
+> [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Known Issues**](#known-issues) · [**Contributing**](CONTRIBUTING.md) · [**Host Setup**](#host-setup) · [**Client Setup**](#client-setup)
 >
 > **New here?** [**Getting Started**](docs/getting-started.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 >
@@ -25,108 +25,101 @@ If you find Xylocopa useful, a star helps others discover it :)
 
 ## The Loop
 
-Classic [GTD](https://gettingthingsdone.com/what-is-gtd/) moves ideas through a five-step loop (capture, clarify, organize, reflect, engage), all performed by one human. Xylocopa keeps the loop but rewires the executor: **you capture and decide, your agents execute, and the system reflects and remembers.** The five steps below are GTD for an era where the work itself can be delegated to AI.
-
-Traditional task management tracks what **you** plan to do. Xylocopa tracks the tasks **and** the agents executing them, so each project remembers what was tried, not just what's pending.
+Classic [GTD](https://gettingthingsdone.com/what-is-gtd/) has one human do all five steps (capture, clarify, organize, reflect, engage). Xylocopa keeps the loop but rewires the executor: **you capture and decide, agents execute, the system remembers.**
 
 ### 1. Capture
 
-Get ideas out of your head and into the system, fast, from anywhere.
+Get ideas into the system, fast, from anywhere.
 
-- **Inbox**: a persistent queue for tasks across all your projects. Tasks wait here until you're ready to dispatch them.
-- **Voice input**: dictate tasks using speech-to-text. Great for quick ideas on your phone while walking the dog.
-- **Lightning input**: rapid task creation with minimal friction. Title, project, go.
-- **Draft persistence**: edits are cached locally as you type. Close the app, lose connection, or switch tasks, your unsaved work is still there when you come back.
+- **Inbox**: a persistent queue across all your projects.
+- **Voice input**: speech-to-text for quick ideas on the go.
+- **Lightning input**: title, project, go.
+- **Draft persistence**: every keystroke cached locally, survives app close or network drop.
 
 ### 2. Dispatch
 
-Assign tasks to AI agents and let them work.
+Turn tasks into agents and let them run.
 
-- **Task → Agent**: turn any task into an autonomous agent with one click. Pick a model (Opus/Sonnet/Haiku), toggle **Auto mode** (runs Claude Code with `--dangerously-skip-permissions`, bypasses per-tool confirmation prompts; destructive commands are still hard-blocked by the [safety hook](#safety-guardrails)), and let the agent do the work while you move on.
-- **Parallel execution**: run 5, 10, or more agents in parallel across different projects. Each agent gets its own isolated git worktree so they never step on each other's code.
-- **AI batch processing**: got a pile of tasks in your inbox? One click to let AI triage and dispatch them in bulk, instead of handling each one manually.
-- **RAG-powered context**: when dispatching a task, Xylocopa automatically retrieves relevant history from past agent sessions. Your new agent starts with the lessons learned, not from scratch.
-- **Cross-session reference**: tell an agent "check xy session `<session_id>`" and it can read another agent's full conversation via a built-in [MCP server](orchestrator/mcp_server.py). Reads the curated display file instead of raw session JSONL, same complete message history, but ~54× fewer tokens into the agent's context window (thinking blocks and tool I/O stripped, tool calls compressed to one-line summaries).
+- **Task → Agent**: one click. Pick a model (Opus/Sonnet/Haiku), optionally enable **Auto mode** (`--dangerously-skip-permissions`; destructive commands still blocked by the [safety hook](#safety-guardrails)).
+- **Parallel execution**: run many agents at once, each in its own isolated git worktree.
+- **AI batch dispatch**: one click to triage and fire off a pile of inbox tasks.
+- **RAG-powered context**: new agents are seeded with relevant lessons from past sessions in the same project.
+- **Cross-session reference**: tell an agent "check xy session `<id>`" and it reads another agent's curated display file via a built-in [MCP server](orchestrator/mcp_server.py), ~54× fewer tokens than raw JSONL.
 
 ### 3. Monitor
 
-Watch everything happen in real time, from your desk or your phone.
+Watch everything in real time, from desk or phone.
 
-- **Mobile-first web UI**: a full PWA you can add to your Home Screen. Works on any device, any screen size.
-- **Split screen**: monitor 2, 3, or 4 agents side by side (2-column, 3-column, 2x2 grid on desktop; stacked on mobile). Each pane navigates independently.
-- **Attention button**: a draggable FAB that turns into a cyan unread badge when any agent has new messages. Tap to jump to the oldest unread conversation (FIFO); long-press always opens split screen.
-- **Rich chat interface**: markdown rendering, inline image and media preview, interactive cards for tool approvals and plan review. Approve, deny, or respond to agents directly in the conversation.
-- **Dual-directional CLI sync**: CLI sessions appear in the web app, web app sessions are resumable from the CLI. Attach to any agent's terminal with `tmux attach -t xy-<agent-id prefix>` (legacy `ah-` sessions still attach for back-compat) and keep working from your keyboard. One conversation history, two interfaces.
+- **Mobile-first PWA**: add to Home Screen on iOS/Android.
+- **Split screen**: 2/3/4 panes side by side, each navigating independently.
+- **Attention button**: draggable FAB with a cyan unread badge. Tap for the oldest unread (FIFO), long-press for split screen.
+- **Rich chat**: markdown, inline media, interactive cards for tool approvals and plan review.
+- **Dual-directional CLI sync**: CLI sessions show up in the web app; web sessions are resumable from the CLI via `tmux attach -t xy-<id>` (legacy `ah-` still recognized).
 
   ![CLI sync demo](docs/cli-sync.gif)
-- **Smart notifications**: Web Push and Telegram with dual-channel in-use detection: if you're viewing an agent in the browser (WebSocket presence) or attached to its tmux pane, notifications are suppressed. Permission requests always cut through.
-- **System & usage monitoring**: disk, memory, GPU status, and token usage at a glance.
+- **Smart notifications**: Web Push and Telegram, suppressed when you're already viewing the agent (WebSocket or tmux). Permission requests always cut through.
+- **System monitoring**: disk, memory, GPU, token usage.
 
 ### 4. Review
 
-Check results, give feedback, and keep the knowledge growing.
+Check results, give feedback, grow the knowledge.
 
-- **Mark done**: review agent output, approve the work, mark the task complete.
-- **Try → Summarize → Retry**: agent didn't nail it? Stop the agent, add your feedback, and Xylocopa auto-generates a summary of what was tried. Re-dispatch with full context, the next agent picks up where the last one left off. Iterate until it's right.
-- **Git operations**: view diffs, commit history, and branch status per project. One-click cleanup and push when you're satisfied.
-- **Growing intelligence**: each project carries a PROGRESS.md where lessons accumulate across sessions. You control which agent conversations generate summaries, review and cherry-pick which insights to keep, and relevant lessons are automatically retrieved (top-k) when dispatching new agents, more control over project memory than Claude Code's native auto-memory.
+- **Mark done**: approve and close the task.
+- **Try → Summarize → Retry**: stop a miss, Xylocopa auto-summarizes what was tried, the next agent picks up from there.
+- **Git operations**: diffs, commit history, branch status per project. One-click cleanup and push.
+- **Curated project memory**: lessons accumulate in a per-project `PROGRESS.md` that you edit and review; relevant entries are retrieved (top-k) for future agents.
 
 ### 5. Remember
 
-Knowledge accumulates, across sessions, across projects, across time.
+Knowledge compounds across sessions, projects, and time.
 
-- **Project memory**: per-project PROGRESS.md managed through the UI. Choose which sessions to summarize, accept or reject individual insights, and edit the file directly. Future agents start with what's already been learned.
-- **Session archive**: every agent conversation is persisted and searchable. Star important sessions for quick access. Browse history across projects.
-- **Resume anytime**: pick up any agent conversation right where it left off, whether it finished yesterday or last month.
-- **Full-text search**: find any task, message, or agent session across your entire history.
-- **Progress tracking**: weekly completion stats show how much your agents are getting done. See the trend, not just the backlog.
-- **Automatic backups**: database, session history, and project configs are backed up on a configurable schedule. Crash recovery salvages partial output.
+- **Project memory**: per-project `PROGRESS.md`, fully UI-managed.
+- **Session archive**: every conversation persisted, searchable, starrable.
+- **Resume anytime**: pick up any agent where it left off.
+- **Full-text search**: across tasks, messages, and sessions.
+- **Weekly progress stats**: see the trend, not just the backlog.
+- **Automatic backups**: DB + session history + project configs, on a configurable schedule.
 
 ## Why Xylocopa?
 
 ### Why not just use `claude`?
 
-Vanilla `claude` CLI works fine for one-off sessions. It starts to fray once you run more than one in parallel, across more than one project, over more than a few days.
+Vanilla `claude` is fine for one-off sessions. It frays once you run several in parallel, across multiple projects, over multiple days.
 
-**Attention across agents and projects.** Three `claude` sessions in three terminal tabs, which one is waiting for your approval? Which is still thinking? Xylocopa has a single **Attention button** that morphs into a blue count badge for unread or waiting agents across all projects; tap to jump to the oldest, long-press to open 2/3/4-pane split-screen. Each project has its own dashboard with an emoji, an LLM-generated resume hint of what the agents did recently, weekly success rate, and an in-project search bar across agents, messages, and files. Push notifications fire when an agent stops, muted if you're already looking at that session.
+- **Attention across agents**: one **Attention button** with a badge for unread/waiting agents. Tap for the oldest, long-press for split-screen. Per-project dashboards with weekly stats, LLM-generated recaps, and an in-project search bar.
+- **Capture on the go**: a PWA with voice input (Whisper), ⚡ quick-save to inbox, triage at the desk later. Every keystroke auto-drafts locally across 13+ input surfaces.
+- **Find and resume old work**: full-text search across every session, with star-to-pin. One-click resume brings STOPPED/ERROR agents back (re-sync existing tmux, or relaunch via `claude --resume`).
+- **Retry instead of rewrite**: Try → Summarize → Retry auto-generates what was tried; the next agent picks up with it in context. Durable lessons roll into per-project `PROGRESS.md` and are re-surfaced via RAG.
+- **Rich content + cheap cross-references**: inline rendering for images, PDFs, media, and LaTeX (KaTeX). Agents reference each other's sessions via a built-in MCP server, ~54× fewer tokens than raw JSONL.
 
-**Idea capture on the go.** You can't start a `claude` session on your phone in a meeting. Xylocopa is a PWA: dictate by voice (Whisper-transcribed), ⚡ quick-save to inbox, triage later at the desk. Every keystroke auto-drafts to localStorage across 13+ input surfaces; close the app mid-thought, reopen, it's still there.
-
-**Finding and resuming old work.** `claude --resume <uuid>` works if you remember the UUID. Xylocopa has full-text search across every session you've ever run, per-project or global, with star-to-pin. One-click resume brings STOPPED or ERROR agents back, either re-syncing to the existing tmux pane or relaunching via `claude --resume` in a fresh one.
-
-**Retry instead of rewrite.** When an agent misses the mark, vanilla setup means retyping the prompt and re-explaining what went wrong. Xylocopa's Try → Summarize → Retry auto-generates a summary of what was tried from the session itself; you edit, the next agent picks up with it in context. Durable lessons roll into per-project `PROGRESS.md`, automatically surfaced to future agents via RAG.
-
-**Rich content and token-efficient cross-agent references.** `claude` dumps image paths as text. Xylocopa renders images, PDFs, and media inline with thumbnails, plus LaTeX math (KaTeX) and a per-session file browser. Tell one agent "check xy session `<id>`" and it reads another agent's curated display file via a built-in MCP server, about **54× fewer tokens** than raw JSONL (thinking blocks stripped, tool calls compressed to one-line summaries).
-
-The chat is still there; `claude` still runs the show. Xylocopa is the task, attention, and memory layer around it.
+`claude` still runs the show. Xylocopa is the task, attention, and memory layer around it.
 
 ### Lessons Compound
 
-Most agent tools assume the agent gets it right. Xylocopa assumes it won't. When an agent misses the mark, one click summarizes what was tried, and the next agent picks up from there. Iterate until done, and the lessons accumulate per project (in `PROGRESS.md`), not per session, so future agents start with what you've already learned.
+Most agent tools assume the agent gets it right. Xylocopa assumes it won't. One click turns a miss into a summary, the next agent picks up from there, and the durable lessons accumulate per project in `PROGRESS.md`, not per session.
 
 ### Zero Migration Cost
 
-Already using Claude Code? Xylocopa plugs right in. It wraps the same `claude` CLI you already know, launched inside tmux sessions on your machine, managed through a web UI. Your existing CLAUDE.md files, project setup, and workflow all carry over. The only new dependencies are **tmux** and optionally **Tailscale** for remote access. No new APIs, no vendor lock-in, no relearning.
+Xylocopa wraps the same `claude` CLI you already use, launched inside tmux sessions on your machine. Your CLAUDE.md files, project setup, and workflow carry over. The only new dependencies are **tmux** and optionally **Tailscale** for remote access. No new APIs, no lock-in.
 
 ### Built for Reliability
 
-Xylocopa hooks into Claude Code's native event system, not polling, not heuristics. Notifications, message delivery, and session sync are all event-driven. Messages reach agents through stop-hook dispatch with guaranteed ordering. Session lifecycle is tracked via SessionStart/SessionEnd hooks. Each agent runs in its own tmux session with a dedicated git worktree, with configurable timeouts and automatic crash recovery. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations (`rm -rf`, `git push --force`, `DROP TABLE`, out-of-project writes, …), active even when agents run in Auto mode with `--dangerously-skip-permissions`.
+Xylocopa hooks into Claude Code's native event system (no polling, no heuristics). Message delivery uses stop-hook dispatch with guaranteed ordering; session lifecycle is tracked via SessionStart/SessionEnd. Each agent runs in its own tmux session on a dedicated git worktree. A deterministic `PreToolUse` [safety hook](#safety-guardrails) hard-blocks destructive operations even under `--dangerously-skip-permissions`.
 
 ### Durable by Default
 
-Nothing you run through Xylocopa is ephemeral, not your conversations, not your in-flight work, not your unsaved drafts. Every layer is designed to survive restarts, crashes, and process kills:
+Nothing you run through Xylocopa is ephemeral. Every layer is designed to survive restarts, crashes, and process kills:
 
-- **30-second incremental session cache**: active session JSONL files are append-only-cached every 30s ([`session_cache.py`](orchestrator/session_cache.py)), just like git packfiles. Truncated lines from process kills are auto-repaired on restore.
-- **Unlimited session retention**: Xylocopa writes `cleanupPeriodDays=36500` to `~/.claude/settings.json` on boot ([`session_cache.py:183`](orchestrator/session_cache.py)), so Claude Code never auto-deletes your history. Conversations from a year ago are still resumable.
-- **Crash-recovery with partial output salvage**: when the orchestrator restarts with agents mid-flight, `_recover_agents()` ([`agent_dispatcher.py:4776`](orchestrator/agent_dispatcher.py)) reads each crashed message's stdout from `/tmp/claude-output-{msg_id}.log`, extracts the partial result, and persists it as a `(partial — interrupted by restart)` message before re-queueing the original prompt. No output is silently lost.
-- **Tmux-anchored session recovery**: every agent is launched as a deterministically-named tmux session (`xy-{id[:8]}`). On orchestrator restart, agents whose tmux is still alive are **re-linked without interrupting them**: including agents that were previously STOPPED but whose CLI kept running. Your agents survive the web app.
-- **One-click resume of stopped agents**: `POST /api/agents/{id}/resume` ([`routers/agents.py:2111`](orchestrator/routers/agents.py)) brings a STOPPED/ERROR agent back. Two modes: re-sync to existing tmux pane (default), or relaunch via `claude --resume <session_id>` in a fresh tmux (`mode: "tmux"`).
-- **Automatic periodic backups**: DB + project configs + session history snapshotted every 24h (configurable) with rolling retention ([`backup.py`](orchestrator/backup.py)). Runtime-adjustable via `PUT /api/system/backup/config`.
-- **Local draft persistence**: every text input caches to `localStorage` as you type ([`frontend/src/hooks/useDraft.js`](frontend/src/hooks/useDraft.js), used in 13+ surfaces). Close the browser, switch tabs, kill your phone, your unsaved work is still there.
-- **Session directory migration**: move a project folder (e.g. `~/Work/foo` → `~/xylocopa-projects/foo`) and Xylocopa auto-migrates Claude's old encoded session directory so nothing reindexes from scratch.
-- **Orphan cleanup**: stale worktrees, zombie tmux sessions, and tempfiles from crashed processes are periodically swept ([`orphan_cleanup.py`](orchestrator/orphan_cleanup.py)).
+- **30s incremental session cache** ([`session_cache.py`](orchestrator/session_cache.py)): active JSONL is append-only-cached like git packfiles; truncated lines auto-repaired on restore.
+- **Unlimited retention**: sets `cleanupPeriodDays=36500` in `~/.claude/settings.json` so Claude Code never deletes history.
+- **Partial output salvage on crash** ([`agent_dispatcher.py`](orchestrator/agent_dispatcher.py)): `_recover_agents()` extracts partial stdout from `/tmp/claude-output-*.log` and persists it before re-queueing.
+- **Tmux-anchored recovery**: agents with live tmux panes are re-linked without interruption on restart, your agents survive the web app.
+- **One-click resume** ([`routers/agents.py`](orchestrator/routers/agents.py)): STOPPED/ERROR agents resume via re-sync or `claude --resume`.
+- **Periodic backups** ([`backup.py`](orchestrator/backup.py)): DB + configs + session history, runtime-configurable interval and retention.
+- **Local draft persistence** ([`useDraft.js`](frontend/src/hooks/useDraft.js)): every text input caches to `localStorage` across 13+ surfaces.
+- **Orphan cleanup** ([`orphan_cleanup.py`](orchestrator/orphan_cleanup.py)): stale worktrees, zombie tmux, and tempfiles from dead processes are swept periodically.
 
-> Every bullet above is open source and linked to its implementation. Audit it, don't trust it.
+> Every bullet is open source and linked to its implementation. Audit it, don't trust it.
 
 ## Features
 
@@ -278,22 +271,15 @@ For Android, macOS, Windows, and Linux, see [detailed instructions](docs/install
 
 ## Troubleshooting
 
-- **Conversation appears stuck or not updating?**: Try clicking the **refresh button** at the top of the chat view. This manually re-syncs the agent's session data from the CLI and often resolves display issues without restarting the agent.
-- **Agent shows IDLE after server restart but is still running?**: When the backend restarts while agents are executing, their status may temporarily show as IDLE even though the underlying Claude CLI process is still active. This is normal, the status will automatically restore to EXECUTING the next time the agent makes a tool call (which triggers a heartbeat via the `agent-tool-activity` hook). If the agent is in a long thinking phase with no tool calls, you can wait or send it a message to trigger activity.
-- **Don't name tmux sessions with the `xy-` or `ah-` prefix**, Xylocopa uses `xy-{id}` as its internal naming convention for managed agent sessions (legacy `ah-{id}` is also still recognized for back-compat). User-created tmux sessions starting with either prefix will not be detected or synced by the orchestrator.
-- **PWA stuck on a perpetual loading screen (iPhone or other device)?**: The Service Worker on the device is likely holding a stale precache from a previous deploy. From the host, run `.venv/bin/python tools/push_reset.py` (no args) to open an interactive picker that lists every subscription with its detected device label (e.g. `iPhone iOS 18.7`, `macOS Safari`) and how long ago it last acked a push, pick a number to reset that one device, `a` to reset all, or `q` to quit. The SW will clear its caches, unregister itself, and show a "Reset done" notification. After that, fully close the PWA on the device (e.g. swipe up from the iOS app switcher) and reopen it for a clean fetch. Direct invocations (`list`, `<sub_id>`, `all`) are also supported for scripting. (Use the project venv, `pywebpush` is only installed there.)
+- **Conversation stuck or not updating?** Click the **refresh button** at the top of the chat view to re-sync the session from the CLI.
+- **Agent shows IDLE after server restart but is still running?** Normal. Status restores to EXECUTING on the next tool call (heartbeat via the `agent-tool-activity` hook). Send a message to trigger activity if it's in a long thinking phase.
+- **Don't name tmux sessions with the `xy-` or `ah-` prefix** — those are Xylocopa's managed prefixes (`xy-{id}`; legacy `ah-{id}` still recognized). User-created sessions with those prefixes won't be detected.
+- **PWA stuck on a perpetual loading screen?** Stale Service Worker precache. Run `.venv/bin/python tools/push_reset.py` on the host for an interactive picker (lists devices with labels and last-ack times; `a` resets all, `q` quits). Then fully close the PWA on the device and reopen it. Direct forms `list`/`<sub_id>`/`all` are supported for scripting.
 
 ## Known Issues
 
 - **iPad & mobile browser layout**: layout needs further optimization for iPad and non-PWA mobile browsers. There are minor visual quirks on iPad standalone mode. Tested and working correctly on iPhone (Add to Home Screen) and desktop browsers.
 - **CLI sessions started while backend is offline are silently missed**: adoption of externally-created `claude` CLI sessions relies on the `SessionStart` hook reaching the backend over HTTP. If the backend happens to be down at that moment (e.g. a crash, oomd kill, or manual restart window), the hook's offline fallback only persists managed-agent signal files, unmanaged session markers are dropped, and there is no startup rescan. The session will run normally but never appear in the "unlinked sessions" adoption UI. Workaround: after the backend is back, exit and re-launch `claude` in the same tmux pane so the hook fires again. Tracked in `TODO.md`.
-
-## Roadmap
-
-- [x] **macOS support**: basic compatibility merged (cross-platform process detection, path normalization, iOS cert/Web Clip setup). Some edge cases may remain, please report issues.
-- [ ] **Backup & restore**: automatic backups run on schedule, but the restore flow has not been fully validated. Use with caution.
-- [ ] **UI & icon refresh**: improve visuals, iconography, and layout polish across the web interface.
-- [ ] **Better HTTPS certificates**: replace the self-signed certificate with a more seamless solution (e.g. Let's Encrypt, Tailscale HTTPS, or mDNS) to eliminate manual cert installation on client devices.
 
 ## Contributing
 
@@ -305,20 +291,16 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines 
 
 ## Migration from AgentHive
 
-Xylocopa was previously named **AgentHive**. Existing installs continue to work without manual migration, the upgrade path is backward compatible:
+Xylocopa was previously named **AgentHive**. The upgrade is backward compatible, no manual migration needed:
 
-- **CLI**: the `agenthive` command remains as a symlink to the new `xylocopa` command. Both work identically.
-- **Install dir**: `XYLOCOPA_DIR` is the new env var; `AGENTHIVE_DIR` is still honored as a fallback. Existing `~/agenthive-main` checkouts keep working.
-- **Process names**: `pm2` processes are now `xylocopa-backend` / `xylocopa-frontend`. The upgrade script removes the legacy `agenthive-*` processes automatically.
-- **MCP server**: the entry in `.mcp.json` is renamed from `agenthive` to `xylocopa` on first agent start. Cross-session references (`check ah session <id>` style) keep working.
-- **tmux sessions**: new agents use the `xy-{id}` prefix; legacy `ah-{id}` sessions are still recognized so in-flight agents survive the upgrade.
-- **User data dir**: `~/.agenthive/uploads` is renamed to `~/.xylocopa/uploads` automatically on first backend start (only if the new dir doesn't already exist).
-- **Env vars**: `XYLOCOPA_MANAGED` is the new flag; `AGENTHIVE_MANAGED` is still set in parallel for any external scripts that read it.
-- **Browser storage**: theme/notification preferences in `localStorage` are auto-migrated to the new `xylocopa-*` keys on first page load.
-- **Certificates**: newly issued certs use `xylocopa-ca.crt` / `xylocopa.crt` filenames. Already-installed certs continue to work, no reinstall needed.
-- **Apple Web Clip**: the bundle ID changes from `com.agenthive.*` to `com.xylocopa.*`. Re-download the `Xylocopa.mobileconfig` profile from the login page if you want the renamed Home Screen entry.
+- **CLI**: `agenthive` stays as a symlink to `xylocopa`.
+- **Install dir / env vars**: `AGENTHIVE_DIR` and `AGENTHIVE_MANAGED` still honored alongside the new `XYLOCOPA_*` names. `~/agenthive-main` checkouts keep working.
+- **Process names**: `pm2` processes are now `xylocopa-backend` / `xylocopa-frontend` (upgrade script removes the legacy `agenthive-*` entries).
+- **MCP / tmux**: `.mcp.json` entry renamed to `xylocopa` on first agent start; new agents use `xy-{id}` prefix, legacy `ah-{id}` sessions are still recognized so in-flight agents survive.
+- **Data dirs**: `~/.agenthive/uploads` auto-renames to `~/.xylocopa/uploads` on first backend start (if the new path doesn't exist).
+- **Browser / certs / Web Clip**: `localStorage` keys auto-migrate on first page load; existing certs keep working; re-download `Xylocopa.mobileconfig` from the login page if you want the renamed Home Screen entry.
 
-If you'd like to rename your install dir to match: `mv ~/agenthive-main ~/xylocopa-main && cd ~/xylocopa-main && ./run.sh restart`.
+To rename your install dir: `mv ~/agenthive-main ~/xylocopa-main && cd ~/xylocopa-main && ./run.sh restart`.
 
 ## License
 
