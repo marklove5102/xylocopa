@@ -2378,6 +2378,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [starred, setStarred] = useState(false);
   const [starLoading, setStarLoading] = useState(false);
   const [muted, setMuted] = useState(() => isAgentMuted(id));
+  const [deferredTo, setDeferredTo] = useState(null);
+  const [showDeferPicker, setShowDeferPicker] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
@@ -2523,6 +2525,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (!initialLoadDone.current && agentData.muted != null) {
         setMuted(agentData.muted);
         setAgentMuted(id, agentData.muted);
+      }
+      if (agentData.deferred_to !== undefined) {
+        setDeferredTo(agentData.deferred_to || null);
       }
       initialLoadDone.current = true;
     } catch (err) {
@@ -2762,17 +2767,48 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     showToast(nextMuted ? "Notifications muted for this agent" : "Notifications enabled for this agent");
   };
 
+  const handleDeferSelect = async (iso) => {
+    setShowDeferPicker(false);
+    setDeferredTo(iso);
+    try {
+      await updateAgent(id, { deferred_to: iso });
+      window.dispatchEvent(new CustomEvent("agent-defer-changed", { detail: { agentId: id, deferredTo: iso } }));
+      const when = new Date(iso);
+      showToast(`Notifications deferred until ${when.toLocaleString()}`);
+    } catch (err) {
+      setDeferredTo(null);
+      showToast("Failed to defer agent: " + (err.message || "Unknown error"), "error");
+    }
+  };
+
+  const handleDeferClear = async () => {
+    setShowDeferPicker(false);
+    const prev = deferredTo;
+    setDeferredTo(null);
+    try {
+      await updateAgent(id, { deferred_to: null });
+      window.dispatchEvent(new CustomEvent("agent-defer-changed", { detail: { agentId: id, deferredTo: null } }));
+      showToast("Defer cleared");
+    } catch (err) {
+      setDeferredTo(prev);
+      showToast("Failed to clear defer: " + (err.message || "Unknown error"), "error");
+    }
+  };
+
   // Sync mute & star state across split-screen panes
   useEffect(() => {
     const onMute = (e) => { if (e.detail?.agentId === id) setMuted(e.detail.muted); };
     const onStar = (e) => { if (e.detail?.agentId === id) setStarred(e.detail.starred); };
+    const onDefer = (e) => { if (e.detail?.agentId === id) setDeferredTo(e.detail.deferredTo || null); };
     const onRename = (e) => { if (e.detail?.agentId === id) setAgent((prev) => prev ? { ...prev, name: e.detail.name } : prev); };
     window.addEventListener("agent-mute-changed", onMute);
     window.addEventListener("agent-star-changed", onStar);
+    window.addEventListener("agent-defer-changed", onDefer);
     window.addEventListener("agent-renamed", onRename);
     return () => {
       window.removeEventListener("agent-mute-changed", onMute);
       window.removeEventListener("agent-star-changed", onStar);
+      window.removeEventListener("agent-defer-changed", onDefer);
       window.removeEventListener("agent-renamed", onRename);
     };
   }, [id]);
@@ -3595,6 +3631,34 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     <Bell className="w-3.5 h-3.5 text-cyan-400" />
                   )}
                 </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeferPicker(v => !v)}
+                    title={deferredTo
+                      ? `Notifications deferred until ${new Date(deferredTo).toLocaleString()}`
+                      : "Defer notifications"}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
+                  >
+                    <svg
+                      className={`w-3.5 h-3.5 transition-colors ${
+                        deferredTo ? "text-indigo-400" : "text-dim hover:text-indigo-400"
+                      }`}
+                      fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                    </svg>
+                  </button>
+                  {showDeferPicker && (
+                    <SendLaterPicker
+                      title="Defer Until"
+                      onSelect={handleDeferSelect}
+                      onClose={() => setShowDeferPicker(false)}
+                      onClear={deferredTo ? handleDeferClear : undefined}
+                    />
+                  )}
+                </div>
 
                 <button
                   type="button"

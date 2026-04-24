@@ -2394,6 +2394,15 @@ async def update_agent(agent_id: str, request: Request, db: Session = Depends(ge
         agent.name = name
     if "muted" in body:
         agent.muted = bool(body["muted"])
+    if "deferred_to" in body:
+        v = body["deferred_to"]
+        if v is None or v == "":
+            agent.deferred_to = None
+        else:
+            try:
+                agent.deferred_to = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="deferred_to must be ISO datetime or null")
     db.commit()
     db.refresh(agent)
     return agent

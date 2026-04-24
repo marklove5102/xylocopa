@@ -212,6 +212,12 @@ def init_db():
             ))
             conn.commit()
 
+        if "deferred_to" not in columns:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN deferred_to DATETIME"
+            ))
+            conn.commit()
+
         if "parent_id" not in columns:
             conn.execute(text(
                 "ALTER TABLE agents ADD COLUMN parent_id VARCHAR(12)"

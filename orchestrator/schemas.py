@@ -147,6 +147,7 @@ class _AgentBase(BaseModel):
     created_at: datetime
     skip_permissions: bool = True
     muted: bool = False
+    deferred_to: datetime | None = None
     parent_id: str | None = None
     task_id: str | None = None
     is_subagent: bool = False

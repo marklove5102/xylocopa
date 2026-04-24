@@ -1719,6 +1719,17 @@ class AgentDispatcher:
             return None
         if self._is_agent_in_use(agent.id, agent.tmux_pane):
             return None
+        deferred_until = agent.deferred_to
+        if deferred_until is not None:
+            now_utc = datetime.now(timezone.utc)
+            if deferred_until.tzinfo is None:
+                deferred_until = deferred_until.replace(tzinfo=timezone.utc)
+            if deferred_until > now_utc:
+                logger.info(
+                    "notify: message agent=%s → SKIP (deferred until %s)",
+                    agent.id[:8], deferred_until.isoformat(),
+                )
+                return "SKIP (deferred)"
         from notify import notify
         return notify(
             "message", agent.id,
