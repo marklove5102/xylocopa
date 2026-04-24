@@ -134,11 +134,24 @@ async def hook_agent_session_end(request: Request):
 
 @router.post("/api/hooks/agent-user-prompt")
 async def hook_agent_user_prompt(request: Request):
-    """Receive UserPromptSubmit hook — mark message delivered and wake sync.
+    """Receive UserPromptSubmit hook — ring the bell, let sync handle message state.
 
-    This hook fires when Claude actually accepts a prompt.  That IS the
-    delivery event, so we mark delivered_at directly here.  The sync engine
-    guards with `if not web_msg.delivered_at` so it won't overwrite.
+    Under the "hook wakes, sync writes" principle, this handler does NOT
+    touch Message rows or the display file. It does two hook-owned things:
+
+      1. Mark agent runtime status EXECUTING (in-memory set + DB status +
+         WS emit). This is not message state — JSONL's first tool_use arrives
+         seconds late so we need the hook for snappy UI feedback.
+      2. Wake the sync loop after JSONL_FLUSH_DELAY so sync can import the
+         newly-written user turn, match it to the pre-dispatched web message
+         (if any), set delivered_at/jsonl_uuid/status in one commit, and
+         promote it into the display file's delivered partition.
+
+    The green "delivered" tick therefore surfaces ~300-500ms after the hook
+    fires (JSONL flush delay + sync cycle). Gained in exchange: there is no
+    longer a window where delivered_at is set but jsonl_uuid is not, so a
+    mid-turn restart can't leave a row that confuses the subsequent
+    sync-time promotion. Single-writer → no promote-vs-flush race.
     """
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
@@ -160,52 +173,14 @@ async def hook_agent_user_prompt(request: Request):
 
     logger.info("hook_agent_user_prompt: received for agent %s", agent_id[:8])
 
-    # Mark the most recent undelivered web-sent message as delivered.
-    from websocket import emit_message_delivered
-    db = SessionLocal()
-    msg = None
-    try:
-        msg = (
-            db.query(Message)
-            .filter(
-                Message.agent_id == agent_id,
-                Message.role == MessageRole.USER,
-                Message.source.in_(("web", "task", "plan_continue")),
-                Message.delivered_at.is_(None),
-            )
-            .order_by(Message.created_at.asc())
-            .first()
-        )
-        if msg:
-            now = _utcnow()
-            msg.delivered_at = now
-            msg.status = MessageStatus.COMPLETED
-            msg.completed_at = now
-            db.commit()
-
-            # Promotion is the sole queued→delivered transition. Appends a
-            # tombstone for the queued entry and the full delivered line
-            # (with a freshly allocated display_seq) under one flock.
-            from display_writer import promote_to_delivered
-            promote_to_delivered(agent_id, msg.id)
-
-            asyncio.ensure_future(emit_message_delivered(
-                agent_id, msg.id, now.isoformat(),
-            ))
-            logger.info("hook_agent_user_prompt: message %s delivered for agent %s", msg.id, agent_id[:8])
-        else:
-            logger.info("hook_agent_user_prompt: no undelivered message for agent %s", agent_id[:8])
-    finally:
-        db.close()
-
-    # Unconditionally mark executing — latest signal wins.
-    # _start_generating handles DB status + WS emit.
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
-        _gen_msg_id = msg.id if msg else "unknown"
-        ad._start_generating(agent_id, msg_id=_gen_msg_id)
-        logger.info("hook_agent_user_prompt: started generating for %s (msg=%s)", agent_id[:8], _gen_msg_id[:8])
-        # Wait for JSONL flush then wake sync
+        # generating_msg_id stays NULL — sync fills the real one when it
+        # matches the JSONL turn. Busy-checks treat status==EXECUTING as
+        # sufficient signal, so the brief "status set, msg_id null" window
+        # is harmless.
+        ad._start_generating(agent_id)
+        logger.info("hook_agent_user_prompt: started generating for %s", agent_id[:8])
         async def _post_prompt_sync(_aid):
             from config import JSONL_FLUSH_DELAY
             await asyncio.sleep(JSONL_FLUSH_DELAY)
