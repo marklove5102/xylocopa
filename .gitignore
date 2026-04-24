@@ -67,6 +67,7 @@ Desktop.ini
 *.swo
 .claude/
 .claude-artifacts/
+.codex
 
 # Internal tracking
 PROGRESS.md
