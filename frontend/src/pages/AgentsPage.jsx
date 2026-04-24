@@ -224,6 +224,23 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     return list;
   }, [statusFiltered, search]);
 
+  // Split filtered into active vs deferred (deferred_to in the future).
+  // Deferred agents are hidden from the main list and shown in a collapsible
+  // section at the bottom — mirrors InboxView's pattern for deferred tasks.
+  const { activeAgents, deferredAgents } = useMemo(() => {
+    const now = new Date();
+    const active = [];
+    const deferred = [];
+    for (const a of filtered) {
+      if (a.deferred_to && new Date(a.deferred_to) > now) deferred.push(a);
+      else active.push(a);
+    }
+    deferred.sort((a, b) => new Date(a.deferred_to) - new Date(b.deferred_to));
+    return { activeAgents: active, deferredAgents: deferred };
+  }, [filtered]);
+
+  const [showDeferred, setShowDeferred] = useState(false);
+
   const enterSelectMode = () => {
     setSelecting(true);
     setSelected(new Set());
@@ -598,7 +615,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
         )}
 
         <div className="space-y-3">
-          {filtered.map((agent) => (
+          {activeAgents.map((agent) => (
             <AgentRow
               key={agent.id}
               agent={agent}
@@ -609,6 +626,38 @@ export default function AgentsPage({ theme, onToggleTheme }) {
             />
           ))}
         </div>
+
+        {deferredAgents.length > 0 && (
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => setShowDeferred(v => !v)}
+              className="flex items-center gap-1.5 mx-auto text-sm text-faint hover:text-dim transition-colors"
+            >
+              <svg
+                className={`w-3.5 h-3.5 transition-transform ${showDeferred ? "rotate-90" : ""}`}
+                fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Deferred ({deferredAgents.length})
+            </button>
+            {showDeferred && (
+              <div className="space-y-3 mt-3">
+                {deferredAgents.map((agent) => (
+                  <AgentRow
+                    key={agent.id}
+                    agent={agent}
+                    onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
+                    selecting={selecting}
+                    selected={selected.has(agent.id)}
+                    onToggle={toggleOne}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="h-4" />
       </div>
