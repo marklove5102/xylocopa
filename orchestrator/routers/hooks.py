@@ -1069,9 +1069,8 @@ async def respond_permission(
                     break
             _perm_msg.meta_json = json.dumps(_meta)
             db.commit()
-            from display_writer import flush_agent as _flush_resp, update_last as _update_resp
-            _flush_resp(agent_id)
-            _update_resp(agent_id, _perm_msg.id)
+            from display_writer import update_after_metadata_change as _resp_update
+            _resp_update(agent_id, _perm_msg.id)
         except Exception:
             logger.exception("respond_permission: failed to patch card for request %s", request_id)
 
