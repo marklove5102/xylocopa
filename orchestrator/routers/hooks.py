@@ -985,7 +985,12 @@ async def hook_agent_permission(request: Request):
                         break
                 _m.meta_json = json.dumps(_meta)
                 _db_to.commit()
-                from display_writer import flush_agent as _flush_to, update_last as _update_to
+                # Branch on display_seq: pre-delivery → update_queued_entry,
+                # post-delivery → update_last. The helper checks the DB.
+                from display_writer import (
+                    flush_agent as _flush_to,
+                    update_after_metadata_change as _update_to,
+                )
                 _flush_to(agent_id)
                 _update_to(agent_id, _m.id)
         except Exception:

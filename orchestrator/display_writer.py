@@ -15,6 +15,7 @@ Functions:
     update_last            — append a replacement line for a streaming update
     flush_queued_entry     — append a `_queued` line for a pre-delivery msg
     update_queued_entry    — append a `_queued + _replace` line
+    update_after_metadata_change — branch on display_seq: queued vs delivered
     mark_deleted           — append a `{_deleted: true}` tombstone
     promote_to_delivered   — atomically tombstone queued + write delivered
     rebuild_agent          — rebuild the display file (append-only: new seq block)
@@ -405,6 +406,38 @@ def update_queued_entry(agent_id: str, message_id: str):
         _write_locked(path, [line])
     finally:
         db.close()
+
+
+def update_after_metadata_change(agent_id: str, message_id: str):
+    """Append a replacement line after the caller committed a metadata
+    (meta_json) patch on a message that may be pre- or post-delivery.
+
+    Branches on `display_seq`:
+      - NULL  → `update_queued_entry` (the `_queued + _replace` line)
+      - set   → `update_last`          (a regular `_replace` line)
+
+    Caller must have committed the DB change before calling. Picking the
+    wrong branch would violate the writer contracts (e.g. a `_replace`
+    line with no preceding regular entry, or a `_queued` line on an
+    already-promoted message — which `update_queued_entry` now raises on
+    per the "fail loudly" policy).
+
+    Silently no-ops if the row has been deleted between commit and call.
+    """
+    db = SessionLocal()
+    try:
+        msg = db.get(Message, message_id)
+        if msg is None:
+            # Defensive: row deleted between caller's commit and this call.
+            return
+        has_seq = msg.display_seq is not None
+    finally:
+        db.close()
+
+    if has_seq:
+        update_last(agent_id, message_id)
+    else:
+        update_queued_entry(agent_id, message_id)
 
 
 def mark_deleted(agent_id: str, message_id: str):

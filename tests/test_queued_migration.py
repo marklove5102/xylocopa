@@ -524,3 +524,178 @@ def test_db_fallback_filters_cancelled_status(agent, monkeypatch):
 
     # CANCELLED message must not surface via the DB fallback.
     assert len(resp.queued) == 0
+
+
+# ─────────────────────────── Phase 2B: metadata branch ────────────────────────────
+
+def test_metadata_update_pre_delivery_uses_queued_entry(agent):
+    """update_after_metadata_change must route a pre-delivery message
+    (display_seq IS NULL) through update_queued_entry, writing a
+    `_queued + _replace` line."""
+    msg_id = _mk_message(agent, content="pre-delivery",
+                         status=MessageStatus.PENDING)
+    display_writer.flush_queued_entry(agent, msg_id)
+
+    # Simulate a metadata patch by the caller: mutate meta_json + commit.
+    db = SessionLocal()
+    try:
+        m = db.get(Message, msg_id)
+        m.meta_json = json.dumps({"interactive": [{"answer": "pre"}]})
+        db.commit()
+    finally:
+        db.close()
+
+    display_writer.update_after_metadata_change(agent, msg_id)
+
+    raw = _read_raw_lines(agent)
+    assert len(raw) == 2
+    # Second line is the replacement; must be in the queued partition.
+    last = raw[-1]
+    assert last.get("_queued") is True
+    assert last.get("_replace") is True
+    assert last.get("seq") is None
+
+    _, queued = _read_partitioned(agent)
+    assert len(queued) == 1 and queued[0].id == msg_id
+
+
+def test_metadata_update_post_delivery_uses_update_last(agent):
+    """update_after_metadata_change must route a post-delivery message
+    (display_seq set) through update_last, writing a regular `_replace`
+    line with the same seq — no queued flag."""
+    # Seed a message that's already promoted: delivered_at + display_seq set.
+    msg_id = _mk_message(
+        agent, content="post-delivery",
+        status=MessageStatus.COMPLETED,
+        role=MessageRole.AGENT,
+        source="hook",
+        delivered=True,
+        display_seq=7,
+    )
+    # Seed an initial main-partition line so the file has state. We
+    # emulate flush_agent by calling update_last (it always appends a
+    # `_replace` line when display_seq is set — fine for test observation).
+    display_writer.update_last(agent, msg_id)
+
+    # Simulate a metadata patch.
+    db = SessionLocal()
+    try:
+        m = db.get(Message, msg_id)
+        m.meta_json = json.dumps({"interactive": [{"answer": "post"}]})
+        db.commit()
+    finally:
+        db.close()
+
+    display_writer.update_after_metadata_change(agent, msg_id)
+
+    raw = _read_raw_lines(agent)
+    last = raw[-1]
+    assert last.get("_replace") is True
+    assert last.get("_queued") in (None, False), \
+        "post-delivery update must not be marked _queued"
+    assert last.get("seq") == 7
+
+
+def test_metadata_update_noop_when_message_deleted(agent):
+    """If the DB row vanished between caller's commit and our call,
+    the helper returns quietly rather than raising."""
+    missing_id = _short_id()
+    # No row exists. Must not raise.
+    display_writer.update_after_metadata_change(agent, missing_id)
+    # File should not have been created by this call alone.
+    # (An earlier seeded message in this test isolation may or may not
+    # have made a file; we only assert no crash.)
+
+
+def test_patch_interactive_answer_pre_delivery(agent):
+    """Integration: _patch_interactive_answer on a pre-delivery AGENT
+    message writes a `_queued + _replace` line — not a regular replace.
+
+    Pre-delivery interactive cards are rare (they live on AGENT messages
+    which are typically post-delivery) but the branching must work.
+    """
+    from routers.agents import _patch_interactive_answer
+
+    tool_use_id = "tu-" + _short_id()
+    meta = {"interactive": [{
+        "tool_use_id": tool_use_id,
+        "type": "permission_prompt",
+        "questions": [{"options": [{"label": "Allow"}, {"label": "Deny"}]}],
+    }]}
+    msg_id = _mk_message(
+        agent, content="pending agent card",
+        status=MessageStatus.PENDING,
+        role=MessageRole.AGENT,
+        source="hook",
+    )
+    # Attach meta_json + tool_use_id column so _patch_interactive_answer
+    # finds it. Seed a queued entry (pre-delivery).
+    db = SessionLocal()
+    try:
+        m = db.get(Message, msg_id)
+        m.meta_json = json.dumps(meta)
+        m.tool_use_id = tool_use_id
+        db.commit()
+    finally:
+        db.close()
+    display_writer.flush_queued_entry(agent, msg_id)
+
+    db = SessionLocal()
+    try:
+        _patch_interactive_answer(
+            db, agent, tool_use_id,
+            selected_index=0, answer_type="permission_prompt",
+        )
+    finally:
+        db.close()
+
+    raw = _read_raw_lines(agent)
+    last = raw[-1]
+    assert last.get("_queued") is True
+    assert last.get("_replace") is True
+
+
+def test_dismiss_pending_interactive_cards_post_delivery(agent):
+    """Integration: _dismiss_pending_interactive_cards on a post-delivery
+    AGENT message writes a regular `_replace` line (not a _queued one).
+    """
+    from routers.agents import _dismiss_pending_interactive_cards
+
+    tool_use_id = "tu-" + _short_id()
+    meta = {"interactive": [{
+        "tool_use_id": tool_use_id,
+        "type": "permission_prompt",
+        "questions": [{"options": [{"label": "Allow"}, {"label": "Deny"}]}],
+    }]}
+    # Post-delivery: display_seq set + delivered_at set.
+    msg_id = _mk_message(
+        agent, content="delivered agent card",
+        status=MessageStatus.COMPLETED,
+        role=MessageRole.AGENT,
+        source="hook",
+        delivered=True,
+        display_seq=3,
+    )
+    db = SessionLocal()
+    try:
+        m = db.get(Message, msg_id)
+        m.meta_json = json.dumps(meta)
+        db.commit()
+    finally:
+        db.close()
+    # Seed an initial entry so the file is non-empty.
+    display_writer.update_last(agent, msg_id)
+
+    db = SessionLocal()
+    try:
+        patched = _dismiss_pending_interactive_cards(db, agent)
+    finally:
+        db.close()
+
+    assert len(patched) == 1 and patched[0]["message_id"] == msg_id
+
+    raw = _read_raw_lines(agent)
+    last = raw[-1]
+    assert last.get("_replace") is True
+    assert last.get("_queued") in (None, False)
+    assert last.get("seq") == 3
