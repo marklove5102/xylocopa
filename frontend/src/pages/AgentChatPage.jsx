@@ -2449,6 +2449,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Shared: apply display API response to message state.
   // initial=true replaces all messages (preserving WS-delivered_at);
   // initial=false merges incrementally (handles _replace entries from update_last).
+  //
+  // Queued/pre-delivery state rules:
+  // - Initial load OR data.queued_authoritative=true: merge data.queued into state.
+  // - Incremental poll with data.queued_authoritative=false (or absent): preserve
+  //   prev's pre-delivery entries (no seq); WS events drive changes.
   const applyDisplayData = useCallback((data, { initial = false } = {}) => {
     if (data.next_offset != null) {
       nextOffsetRef.current = data.next_offset;
@@ -2466,6 +2471,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         ? new Map(prev.map((m) => [m.id, m]))
         : null;
 
+      // Delivered messages: always merge
       for (const msg of data.messages || []) {
         if (prevById) {
           const p = prevById.get(msg.id);
@@ -2479,12 +2485,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       // Sequenced (displayed) messages — Map preserves insertion order
       const displayed = [...byId.values()].filter((m) => m.seq != null);
-
-      // Queued messages not yet in display file
       const displayedIds = new Set(displayed.map((m) => m.id));
-      const queued = (data.queued || []).filter((q) => !displayedIds.has(q.id));
 
-      return [...displayed, ...queued];
+      // Queued messages: ONLY merge on initial load OR when backend flags
+      // queued_authoritative=true. On incremental polls, backend returns
+      // queued_authoritative=false and queued should not clobber prev state —
+      // WS events (predelivery_*/message_sent) are the source of truth.
+      if (initial || data.queued_authoritative) {
+        const queued = (data.queued || []).filter((q) => !displayedIds.has(q.id));
+        return [...displayed, ...queued];
+      }
+
+      // Incremental: preserve prev's pre-delivery entries (no seq, not
+      // already-sent). Skip any that are now in `displayed` (promoted to sent).
+      const prevQueued = prev.filter((m) => m.seq == null);
+      const preservedQueued = prevQueued.filter((m) => !displayedIds.has(m.id));
+      return [...displayed, ...preservedQueued];
     });
   }, []);
 
