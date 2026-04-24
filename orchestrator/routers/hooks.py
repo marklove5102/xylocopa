@@ -252,12 +252,26 @@ async def hook_agent_stop(request: Request):
 
 @router.post("/api/hooks/agent-post-compact")
 async def hook_agent_post_compact(request: Request):
-    """Receive PostCompact hook — deterministic signal that /compact finished.
+    """Receive PostCompact hook — ring the bell, let sync reconcile.
 
-    This is the authoritative compact-completion signal.  It fires after
-    Claude has rewritten the JSONL, so the file is safe to read.  Sets
-    completed_at on the /compact message (double tick) and emits the
-    "Compact end" tool activity event.
+    Under the "hook wakes, sync writes" principle this handler does not
+    touch Message rows or the display file. It does three hook-owned things:
+
+      1. Flip `ctx.compact_notified`/`compact_end_emitted` (in-memory sync
+         coordination flags — not DB state).
+      2. Emit the "Compact end" tool_activity WS event for snappy UI.
+      3. Wake sync after JSONL_FLUSH_DELAY so sync's compact-reconciliation
+         path (sync_full_scan reason="compact") can: mark the /compact
+         message completed, end the compact tool_activity Message, purge
+         orphan CLI rows, rebuild the display file, and emit the
+         completed-message WS event.
+
+      4. Transition agent status EXECUTING→IDLE (`_stop_generating`).
+         This is agent runtime state, hook-owned. Note: for auto-compact
+         the agent is still working — distinguishing manual vs auto via
+         PreCompact's `trigger` field is a separate in-flight fix (agent
+         3944f4ba); keep the status transition here for now so manual
+         `/compact` lands at IDLE correctly.
     """
     agent_id = request.headers.get("X-Agent-Id", "").strip()
     try:
@@ -282,74 +296,12 @@ async def hook_agent_post_compact(request: Request):
         logger.warning("hook_agent_post_compact: no agent_dispatcher")
         return {}
 
-    # 1. Clear compact pause flag and generating state.
-    #    After /compact, Claude returns to the prompt — it's no longer executing.
     logger.info("hook_agent_post_compact: compact done for %s", agent_id[:8])
 
     ctx = ad._sync_contexts.get(agent_id)
     if ctx:
         ctx.compact_notified = False
         ctx.compact_end_emitted = True  # prevent duplicate from sync engine
-
-    # 2. Mark /compact message completed (double tick).
-    db = SessionLocal()
-    try:
-        compact_msg = (
-            db.query(Message)
-            .filter(
-                Message.agent_id == agent_id,
-                Message.role == MessageRole.USER,
-                Message.source == "web",
-                Message.completed_at.is_(None),
-                Message.content.startswith("/compact"),
-            )
-            .order_by(Message.created_at.desc())
-            .first()
-        )
-        if compact_msg:
-            compact_msg.completed_at = _utcnow()
-            compact_msg.status = MessageStatus.COMPLETED
-            if not compact_msg.delivered_at:
-                compact_msg.delivered_at = compact_msg.completed_at
-            # Mark non-promotable: /compact never appears in post-compact
-            # JSONL, so it must not consume a real user turn's UUID
-            if not compact_msg.jsonl_uuid:
-                compact_msg.jsonl_uuid = f"slash-{compact_msg.id[:8]}"
-
-        # 3. End the compact tool activity in DB.
-        from sync_engine import _end_compact_activity
-        _compact_activity_id = None
-        if ctx:
-            _compact_activity_id = _end_compact_activity(db, agent_id, ctx.session_id)
-        db.commit()
-
-        # Update display file with delivery/completion status
-        from display_writer import update_last
-        if compact_msg:
-            update_last(agent_id, compact_msg.id)
-        if _compact_activity_id:
-            update_last(agent_id, _compact_activity_id)
-
-        # 4. "Conversation compacted" system bubble: created by sync engine
-        #    from JSONL (compact_boundary).  Do NOT write to DB here — avoids
-        #    jsonl_uuid collision with sync engine's dedup.
-
-        # 5. Status transition handled by _stop_generating below.
-
-        # 6. Emit completed_at update so frontend shows double tick.
-        if compact_msg:
-            from websocket import emit_message_update
-            asyncio.ensure_future(emit_message_update(
-                agent_id, compact_msg.id, "COMPLETED",
-                completed_at=compact_msg.completed_at.isoformat(),
-            ))
-    finally:
-        db.close()
-
-    # 9. Defer JSONL read + purge to sync loop — PostCompact is blocking,
-    #    so the rewritten JSONL may not be flushed yet.  The sync loop's
-    #    compact_turn_decrease path handles purge + reconcile.
-    if ctx:
         ctx.compact_detected_at = 0.0
 
         async def _post_compact_sync(_aid):
@@ -358,12 +310,12 @@ async def hook_agent_post_compact(request: Request):
             ad.wake_sync(_aid)
         asyncio.ensure_future(_post_compact_sync(agent_id))
 
-    # 10. Emit "Compact end" tool activity to frontend (WS acceleration).
+    # "Compact end" tool activity WS event — transient UI signal, not DB.
     from websocket import emit_tool_activity
     await emit_tool_activity(agent_id, "Compact", "end",
                              tool_output="context compacted")
 
-    # 11. Transition to IDLE immediately — hooks are the authoritative signal.
+    # Transition to IDLE. Agent runtime state, hook-owned.
     ad._stop_generating(agent_id)
 
     logger.info("hook_agent_post_compact: agent=%s", agent_id[:8])

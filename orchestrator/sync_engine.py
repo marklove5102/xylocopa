@@ -804,6 +804,8 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
         _changes_made = False
 
         # On compact: delete orphaned cli-sourced messages + reassign session_seq
+        _compact_finalized_msg_id: str | None = None
+        _compact_activity_id: str | None = None
         if reason == "compact":
             _cli_orphans = [m for m in extra_in_db if m.source == "cli"]
             if _cli_orphans:
@@ -822,8 +824,39 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
                     db_by_uuid[uuid].session_seq = idx
             _changes_made = True
 
+            # Finalize the /compact user message. It never lands in
+            # post-compact JSONL (CC rewrites the file and drops that turn),
+            # so _promote_or_create_user_msg can't match it. This path is
+            # the only point the row ever gets its completion tick.
+            _compact_msg = (
+                db.query(Message)
+                .filter(
+                    Message.agent_id == ctx.agent_id,
+                    Message.role == MessageRole.USER,
+                    Message.source == "web",
+                    Message.completed_at.is_(None),
+                    Message.content.startswith("/compact"),
+                )
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+            if _compact_msg:
+                _now = _utcnow()
+                _compact_msg.completed_at = _now
+                _compact_msg.status = MessageStatus.COMPLETED
+                if not _compact_msg.delivered_at:
+                    _compact_msg.delivered_at = _now
+                # Fake jsonl_uuid so subsequent UUID-dedup / content-match
+                # cycles don't try to re-link this row to a real user turn.
+                if not _compact_msg.jsonl_uuid:
+                    _compact_msg.jsonl_uuid = f"slash-{_compact_msg.id[:8]}"
+                _compact_finalized_msg_id = _compact_msg.id
+                _changes_made = True
+
             # End compact tool activity record
-            _end_compact_activity(db, ctx.agent_id, ctx.session_id)
+            _compact_activity_id = _end_compact_activity(
+                db, ctx.agent_id, ctx.session_id,
+            )
 
             # Handle compact UI signals
             if ctx.compact_end_emitted:
@@ -857,6 +890,18 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
         if reason == "compact":
             from display_writer import rebuild_agent as _rebuild_display
             _rebuild_display(ctx.agent_id)
+
+            # Frontend WS event: compact_msg now shows the double tick.
+            # rebuild_agent already refreshed the display file; this is just
+            # the push signal so clients don't wait for the next poll.
+            if _compact_finalized_msg_id:
+                _compact_msg_re = db.get(Message, _compact_finalized_msg_id)
+                if _compact_msg_re and _compact_msg_re.completed_at:
+                    from websocket import emit_message_update
+                    asyncio.ensure_future(emit_message_update(
+                        ctx.agent_id, _compact_finalized_msg_id, "COMPLETED",
+                        completed_at=_compact_msg_re.completed_at.isoformat(),
+                    ))
 
         # If turns are missing from DB, reset pointer so sync loop reimports them.
         # Otherwise, set pointer to current state.
