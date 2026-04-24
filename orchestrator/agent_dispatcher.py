@@ -1371,9 +1371,11 @@ def send_tmux_message(pane_id: str, text: str) -> bool:
         is_short = len(text) < 200 and "\n" not in text
 
         if is_short:
-            # send-keys -l sends literal characters — no paste-buffer needed
+            # send-keys -l sends literal characters — no paste-buffer needed.
+            # "--" terminates option parsing so text starting with "-" (e.g.
+            # a markdown bullet "- foo") isn't misread as a tmux flag.
             r = _sp.run(
-                ["tmux", "send-keys", "-t", pane_id, "-l", text],
+                ["tmux", "send-keys", "-t", pane_id, "-l", "--", text],
                 capture_output=True, text=True, timeout=5,
             )
             if r.returncode != 0:
