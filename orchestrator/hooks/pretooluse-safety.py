@@ -74,14 +74,20 @@ def main() -> None:
         ):
             deny("BLOCKED: rm -rf is prohibited. Remove specific files instead.")
 
-        # --- DROP TABLE / TRUNCATE ---
-        if re.search(r"\b(DROP\s+TABLE|TRUNCATE)\b", cmd, re.IGNORECASE):
+        # --- DROP TABLE / TRUNCATE TABLE ---
+        # Require SQL keyword context to avoid false-positive on Linux
+        # `truncate -s 0 file` (legitimate file-sizing utility).
+        if re.search(
+            r"\b(DROP\s+TABLE|TRUNCATE\s+(?:TABLE|ONLY))\b",
+            cmd,
+            re.IGNORECASE,
+        ):
             deny(
                 "BLOCKED: Destructive DB operations (DROP TABLE / TRUNCATE) "
                 "are prohibited."
             )
 
-    elif tool_name in ("Write", "Edit"):
+    elif tool_name in ("Write", "Edit", "MultiEdit"):
         if not file_path or not cwd:
             sys.exit(0)
 
