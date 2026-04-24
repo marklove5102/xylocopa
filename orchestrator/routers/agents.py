@@ -18,7 +18,7 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from config import CC_MODEL, CLAUDE_HOME, DISPLAY_DIR, QUEUED_DB_FALLBACK, VALID_MODELS
+from config import CC_MODEL, CLAUDE_HOME, DISPLAY_DIR, VALID_MODELS
 from database import SessionLocal, get_db
 from models import (
     Agent, AgentInsightSuggestion, AgentMode, AgentStatus,
@@ -2516,21 +2516,9 @@ async def get_agent_display(
     empty = DisplayResponse(messages=[], next_offset=0, queued=[], has_earlier=False)
 
     if not os.path.isfile(display_path):
-        # Still return queued messages even if no display file yet — gated
-        # behind XY_QUEUED_FALLBACK while Phase 2A writer sites stabilise.
-        if QUEUED_DB_FALLBACK:
-            queued = (
-                db.query(Message)
-                .filter(
-                    Message.agent_id == agent_id,
-                    Message.source.in_(("web", "plan_continue", "task")),
-                    Message.display_seq.is_(None),
-                    Message.status != MessageStatus.CANCELLED,
-                )
-                .order_by(Message.created_at.asc())
-                .all()
-            )
-            empty.queued = [_apply_display_content(m) for m in queued]
+        # No display file yet → nothing to show. All message state (queued
+        # included) flows through the display file after Phase 2A/2B; the
+        # old DB fallback query was scaffolding removed in Phase 3.
         return empty
 
     has_earlier = False
@@ -2597,27 +2585,9 @@ async def get_agent_display(
                 agent_id[:8], entry.id,
             )
 
-    # Fallback to DB query when the file has no queued partition yet, gated
-    # behind XY_QUEUED_FALLBACK. Phase 2A writer sites always emit queued
-    # entries; the DB query exists as a safety net for this release and is
-    # removed in Phase 3 (together with the flag).
-    if queued_from_file:
-        queued_out: list = queued_from_file
-    elif QUEUED_DB_FALLBACK:
-        queued_rows = (
-            db.query(Message)
-            .filter(
-                Message.agent_id == agent_id,
-                Message.source.in_(("web", "plan_continue", "task")),
-                Message.display_seq.is_(None),
-                Message.status != MessageStatus.CANCELLED,
-            )
-            .order_by(Message.created_at.asc())
-            .all()
-        )
-        queued_out = [_apply_display_content(m) for m in queued_rows]
-    else:
-        queued_out = []
+    # Display file is now the sole source for the queued partition.
+    # (DB fallback removed in Phase 3.)
+    queued_out: list = queued_from_file
 
     return DisplayResponse(
         messages=displayed,

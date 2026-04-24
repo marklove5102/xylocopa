@@ -4,7 +4,7 @@ Focuses on the behaviour changes introduced by Phase 2A:
   - cancel_message appends a `_deleted` tombstone (soft-cancel only)
   - update_message widens status accept to PENDING/QUEUED and calls
     update_queued_entry
-  - get_agent_display gates the DB fallback behind XY_QUEUED_FALLBACK
+  - get_agent_display is display-file-only (Phase 3: DB fallback removed)
   - sync_engine defers promote_to_delivered until after db.commit
   - UserPromptSubmit hook promotes via promote_to_delivered
 
@@ -434,16 +434,19 @@ def test_sync_engine_skips_cancelled_promotion_candidates(agent):
 # import cycle loudly rather than corrupt the display file.
 
 
-# ─────────────────────────── feature flag ────────────────────────────
+# Phase 3: the XY_QUEUED_FALLBACK flag and DB fallback query have been
+# removed. Display file is the sole source for the queued partition. The
+# former flag-on/flag-off tests have been retired along with the code they
+# exercised (see `test_reader_file_only_without_fallback` below for the
+# single-path contract check that replaces them).
 
-def test_flag_off_hides_db_fallback_when_file_empty(agent, monkeypatch):
-    """With XY_QUEUED_FALLBACK=0 and no queued entries in the file, the
-    reader must NOT fall back to the DB — returns an empty queued list."""
-    _mk_message(agent, content="flagged-out", status=MessageStatus.PENDING)
+
+def test_reader_file_only_without_fallback(agent):
+    """With no display file and a DB-only row, the reader returns an empty
+    queued list (Phase 3: no DB fallback)."""
+    _mk_message(agent, content="db-only", status=MessageStatus.PENDING)
     # NO flush_queued_entry — mimics a pre-migration DB row.
 
-    # Reload config module with the flag off and re-patch the router.
-    monkeypatch.setenv("XY_QUEUED_FALLBACK", "0")
     import importlib
     import config
     importlib.reload(config)
@@ -451,8 +454,6 @@ def test_flag_off_hides_db_fallback_when_file_empty(agent, monkeypatch):
     importlib.reload(agents_router)
 
     import asyncio
-    from fastapi import Request
-    # Build a minimal call to get_agent_display
     db = SessionLocal()
     try:
         resp = asyncio.run(agents_router.get_agent_display(
@@ -461,69 +462,7 @@ def test_flag_off_hides_db_fallback_when_file_empty(agent, monkeypatch):
     finally:
         db.close()
 
-    # No display file yet + flag off → queued is empty.
     assert resp.queued == []
-
-    # Reset the flag + re-reload for subsequent tests
-    monkeypatch.setenv("XY_QUEUED_FALLBACK", "1")
-    importlib.reload(config)
-    importlib.reload(agents_router)
-
-
-def test_flag_on_uses_db_fallback(agent, monkeypatch):
-    """With the flag on (default) and no queued entries in the file,
-    the reader falls back to the DB query."""
-    _mk_message(agent, content="fallback-used", status=MessageStatus.PENDING)
-
-    monkeypatch.setenv("XY_QUEUED_FALLBACK", "1")
-    import importlib
-    import config
-    importlib.reload(config)
-    import routers.agents as agents_router
-    importlib.reload(agents_router)
-
-    import asyncio
-    db = SessionLocal()
-    try:
-        resp = asyncio.run(agents_router.get_agent_display(
-            agent, offset=0, tail_bytes=0, db=db,
-        ))
-    finally:
-        db.close()
-
-    # No display file, but the DB fallback kicks in.
-    assert len(resp.queued) == 1
-    assert resp.queued[0].content == "fallback-used"
-
-
-def test_db_fallback_filters_cancelled_status(agent, monkeypatch):
-    """Regression: DB fallback must NOT return CANCELLED messages.
-
-    Originally the fallback filter was (source, display_seq IS NULL) with no
-    status check — so a cancelled message whose tombstone made the file's
-    queued partition empty would resurface via the fallback path, defeating
-    the soft-delete UI semantics. The fix adds `status != CANCELLED`.
-    """
-    _mk_message(agent, content="should-be-hidden", status=MessageStatus.CANCELLED)
-
-    monkeypatch.setenv("XY_QUEUED_FALLBACK", "1")
-    import importlib
-    import config
-    importlib.reload(config)
-    import routers.agents as agents_router
-    importlib.reload(agents_router)
-
-    import asyncio
-    db = SessionLocal()
-    try:
-        resp = asyncio.run(agents_router.get_agent_display(
-            agent, offset=0, tail_bytes=0, db=db,
-        ))
-    finally:
-        db.close()
-
-    # CANCELLED message must not surface via the DB fallback.
-    assert len(resp.queued) == 0
 
 
 # ─────────────────────────── Phase 2B: metadata branch ────────────────────────────

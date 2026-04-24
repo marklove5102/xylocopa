@@ -79,20 +79,6 @@ BACKUP_DIR = _resolve(os.getenv("BACKUP_DIR", "backups"))  # also configurable v
 # Display files (per-agent JSONL for Phase 2 message sync)
 DISPLAY_DIR = _resolve(os.getenv("DISPLAY_DIR", "data/display"))
 
-# Phase 2A feature flag: DB fallback for the queued partition reader. When
-# the display file has no queued entries, fall back to a DB query for
-# web/plan_continue/task messages with display_seq IS NULL. Default on for
-# one release; Phase 3 removes both the flag and the fallback query.
-_queued_fallback_raw = os.getenv("XY_QUEUED_FALLBACK", "1").strip()
-if _queued_fallback_raw not in ("0", "1"):
-    import logging as _logging
-    _logging.getLogger("orchestrator.config").warning(
-        "XY_QUEUED_FALLBACK=%r is not a recognised value (expected '0' or "
-        "'1'); defaulting to '1' (fallback ON).", _queued_fallback_raw,
-    )
-    _queued_fallback_raw = "1"
-QUEUED_DB_FALLBACK = _queued_fallback_raw == "1"
-
 # Delay (seconds) before waking sync after a hook returns, giving Claude
 # time to flush the JSONL entry to disk.
 JSONL_FLUSH_DELAY = float(os.getenv("JSONL_FLUSH_DELAY", "0.15"))
