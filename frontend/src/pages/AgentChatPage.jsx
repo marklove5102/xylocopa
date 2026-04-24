@@ -2075,9 +2075,6 @@ function ChatInput({ agentId, project, onSend, onSendLater, disabled, disabledRe
   const handleEscape = async () => {
     if (!onEscape || escCooldown) return;
     setEscCooldown(true);
-    // Clear the pending draft — prevents accidental duplicate sends when
-    // the user bails mid-edit and the half-typed message lingers in the box.
-    setText("");
     try {
       await onEscape();
     } finally {
