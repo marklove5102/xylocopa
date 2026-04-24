@@ -3264,6 +3264,66 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
+    // Pre-delivery WS events (refactor: pre-delivery messages live in display file).
+    // Backend emits these whenever pre-delivery state changes; frontend reacts
+    // directly, bypassing poll. All handlers are idempotent against duplicates
+    // and order-insensitive between predelivery_created and message_sent.
+    if (event.type === "predelivery_created") {
+      pushWsEvent('predelivery_created', { id: event.data?.entry?.id });
+      const entry = event.data?.entry;
+      if (!entry?.id) return;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === entry.id)) return prev;
+        return [...prev, entry];
+      });
+      return;
+    }
+
+    if (event.type === "predelivery_updated") {
+      pushWsEvent('predelivery_updated', { id: event.data?.message_id });
+      const { message_id, patch } = event.data || {};
+      if (!message_id || !patch) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === message_id ? { ...m, ...patch } : m
+      ));
+      return;
+    }
+
+    if (event.type === "predelivery_tombstoned") {
+      pushWsEvent('predelivery_tombstoned', { id: event.data?.message_id });
+      const message_id = event.data?.message_id;
+      if (!message_id) return;
+      setMessages((prev) => prev.filter((m) => m.id !== message_id));
+      return;
+    }
+
+    if (event.type === "message_sent") {
+      pushWsEvent('message_sent', { id: event.data?.message_id, seq: event.data?.seq });
+      const { message_id, seq, entry } = event.data || {};
+      if (!message_id) return;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === message_id);
+        const sentEntry = { ...(entry || {}), id: message_id, seq, status: 'sent' };
+        if (idx === -1) {
+          return [...prev, sentEntry];
+        }
+        const next = prev.slice();
+        next[idx] = { ...prev[idx], ...sentEntry };
+        return next;
+      });
+      return;
+    }
+
+    if (event.type === "message_executed") {
+      pushWsEvent('message_executed', event.data);
+      const { message_id, completed_at } = event.data || {};
+      if (!message_id) return;
+      setMessages((prev) => prev.map((m) => m.id === message_id
+        ? { ...m, completed_at, status: 'executed' }
+        : m));
+      return;
+    }
+
     if (event.type === "message_delivered") {
       pushWsEvent('message_delivered', event.data);
       const { message_id, delivered_at } = event.data;
@@ -3275,11 +3335,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           pendingDeliveriesRef.current.set(message_id, delivered_at);
           return prev;
         }
-        return prev.map((m) => (m.id === message_id ? { ...m, delivered_at } : m));
+        return prev.map((m) => (m.id === message_id
+          ? { ...m, delivered_at, status: (m.status === 'sent' ? 'delivered' : m.status) }
+          : m));
       });
       return;
     }
 
+    // Legacy: PENDING→QUEUED and similar upper-case transitions. Kept for
+    // backwards compat during Phase 2 transition; can be dropped in Phase 3.
     if (event.type === "message_update") {
       const { message_id, status, error_message, completed_at } = event.data;
       setMessages((prev) =>
