@@ -172,17 +172,12 @@ def test_cancel_appends_tombstone_and_queued_entry_vanishes(agent):
     assert queued == [], "tombstone should remove entry from queued partition"
 
 
-def test_cancel_endpoint_soft_cancels_only_pre_delivery(clean_db):
-    """cancel_message HTTP endpoint now rejects non-PENDING/QUEUED status.
-    The old CANCELLED→hard-delete branch has been removed."""
-    # We call the endpoint function directly with a stand-in db Session.
+def test_cancel_endpoint_rejects_completed_messages(clean_db):
+    """cancel_message rejects post-delivery statuses (COMPLETED/EXECUTING/...).
+    Pre-delivery statuses (PENDING/QUEUED/CANCELLED) are all accepted."""
     from fastapi import HTTPException
-
-    # Direct import of the endpoint function — it's an async def that takes
-    # agent_id, message_id, db.
     from routers.agents import cancel_message
 
-    # Seed agent + already-CANCELLED message
     db = SessionLocal()
     try:
         proj = Project(name="cancel-endpoint", display_name="x", path="/tmp/x")
@@ -193,17 +188,12 @@ def test_cancel_endpoint_soft_cancels_only_pre_delivery(clean_db):
         db.add(a)
         db.commit()
         aid = a.id
-
         m = Message(
-            id=_short_id(),
-            agent_id=aid,
-            role=MessageRole.USER,
-            content="already-cancelled",
-            status=MessageStatus.CANCELLED,
+            id=_short_id(), agent_id=aid, role=MessageRole.USER,
+            content="already-delivered", status=MessageStatus.COMPLETED,
             source="web",
         )
-        db.add(m)
-        db.commit()
+        db.add(m); db.commit()
         mid = m.id
     finally:
         db.close()
@@ -216,6 +206,45 @@ def test_cancel_endpoint_soft_cancels_only_pre_delivery(clean_db):
         assert exc.value.status_code == 400
     finally:
         db2.close()
+
+
+def test_cancel_endpoint_idempotent_for_already_cancelled(clean_db):
+    """Cancelling an already-CANCELLED message is a no-op DB-wise but still
+    appends a tombstone. Covers orphan rows from pre-refactor code paths
+    whose bubble is still visible in the display file."""
+    from routers.agents import cancel_message
+
+    db = SessionLocal()
+    try:
+        proj = Project(name="cancel-idem", display_name="x", path="/tmp/x")
+        db.add(proj); db.flush()
+        a = Agent(id=_short_id(), project="cancel-idem", name="a",
+                  mode=AgentMode.AUTO, status=AgentStatus.IDLE)
+        db.add(a); db.commit()
+        aid = a.id
+        m = Message(
+            id=_short_id(), agent_id=aid, role=MessageRole.USER,
+            content="orphan", status=MessageStatus.CANCELLED,
+            source="web", display_seq=99,  # simulates orphan in main partition
+        )
+        db.add(m); db.commit()
+        mid = m.id
+    finally:
+        db.close()
+
+    import asyncio
+    db2 = SessionLocal()
+    try:
+        resp = asyncio.run(cancel_message(aid, mid, db2))
+        assert resp == {"detail": "Message cancelled"}
+    finally:
+        db2.close()
+
+    # Tombstone must be in the file so the reader hides it.
+    with open(display_writer._display_path(aid)) as f:
+        lines = [l for l in f if mid in l]
+    tombstones = [l for l in lines if '"_deleted":true' in l.replace(" ", "")]
+    assert len(tombstones) == 1
 
 
 # ─────────────────────────── modify flow ────────────────────────────
