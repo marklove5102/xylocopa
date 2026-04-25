@@ -3754,111 +3754,54 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 </button>
               </div>
             ) : (
-              /* Full: icon buttons */
-              <div className="shrink-0 flex items-center">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (syncRefreshing) return;
-                    setSyncRefreshing(true);
-                    try {
-                      await wakeSync(id);
-                      setTimeout(() => refreshMessages(), SYNC_SETTLE_DELAY);
-                    } catch {}
-                    setTimeout(() => setSyncRefreshing(false), 400);
-                  }}
-                  title="Refresh (incremental sync)"
-                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
-                >
-                  <svg className={`w-4 h-4 ${syncRefreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowBrowser(true)}
-                  title="Browse files"
-                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleToggleMute}
-                  title={muted ? "Unmute notifications" : "Mute notifications"}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
-                >
-                  {muted ? (
-                    <BellOff className="w-4 h-4 text-zinc-400 hover:text-zinc-300 transition-colors" strokeWidth={1.75} />
-                  ) : (
-                    <Bell className="w-4 h-4 text-cyan-400" strokeWidth={1.75} />
-                  )}
-                </button>
-
-                <div className="relative">
+              /* Full: action buttons (Stop / Resume / Continued / OK) — promoted to row 1 */
+              <div className="shrink-0 flex items-center gap-1">
+                {(isStopped || isError) && agent?.successor_id && (
                   <button
                     type="button"
-                    onClick={() => setShowDeferPicker(v => !v)}
-                    title={deferredTo
-                      ? `Hidden until ${new Date(deferredTo).toLocaleString()}`
-                      : "Defer (hide until later)"}
-                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
+                    onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: forwardState(location) })}
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                   >
-                    <Hourglass
-                      className={`w-4 h-4 transition-colors ${
-                        deferredTo ? "text-indigo-400" : "text-zinc-400 hover:text-zinc-300"
-                      }`}
-                      strokeWidth={1.75}
-                    />
+                    Continued
+                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                    </svg>
                   </button>
-                  {showDeferPicker && (
-                    <SendLaterPicker
-                      title="Defer Until"
-                      onSelect={handleDeferSelect}
-                      onClose={() => setShowDeferPicker(false)}
-                      onClear={deferredTo ? handleDeferClear : undefined}
-                    />
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleToggleStar}
-                  disabled={starLoading}
-                  title={starred ? "Unstar session" : "Star session"}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors disabled:opacity-50"
-                >
-                  {starred ? (
-                    <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4 text-zinc-400 hover:text-zinc-300 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                    </svg>
-                  )}
-                </button>
-
-                {!embedded && (
-                <button
-                  type="button"
-                  onClick={onToggleTheme}
-                  title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
-                >
-                  {theme === "dark" ? (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                    </svg>
-                  )}
-                </button>
                 )}
+                {(isStopped || isError) ? (
+                  <button
+                    type="button"
+                    onClick={() => handleResume()}
+                    disabled={resuming}
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-600 text-white transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500"
+                  >
+                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 4l14 8-14 8V4z" />
+                    </svg>
+                    {resuming ? "..." : "Resume"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowStopConfirm(true)}
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white transition-colors hover:bg-red-500"
+                  >
+                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    Stop
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => navigate("/monitor")}
+                  title={health === null ? "Checking..." : isHealthy ? "System healthy" : "System issue"}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
+                >
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${healthDotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
+                  {healthLabel}
+                </button>
 
                 {embedded && (
                 <button type="button" onClick={() => setHeaderExpanded(false)} title="Collapse"
@@ -3920,55 +3863,111 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               )}
             </div>
 
-            <div className="shrink-0 flex items-center gap-1">
-              {/* "Continued" link — only when a successor exists */}
-              {(isStopped || isError) && agent?.successor_id && (
+            {/* Icon toolbar — moved down from row 1 */}
+            <div className="shrink-0 flex items-center -mr-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (syncRefreshing) return;
+                  setSyncRefreshing(true);
+                  try {
+                    await wakeSync(id);
+                    setTimeout(() => refreshMessages(), SYNC_SETTLE_DELAY);
+                  } catch {}
+                  setTimeout(() => setSyncRefreshing(false), 400);
+                }}
+                title="Refresh (incremental sync)"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
+              >
+                <svg className={`w-4 h-4 ${syncRefreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowBrowser(true)}
+                title="Browse files"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleMute}
+                title={muted ? "Unmute notifications" : "Mute notifications"}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
+              >
+                {muted ? (
+                  <BellOff className="w-4 h-4 text-zinc-400 hover:text-zinc-300 transition-colors" strokeWidth={1.75} />
+                ) : (
+                  <Bell className="w-4 h-4 text-cyan-400" strokeWidth={1.75} />
+                )}
+              </button>
+
+              <div className="relative">
                 <button
                   type="button"
-                  onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: forwardState(location) })}
-                  className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                  onClick={() => setShowDeferPicker(v => !v)}
+                  title={deferredTo
+                    ? `Hidden until ${new Date(deferredTo).toLocaleString()}`
+                    : "Defer (hide until later)"}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors"
                 >
-                  Continued
-                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                  </svg>
+                  <Hourglass
+                    className={`w-4 h-4 transition-colors ${
+                      deferredTo ? "text-indigo-400" : "text-zinc-400 hover:text-zinc-300"
+                    }`}
+                    strokeWidth={1.75}
+                  />
                 </button>
-              )}
-              {/* Resume / Stop — show one at a time */}
-              {(isStopped || isError) ? (
-                <button
-                  type="button"
-                  onClick={() => handleResume()}
-                  disabled={resuming}
-                  className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-600 text-white transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500"
-                >
-                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 4l14 8-14 8V4z" />
-                  </svg>
-                  {resuming ? "..." : "Resume"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowStopConfirm(true)}
-                  className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white transition-colors hover:bg-red-500"
-                >
-                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
-                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                  </svg>
-                  Stop
-                </button>
-              )}
+                {showDeferPicker && (
+                  <SendLaterPicker
+                    title="Defer Until"
+                    onSelect={handleDeferSelect}
+                    onClose={() => setShowDeferPicker(false)}
+                    onClear={deferredTo ? handleDeferClear : undefined}
+                  />
+                )}
+              </div>
 
               <button
                 type="button"
-                onClick={() => navigate("/monitor")}
-                title={health === null ? "Checking..." : isHealthy ? "System healthy" : "System issue"}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
+                onClick={handleToggleStar}
+                disabled={starLoading}
+                title={starred ? "Unstar session" : "Star session"}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-input transition-colors disabled:opacity-50"
               >
-                <span className={`inline-block w-1.5 h-1.5 rounded-full ${healthDotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
-                {healthLabel}
+                {starred ? (
+                  <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4 text-zinc-400 hover:text-zinc-300 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                )}
               </button>
+
+              {!embedded && (
+              <button
+                type="button"
+                onClick={onToggleTheme}
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-300 hover:bg-input transition-colors"
+              >
+                {theme === "dark" ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
+              )}
             </div>
           </div>}
         </div>
