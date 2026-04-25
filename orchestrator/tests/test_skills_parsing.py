@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import skills as skills_mod
+from content_matcher import ContentMatcher
 from jsonl_parser import format_tool_summary, parse_session_turns_from_lines
 from skills import (
     BUNDLED_SKILLS,
@@ -19,6 +20,13 @@ from skills import (
     skill_turn_metadata,
 )
 from slash_commands import COMMANDS
+
+
+class _StubMsg:
+    """Stand-in for ``models.Message`` in matcher tests (avoids DB setup)."""
+
+    def __init__(self, content: str):
+        self.content = content
 
 
 # ---------------------------------------------------------------------------
@@ -141,15 +149,20 @@ class TestSkillFolding:
         assert meta["skill_name"] == "debug"
         assert kind == "tool_use"
 
-    def test_command_wrapper_user_entries_dropped(self):
-        """Slash-command synthetic injections (<command-message>, <command-name>)
-        are rendered as user entries WITHOUT isMeta — must be filtered by prefix."""
+    def test_command_wrapper_unwrapped_to_canonical_form(self):
+        """``<command-message>`` wrappers must surface as ``/<cmd> <args>``
+        user turns so the sync engine's ContentMatcher can match them
+        against the pre-dispatched web/task DB row.  ``<command-name>``-only
+        and other wrapper fragments are still dropped."""
         lines = [
             _line({
                 "type": "user",
                 "uuid": "u1",
                 "timestamp": "2026-04-18T00:00:00Z",
-                "message": {"role": "user", "content": "/claude-api"},
+                "message": {
+                    "role": "user",
+                    "content": "<command-message>paper-finder</command-message>\n<command-name>/paper-finder</command-name>\n<command-args>corl 2025 generalizable safety</command-args>",
+                },
             }),
             _line({
                 "type": "user",
@@ -172,7 +185,8 @@ class TestSkillFolding:
         ]
         turns = parse_session_turns_from_lines(lines)
         contents = [t[1] for t in turns if t[0] == "user"]
-        assert "/claude-api" in contents
+        assert "/paper-finder corl 2025 generalizable safety" in contents
+        assert "/claude-api" in contents  # u2 unwrapped (no args)
         assert not any("<command-message>" in c for c in contents)
         assert not any("<command-name>" in c for c in contents)
 
@@ -204,6 +218,73 @@ class TestSkillFolding:
         assert "<<SKILL BODY>>" not in contents
         assert "real user message" in contents
         assert "second real message" in contents
+
+
+# ---------------------------------------------------------------------------
+# ContentMatcher — slash-command wrapper unwrap (regression: skill messages
+# that web-dispatched as "/cmd args" stayed stuck at "sent" because JSONL
+# echoes them as <command-message> wrappers — matcher must recognise both)
+# ---------------------------------------------------------------------------
+
+class TestContentMatcherCommandUnwrap:
+    def test_unwrap_with_args(self):
+        wrapped = (
+            "<command-message>paper-finder</command-message>\n"
+            "<command-name>/paper-finder</command-name>\n"
+            "<command-args>corl 2025 generalizable safety?</command-args>"
+        )
+        assert ContentMatcher.unwrap_command_message(wrapped) == (
+            "/paper-finder corl 2025 generalizable safety?"
+        )
+
+    def test_unwrap_without_args(self):
+        wrapped = (
+            "<command-message>simplify</command-message>\n"
+            "<command-name>/simplify</command-name>"
+        )
+        assert ContentMatcher.unwrap_command_message(wrapped) == "/simplify"
+
+    def test_unwrap_returns_none_for_non_wrapper(self):
+        assert ContentMatcher.unwrap_command_message("/just a slash command") is None
+        assert ContentMatcher.unwrap_command_message("hello world") is None
+        assert ContentMatcher.unwrap_command_message("") is None
+
+    def test_unwrap_returns_none_when_command_name_missing(self):
+        wrapped = "<command-message>orphan</command-message>"
+        assert ContentMatcher.unwrap_command_message(wrapped) is None
+
+    def test_match_uses_command_unwrap_strategy(self):
+        wrapped = (
+            "<command-message>paper-finder</command-message>\n"
+            "<command-name>/paper-finder</command-name>\n"
+            "<command-args>corl 2025</command-args>"
+        )
+        candidate = _StubMsg("/paper-finder corl 2025")
+        msg, method = ContentMatcher.match(wrapped, [candidate])
+        assert msg is candidate
+        assert method == "command-unwrap"
+
+    def test_match_command_unwrap_normalized(self):
+        """tmux can collapse whitespace inside args — normalised path covers it."""
+        wrapped = (
+            "<command-message>simplify</command-message>\n"
+            "<command-name>/simplify</command-name>\n"
+            "<command-args>foo  bar</command-args>"
+        )
+        candidate = _StubMsg("/simplify foo bar")
+        msg, method = ContentMatcher.match(wrapped, [candidate])
+        assert msg is candidate
+        assert method == "command-unwrap-normalized"
+
+    def test_match_no_candidate_returns_none(self):
+        wrapped = (
+            "<command-message>paper-finder</command-message>\n"
+            "<command-name>/paper-finder</command-name>\n"
+            "<command-args>corl 2025</command-args>"
+        )
+        msg, method = ContentMatcher.match(wrapped, [_StubMsg("/something-else")])
+        assert msg is None
+        assert method == "none"
 
 
 # ---------------------------------------------------------------------------

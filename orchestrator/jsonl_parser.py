@@ -521,11 +521,23 @@ def parse_session_turns_from_lines(
             # Real user message = string content (not tool_result list)
             if isinstance(content, str) and content.strip():
                 stripped = content.strip()
+                # Slash-command wrapper: unwrap to "/<cmd> <args>" so the
+                # turn flows through the normal user-turn path. Without this
+                # the turn was silently dropped, leaving web-originated
+                # /skill messages stuck in the "sent" state because the
+                # sync engine never saw a JSONL match candidate.
+                if stripped.startswith("<command-message>"):
+                    from content_matcher import ContentMatcher
+                    unwrapped = ContentMatcher.unwrap_command_message(stripped)
+                    if not unwrapped:
+                        continue
+                    flush_all()
+                    turns.append(("user", unwrapped, None, entry_uuid, None, entry_ts))
+                    continue
                 # Skip system-injected messages that aren't real user input
                 if (
                     stripped.startswith("<local-command-caveat>")
                     or stripped.startswith("<command-name>")
-                    or stripped.startswith("<command-message>")
                     or stripped.startswith("<local-command-stdout>")
                     or stripped.startswith("<system-reminder>")
                     or stripped.startswith("<task-notification>")
