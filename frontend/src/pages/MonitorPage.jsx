@@ -4,6 +4,7 @@ import {
   scanOrphans, cleanOrphans, fetchBackupStatus, purgeBackups,
   triggerBackup, deleteSingleBackup, restoreBackup, updateBackupConfig,
   importBackup, downloadBackupUrl, truncateLogs,
+  fetchTelemetryStatus, setTelemetryEnabled,
 } from "../lib/api";
 import { useMonitor } from "../contexts/MonitorContext";
 
@@ -251,6 +252,29 @@ export default function MonitorPage({ theme, onToggleTheme }) {
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupListOpen, setBackupListOpen] = useState(false);
   const [backupConfigOpen, setBackupConfigOpen] = useState(false);
+  const [telemetry, setTelemetry] = useState(null);
+  const [telemetryBusy, setTelemetryBusy] = useState(false);
+
+  const loadTelemetry = useCallback(async () => {
+    try {
+      setTelemetry(await fetchTelemetryStatus());
+    } catch (e) {
+      console.warn("Telemetry status fetch failed:", e);
+    }
+  }, []);
+
+  const handleTelemetryToggle = useCallback(async () => {
+    if (!telemetry || telemetry.env_locked || telemetryBusy) return;
+    setTelemetryBusy(true);
+    try {
+      const next = await setTelemetryEnabled(!telemetry.enabled);
+      setTelemetry(next);
+    } catch (e) {
+      console.warn("Telemetry toggle failed:", e);
+    } finally {
+      setTelemetryBusy(false);
+    }
+  }, [telemetry, telemetryBusy]);
 
   const loadBackupInfo = useCallback(async () => {
     try {
@@ -267,8 +291,9 @@ export default function MonitorPage({ theme, onToggleTheme }) {
     activate();
     refresh();
     loadBackupInfo();
+    loadTelemetry();
     return () => deactivate();
-  }, [activate, deactivate, refresh, loadBackupInfo]);
+  }, [activate, deactivate, refresh, loadBackupInfo, loadTelemetry]);
 
   const handlePurgeBackups = useCallback(async () => {
     if (!backupInfo || backupInfo.backup_count === 0) return;
@@ -691,6 +716,49 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                 : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs, ${orphanResult.deleted_projects || 0} projects)`}
           </p>
         )}
+
+        {/* Help improve Xylocopa (telemetry toggle) */}
+        <section className="rounded-xl bg-surface shadow-card p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-heading">Help improve Xylocopa</h3>
+              <p className="text-xs text-dim mt-1 leading-relaxed">
+                A simple anonymous heartbeat helps me know the project is being used.
+                No IPs, prompts, code, or paths.{" "}
+                <a
+                  href="https://github.com/jyao97/xylocopa#telemetry"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-500 hover:underline"
+                >
+                  Details
+                </a>
+              </p>
+              {telemetry?.env_locked && (
+                <p className="text-xs text-amber-500 mt-2">
+                  Locked off via <code className="font-mono">XYLOCOPA_TELEMETRY</code> env var.
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={telemetry?.enabled ? "true" : "false"}
+              aria-label="Toggle anonymous telemetry"
+              disabled={!telemetry || telemetry.env_locked || telemetryBusy}
+              onClick={handleTelemetryToggle}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                telemetry?.enabled ? "bg-cyan-500" : "bg-elevated"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  telemetry?.enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+        </section>
 
       </div>
       </div>

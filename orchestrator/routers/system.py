@@ -217,6 +217,22 @@ async def health(request: Request):
     return result
 
 
+@router.get("/api/telemetry")
+async def get_telemetry_status():
+    """Current telemetry config (used by Monitor page toggle)."""
+    import telemetry
+    return telemetry.get_status()
+
+
+@router.post("/api/telemetry")
+async def set_telemetry_status(request: Request):
+    """Toggle telemetry via ~/.xylocopa/config.yaml. Body: {"enabled": bool}."""
+    import telemetry
+    body = await request.json()
+    enabled = bool(body.get("enabled", True))
+    return telemetry.set_enabled(enabled)
+
+
 @router.post("/api/test/notify")
 async def test_notify(request: Request):
     """Send a test notification through the notify() gateway.

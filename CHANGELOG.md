@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Anonymous `daily_heartbeat` (one event/day, gated to >20h interval) sent to a Cloudflare Worker relay that writes to a private D1 database. No IPs, no user content. Opt-out via the Monitor page toggle, `XYLOCOPA_TELEMETRY=0`, or `telemetry: false` in `~/.xylocopa/config.yaml`. See `## Telemetry` in README and [`orchestrator/telemetry.py`](orchestrator/telemetry.py).
+
 ## [0.1.0] - 2025-01-01
 
 ### Added

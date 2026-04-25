@@ -254,6 +254,14 @@ Xylocopa uses a self-signed SSL certificate. The host trusts it after setup, but
 
 For Android, macOS, Windows, and Linux, see [detailed instructions](docs/install-cert.md).
 
+## Telemetry
+
+Xylocopa sends **one anonymous event per day** — `daily_heartbeat` — to help me see if the project is being used. Payload: random `install_id` (UUID v4 generated locally), `version`, `platform` (`darwin` / `linux` / `win32`), `timestamp`. **That's everything.** No IPs, no prompts, no code, no file paths, no hostnames, nothing user-generated.
+
+Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a Cloudflare Worker the author owns ([source](https://github.com/jyao97/xylocopa-telemetry)) that writes to a private D1 database. No third-party analytics.
+
+**Disable** (any one is enough): toggle off in **Monitor → Help improve Xylocopa**, or set `XYLOCOPA_TELEMETRY=0`, or write `telemetry: false` in `~/.xylocopa/config.yaml`.
+
 ## Gestures & Shortcuts
 
 - **Short-press the + button** to quickly add a task. **Long-press** it to choose between adding a project, agent, or task.
