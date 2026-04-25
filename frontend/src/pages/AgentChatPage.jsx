@@ -3872,9 +3872,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   Task
                 </button>
               )}
-              <span className="shrink-0 relative inline-flex">
+              <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowIdPopover(v => !v);
@@ -3887,9 +3888,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     }).catch(() => {});
                   }}
                   title="Click to expand · double-tap to copy"
-                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
+                  className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
-                  id
+                  {agent.id.slice(0, 4)}
                 </button>
                 {showIdPopover && (
                   <>
