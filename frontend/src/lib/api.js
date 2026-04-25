@@ -158,6 +158,14 @@ export const authChangePassword = (current_password, new_password) =>
     body: JSON.stringify({ current_password, new_password }),
   });
 
+// --- Telemetry ---
+export const fetchTelemetryStatus = () => request("/api/telemetry");
+export const setTelemetryEnabled = (enabled) =>
+  request("/api/telemetry", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+
 // --- Projects ---
 const e = encodeURIComponent;
 export const fetchProjects = () => request("/api/projects");
@@ -314,8 +322,12 @@ export const markAgentRead = (agentId) =>
   request(`/api/agents/${agentId}/read`, { method: "PUT" });
 export const markAllAgentsRead = () =>
   request("/api/agents/read-all", { method: "PUT" });
-export const cancelMessage = (agentId, messageId) =>
+// Hard-delete: tombstones the bubble (used by per-message DELETE button).
+export const deleteMessage = (agentId, messageId) =>
   request(`/api/agents/${agentId}/messages/${messageId}`, { method: "DELETE" });
+// Soft-cancel: status='cancelled', bubble stays visible (used by ESC).
+export const cancelMessage = (agentId, messageId) =>
+  request(`/api/agents/${agentId}/messages/${messageId}/cancel`, { method: "POST" });
 export const updateMessage = (agentId, messageId, data) =>
   request(`/api/agents/${agentId}/messages/${messageId}`, {
     method: "PUT",

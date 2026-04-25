@@ -13,6 +13,7 @@ import {
   starSession,
   unstarSession,
   cancelMessage,
+  deleteMessage,
   updateMessage,
   updateAgent,
   answerAgent,
@@ -3487,22 +3488,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Per-message DELETE button: walks the two-stage backend in one user
-  // action (cancel → tombstone) so the bubble disappears immediately
-  // instead of flickering through grey. The ESC handler keeps using
-  // cancelMessage once for its soft-cancel-only semantics (queued
-  // messages should stay visible as cancelled when bailing out a wedged
-  // TUI session).
+  // Per-message DELETE button: tombstones the bubble in one call.
+  // ESC handler uses the separate cancelMessage (POST .../cancel) for
+  // soft-cancel-only semantics — queued backlog stays visible as grey.
   const handleCancelMessage = async (messageId) => {
     try {
-      const cur = messages.find((m) => m.id === messageId);
-      const status = (cur?.status || "").toLowerCase();
-      // queued/scheduled → soft-cancel first, then tombstone.
-      // already cancelled → just tombstone.
-      if (status === "queued" || status === "scheduled") {
-        await cancelMessage(id, messageId); // soft-cancel
-      }
-      await cancelMessage(id, messageId);   // tombstone
+      await deleteMessage(id, messageId);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
       showToast("Message deleted");
     } catch (err) {

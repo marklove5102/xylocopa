@@ -2753,13 +2753,17 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
-async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Two-stage delete of a pre-delivery message.
+async def delete_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
+    """Hard-delete a pre-delivery message: bubble disappears.
 
-    Pre-delivery refactor (Phase 2): queued/scheduled → soft cancel
-    (status='cancelled'; grey bubble stays visible). cancelled → hard
-    tombstone (bubble disappears). Any sent/delivered/executed message
-    cannot be deleted via this endpoint.
+    Accepts any pre-delivery state (queued / scheduled / cancelled).
+    Storage layer requires `cancelled` before tombstone, so for
+    queued/scheduled entries this internally walks cancel→tombstone.
+    Sent / delivered / executed messages cannot be deleted via this
+    endpoint.
+
+    Distinct from `POST .../messages/{id}/cancel` which only soft-cancels
+    (used by ESC to grey-out queued backlog without removing it).
     """
     agent = db.get(Agent, agent_id)
     if not agent:
@@ -2770,14 +2774,10 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
         predelivery_get,
         predelivery_tombstone,
     )
-    from websocket import (
-        emit_predelivery_tombstoned,
-        emit_predelivery_updated,
-    )
+    from websocket import emit_predelivery_tombstoned
 
     entry = predelivery_get(agent_id, message_id)
     if entry is None:
-        # Not a pre-delivery entry — check whether it's a post-send DB row.
         db_msg = db.get(Message, message_id)
         if db_msg and db_msg.agent_id == agent_id:
             raise HTTPException(
@@ -2787,25 +2787,53 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
         raise HTTPException(status_code=404, detail="Message not found")
 
     status = entry.get("status")
+    if status not in ("queued", "scheduled", "cancelled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only pre-delivery messages can be deleted",
+        )
+
     if status in ("queued", "scheduled"):
         predelivery_cancel(agent_id, message_id)
-        asyncio.ensure_future(
-            emit_predelivery_updated(agent_id, message_id, {"status": "cancelled"})
+    predelivery_tombstone(agent_id, message_id)
+    asyncio.ensure_future(emit_predelivery_tombstoned(agent_id, message_id))
+    logger.info("Message %s tombstoned for agent %s", message_id, agent_id)
+    return {"detail": "deleted"}
+
+
+@router.post("/api/agents/{agent_id}/messages/{message_id}/cancel")
+async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
+    """Soft-cancel a queued/scheduled pre-delivery message: bubble stays
+    visible (greyed) so the user can see what was bailed out of.
+
+    Used by the ESC button to clear queued backlog without making the
+    bubbles disappear — distinct from the DELETE endpoint which removes
+    the bubble entirely.
+    """
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from display_writer import predelivery_cancel, predelivery_get
+    from websocket import emit_predelivery_updated
+
+    entry = predelivery_get(agent_id, message_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    status = entry.get("status")
+    if status not in ("queued", "scheduled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only queued/scheduled messages can be cancelled",
         )
-        logger.info("Message %s cancelled (soft) for agent %s", message_id, agent_id)
-        return {"detail": "cancelled"}
 
-    if status == "cancelled":
-        predelivery_tombstone(agent_id, message_id)
-        asyncio.ensure_future(emit_predelivery_tombstoned(agent_id, message_id))
-        logger.info("Message %s tombstoned (hard-deleted) for agent %s", message_id, agent_id)
-        return {"detail": "deleted"}
-
-    # sent / delivered / executed — cannot cancel via this endpoint.
-    raise HTTPException(
-        status_code=400,
-        detail="Only pre-delivery messages can be deleted",
+    predelivery_cancel(agent_id, message_id)
+    asyncio.ensure_future(
+        emit_predelivery_updated(agent_id, message_id, {"status": "cancelled"})
     )
+    logger.info("Message %s cancelled (soft) for agent %s", message_id, agent_id)
+    return {"detail": "cancelled"}
 
 
 @router.put("/api/agents/{agent_id}/messages/{message_id}", response_model=MessageOut)

@@ -297,9 +297,11 @@ def _seed_predelivery_entry(store, agent_id: str, *, status="queued",
 
 
 @pytest.mark.anyio
-async def test_delete_queued_soft_cancels(
+async def test_delete_queued_tombstones_in_one_call(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
+    """DELETE on a queued entry tombstones in one call (cancel→tombstone
+    internally). Only the tombstone WS event is emitted."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="delq11112222", status=AgentStatus.IDLE)
     db.close()
@@ -308,17 +310,20 @@ async def test_delete_queued_soft_cancels(
 
     resp = await client.delete(f"/api/agents/delq11112222/messages/{mid}")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["detail"] == "cancelled"
+    assert resp.json()["detail"] == "deleted"
 
     assert stub_store.cancel_calls == [("delq11112222", mid)]
-    assert stub_store.tombstone_calls == []
-    assert any(c[0] == "predelivery_updated" for c in ws_recorder)
+    assert stub_store.tombstone_calls == [("delq11112222", mid)]
+    assert any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+    assert not any(c[0] == "predelivery_updated" for c in ws_recorder)
 
 
 @pytest.mark.anyio
 async def test_delete_cancelled_hard_deletes(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
+    """DELETE on an already-cancelled entry just tombstones (no second
+    cancel)."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="delh11112222", status=AgentStatus.IDLE)
     db.close()
@@ -332,6 +337,43 @@ async def test_delete_cancelled_hard_deletes(
     assert stub_store.tombstone_calls == [("delh11112222", mid)]
     assert stub_store.cancel_calls == []
     assert any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+
+
+@pytest.mark.anyio
+async def test_cancel_endpoint_soft_cancels_only(
+    client, db_engine, stub_store, ws_recorder, dispatcher_noop,
+):
+    """POST .../cancel only soft-cancels — bubble stays visible as grey."""
+    db = _make_session(db_engine)
+    _seed_agent(db, agent_id="cancsoft0001", status=AgentStatus.IDLE)
+    db.close()
+
+    mid = _seed_predelivery_entry(stub_store, "cancsoft0001", status="queued")
+
+    resp = await client.post(f"/api/agents/cancsoft0001/messages/{mid}/cancel")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["detail"] == "cancelled"
+
+    assert stub_store.cancel_calls == [("cancsoft0001", mid)]
+    assert stub_store.tombstone_calls == []
+    assert any(c[0] == "predelivery_updated" for c in ws_recorder)
+    assert not any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+
+
+@pytest.mark.anyio
+async def test_cancel_endpoint_rejects_already_cancelled(
+    client, db_engine, stub_store, ws_recorder, dispatcher_noop,
+):
+    """POST .../cancel returns 400 if already cancelled — caller should
+    use DELETE for tombstone."""
+    db = _make_session(db_engine)
+    _seed_agent(db, agent_id="cancrej00001", status=AgentStatus.IDLE)
+    db.close()
+
+    mid = _seed_predelivery_entry(stub_store, "cancrej00001", status="cancelled")
+
+    resp = await client.post(f"/api/agents/cancrej00001/messages/{mid}/cancel")
+    assert resp.status_code == 400
 
 
 @pytest.mark.anyio
