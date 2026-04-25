@@ -3877,9 +3877,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
-                  onPointerDown={(e) => {
+                  onPointerDown={() => {
                     idLongPressFiredRef.current = false;
-                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
                     idPressTimerRef.current = setTimeout(() => {
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
