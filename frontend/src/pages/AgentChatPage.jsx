@@ -1507,7 +1507,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 </svg>
               </span>
             ) : status === "sent" || isSent ? (
-              <span className="ml-auto text-gray-400 opacity-50" title="Sent">
+              <span className="ml-auto text-gray-100/80" title="Sent">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
