@@ -3872,10 +3872,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   Task
                 </button>
               )}
-              <div className="shrink-0 relative">
+              <span className="shrink-0 relative inline-flex">
                 <button
                   type="button"
-                  onClick={() => setShowIdPopover(v => !v)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowIdPopover(v => !v);
+                  }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     navigator.clipboard.writeText(agent.id).then(() => {
@@ -3894,7 +3897,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       className="fixed inset-0 z-10"
                       onClick={() => setShowIdPopover(false)}
                     />
-                    <div className="absolute z-20 left-0 mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
+                    <div className="absolute z-20 left-0 top-full mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
                       <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                       <button
                         type="button"
@@ -3912,7 +3915,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     </div>
                   </>
                 )}
-              </div>
+              </span>
             </div>
 
             {/* Icon toolbar — moved down from row 1 */}
