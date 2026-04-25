@@ -249,6 +249,17 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                 ))
             return None  # updated — no insert needed
 
+    # Slash-command signal: the wrapper is purely a delivery confirmation
+    # for a dispatched web/task row.  If nothing matched, there is no real
+    # user input to record — CLI-typed /cmd invocations stay invisible to
+    # the web UI (parity with pre-fix behaviour).
+    if kind == "slash_signal":
+        logger.debug(
+            "Agent %s: slash_signal %r had no DB candidate — skipping",
+            ctx.agent_id[:8], content,
+        )
+        return None
+
     # 3. No promotable sent row — genuine CLI-typed input
     _ts = _parse_jsonl_ts(jsonl_ts) or _utcnow()
     return Message(

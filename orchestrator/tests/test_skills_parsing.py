@@ -141,11 +141,13 @@ class TestSkillFolding:
         assert meta["skill_name"] == "debug"
         assert kind == "tool_use"
 
-    def test_command_wrapper_unwrapped_to_canonical_form(self):
-        """``<command-message>`` wrappers must surface as ``/<cmd> <args>``
-        user turns so the sync engine's ContentMatcher can match them
-        against the pre-dispatched web/task DB row.  ``<command-name>``-only
-        and other wrapper fragments are still dropped."""
+    def test_command_wrapper_emits_slash_signal_turn(self):
+        """``<command-message>`` wrappers surface as user turns with
+        ``kind="slash_signal"`` and canonical ``/<cmd> <args>`` content.
+        The sync engine matches them against the pre-dispatched web/task
+        row via ContentMatcher (exact / normalized strategies); on miss it
+        does *not* synthesize a CLI row (handled in sync_engine, not here).
+        ``<command-name>``-only fragments are still dropped."""
         lines = [
             _line({
                 "type": "user",
@@ -176,11 +178,15 @@ class TestSkillFolding:
             }),
         ]
         turns = parse_session_turns_from_lines(lines)
-        contents = [t[1] for t in turns if t[0] == "user"]
+        signal_turns = [t for t in turns if len(t) > 4 and t[4] == "slash_signal"]
+        assert len(signal_turns) == 2
+        contents = [t[1] for t in signal_turns]
         assert "/paper-finder corl 2025 generalizable safety" in contents
         assert "/claude-api" in contents  # u2 unwrapped (no args)
-        assert not any("<command-message>" in c for c in contents)
-        assert not any("<command-name>" in c for c in contents)
+        # Wrapper text never leaks into any turn's content
+        all_contents = [t[1] for t in turns]
+        assert not any("<command-message>" in c for c in all_contents)
+        assert not any("<command-name>" in c for c in all_contents)
 
     def test_ismeta_user_entries_dropped(self):
         """isMeta:true user entries (skill bodies, system reminders) are filtered out."""

@@ -531,14 +531,18 @@ def parse_session_turns_from_lines(
             # Real user message = string content (not tool_result list)
             if isinstance(content, str) and content.strip():
                 stripped = content.strip()
-                # Slash-command wrapper → canonical "/<cmd> <args>" so the
-                # sync engine's ContentMatcher can match it against the web
-                # row's literal user typing.
+                # Slash-command wrapper → emit a delivery-signal turn with
+                # canonical "/<cmd> <args>" content. The sync engine matches
+                # it against the dispatched web/task row but never creates a
+                # new CLI row when no match exists (kind="slash_signal" gates
+                # the create-fallthrough), so chat stays clean and CLI-typed
+                # /cmd invocations remain invisible to the web UI — same as
+                # before this fix.
                 _m = _CMD_WRAPPER_RE.match(stripped)
                 if _m:
                     _cmd, _args = _m.group("name").strip(), (_m.group("args") or "").strip()
                     flush_all()
-                    turns.append(("user", f"{_cmd} {_args}".rstrip(), None, entry_uuid, None, entry_ts))
+                    turns.append(("user", f"{_cmd} {_args}".rstrip(), None, entry_uuid, "slash_signal", entry_ts))
                     continue
                 # Skip system-injected messages that aren't real user input
                 if (
