@@ -3708,7 +3708,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 className="text-sm font-semibold text-heading min-w-0 flex-1 bg-input border border-cyan-500 rounded px-1.5 py-0.5 outline-none"
               />
             ) : (
-              <div className="min-w-0 flex-1 flex items-center gap-1.5">
+              <div className="min-w-0 flex-1 flex items-center gap-2">
                 <h1
                   onDoubleClick={startRename}
                   title="Double-tap to rename"
@@ -3716,9 +3716,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 >
                   {agent.name}
                 </h1>
-                {/* Status dot — sits right of title (matches AgentRow palette) */}
+                {/* Status dot — matches ProjectsPage running-pulse style */}
                 <span
-                  className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                  className={`shrink-0 w-1.5 h-1.5 rounded-full ${
                     agent.status === "EXECUTING" ? "bg-cyan-400 animate-glow"
                       : agent.status === "IDLE" ? "bg-cyan-300/50"
                       : agent.status === "ERROR" ? "bg-red-400"
