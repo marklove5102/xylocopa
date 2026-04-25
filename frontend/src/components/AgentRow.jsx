@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { useNavigate } from "react-router-dom";
+import { Hourglass } from "lucide-react";
 import { relativeTime } from "../lib/formatters";
 import { modelDisplayName } from "../lib/constants";
 
@@ -127,6 +128,12 @@ const AgentRow = memo(function AgentRow({
             {agent.insight_status === "failed" && !agent.has_pending_suggestions && (
               <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
                 failed
+              </span>
+            )}
+            {agent.deferred_to && (
+              <span className="text-[10px] text-indigo-400 flex items-center gap-0.5">
+                <Hourglass className="w-2.5 h-2.5" strokeWidth={2} />
+                {relativeTime(agent.deferred_to)}
               </span>
             )}
           </div>
