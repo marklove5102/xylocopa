@@ -1376,7 +1376,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 ? "bg-gray-400 text-white rounded-br-md"
                 : isScheduled
                   ? "bg-amber-600/80 text-white rounded-br-md"
-                  : isPending
+                  : isPreQueued
                     ? "bg-cyan-600/60 text-white/80 rounded-br-md"
                     : isUndeliveredTimedOut
                       ? "bg-red-600/40 text-white/70 rounded-br-md"
