@@ -2464,6 +2464,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [headerExpanded, setHeaderExpanded] = useState(false);
   const [showIdPopover, setShowIdPopover] = useState(false);
   const idClickTimerRef = useRef(null);
+  const idLastTapRef = useRef(0);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3878,25 +3879,29 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    const now = Date.now();
+                    // double-tap → copy full id
+                    if (now - idLastTapRef.current < DOUBLE_TAP_WINDOW) {
+                      idLastTapRef.current = 0;
+                      if (idClickTimerRef.current) {
+                        clearTimeout(idClickTimerRef.current);
+                        idClickTimerRef.current = null;
+                      }
+                      navigator.clipboard.writeText(agent.id).then(() => {
+                        showToast("Copied " + agent.id);
+                        setShowIdPopover(false);
+                      }).catch(() => {});
+                      return;
+                    }
+                    idLastTapRef.current = now;
+                    // single-tap → toggle popover after the dbl-tap window
                     if (idClickTimerRef.current) clearTimeout(idClickTimerRef.current);
                     idClickTimerRef.current = setTimeout(() => {
                       idClickTimerRef.current = null;
                       setShowIdPopover(v => !v);
                     }, DOUBLE_TAP_WINDOW);
                   }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    if (idClickTimerRef.current) {
-                      clearTimeout(idClickTimerRef.current);
-                      idClickTimerRef.current = null;
-                    }
-                    navigator.clipboard.writeText(agent.id).then(() => {
-                      showToast("Copied " + agent.id);
-                      setShowIdPopover(false);
-                    }).catch(() => {});
-                  }}
                   title="Tap to expand · double-tap to copy"
-                  style={{ touchAction: "manipulation" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
                   {agent.id.slice(0, 4)}
