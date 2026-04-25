@@ -3969,6 +3969,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 </button>
               )}
 
+              <button
+                type="button"
+                onClick={() => navigate("/monitor")}
+                title={health === null ? "Checking..." : isHealthy ? "System healthy" : "System issue"}
+                className={`inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
+              >
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${healthDotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
+                {healthLabel}
+              </button>
             </div>
           </div>}
         </div>
