@@ -3877,29 +3877,34 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
-                  onPointerDown={() => {
+                  onPointerDown={(e) => {
+                    console.log("[idpill] pointerdown", { type: e.pointerType, t: Math.round(e.timeStamp), id: e.pointerId });
                     idLongPressFiredRef.current = false;
                     idPressTimerRef.current = setTimeout(() => {
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
+                      console.log("[idpill] long-press fired @", Math.round(performance.now()));
                       navigator.clipboard.writeText(agent.id).then(() => {
                         showToast("Copied " + agent.id);
-                      }).catch(() => {});
+                      }).catch((err) => { console.log("[idpill] clipboard err", err?.message || err); });
                     }, LONG_PRESS_DELAY);
                   }}
-                  onPointerUp={() => {
+                  onPointerUp={(e) => {
+                    console.log("[idpill] pointerup", { type: e.pointerType, t: Math.round(e.timeStamp), timerAlive: !!idPressTimerRef.current, longFired: idLongPressFiredRef.current });
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
-                  onPointerCancel={() => {
+                  onPointerCancel={(e) => {
+                    console.log("[idpill] pointercancel", { type: e.pointerType, t: Math.round(e.timeStamp), timerAlive: !!idPressTimerRef.current });
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
                   onClick={(e) => {
+                    console.log("[idpill] click", { t: Math.round(e.timeStamp), longFired: idLongPressFiredRef.current });
                     e.stopPropagation();
                     if (idLongPressFiredRef.current) {
                       idLongPressFiredRef.current = false;
