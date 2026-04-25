@@ -3708,13 +3708,25 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 className="text-sm font-semibold text-heading min-w-0 flex-1 bg-input border border-cyan-500 rounded px-1.5 py-0.5 outline-none"
               />
             ) : (
-              <h1
-                onDoubleClick={startRename}
-                title="Double-tap to rename"
-                className="text-sm font-semibold text-heading truncate min-w-0 flex-1 select-none"
-              >
-                {agent.name}
-              </h1>
+              <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                <h1
+                  onDoubleClick={startRename}
+                  title="Double-tap to rename"
+                  className="text-sm font-semibold text-heading truncate min-w-0 select-none"
+                >
+                  {agent.name}
+                </h1>
+                {/* Status dot — sits right of title (matches AgentRow palette) */}
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                    agent.status === "EXECUTING" ? "bg-cyan-400 animate-glow"
+                      : agent.status === "IDLE" ? "bg-cyan-300/50"
+                      : agent.status === "ERROR" ? "bg-red-400"
+                      : "bg-zinc-400/50"
+                  }`}
+                  title={agent.status.toLowerCase().replace("_", " ")}
+                />
+              </div>
             )}
 
             {compactHeader ? (
@@ -3864,16 +3876,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           {/* Row 2: Status dot + tags (card-list style) | action buttons (ml-9 aligns with name after back btn) */}
           {!compactHeader && <div className="flex items-center gap-2 ml-9">
             <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar">
-              {/* Status indicator (dot only — matches AgentRow card style) */}
-              <span
-                className={`inline-block w-2 h-2 rounded-full shrink-0 mr-0.5 ${
-                  agent.status === "EXECUTING" ? "bg-cyan-400 animate-glow"
-                    : agent.status === "IDLE" ? "bg-cyan-300/50"
-                    : agent.status === "ERROR" ? "bg-red-400"
-                    : "bg-zinc-400/50"
-                }`}
-                title={agent.status.toLowerCase().replace("_", " ")}
-              />
               {agent.project && (
                 <span
                   className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 max-w-[140px] truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
