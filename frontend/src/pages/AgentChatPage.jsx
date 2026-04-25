@@ -3896,16 +3896,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   Auto
                 </span>
               )}
-              {agent.model && (
-                <span className="shrink-0 text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
-                  {modelDisplayName(agent.model)}
-                </span>
-              )}
-              {agent.effort && (
-                <span className="shrink-0 text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
-                  {agent.effort.charAt(0).toUpperCase() + agent.effort.slice(1)}
-                </span>
-              )}
               {agent.branch && (
                 <span className="shrink-0 text-[10px] text-violet-400 font-mono truncate max-w-[120px]">
                   {agent.branch}
@@ -3974,15 +3964,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => navigate("/monitor")}
-                title={health === null ? "Checking..." : isHealthy ? "System healthy" : "System issue"}
-                className={`inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
-              >
-                <span className={`inline-block w-1.5 h-1.5 rounded-full ${healthDotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
-                {healthLabel}
-              </button>
             </div>
           </div>}
         </div>
