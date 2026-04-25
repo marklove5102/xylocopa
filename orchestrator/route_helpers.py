@@ -42,10 +42,6 @@ BROWSE_MAX_FILE_SIZE = 512 * 1024  # 512 KB
 # Max concurrent agent launches allowed in STARTING state
 MAX_STARTING_AGENTS = 10
 
-# Tmux prompt-send: max attempts and JSONL poll duration per attempt
-MAX_SEND_ATTEMPTS = 5
-JSONL_POLL_PER_ATTEMPT = 15  # seconds to wait for JSONL per attempt
-
 # Pre-flight import check timeout (seconds)
 IMPORT_CHECK_TIMEOUT = 15
 

@@ -41,7 +41,7 @@ from route_helpers import (
     tmux_session_candidates, tmux_session_name,
     TMUX_CMD_TIMEOUT, TMUX_SESSION_PREFIX,
     TUI_STARTUP_TIMEOUT, TUI_SETTLE_DELAY,
-    MAX_STARTING_AGENTS, MAX_SEND_ATTEMPTS, JSONL_POLL_PER_ATTEMPT,
+    MAX_STARTING_AGENTS,
     IMPORT_CHECK_TIMEOUT, SUBPROCESS_STRIP_VARS,
 )
 from utils import utcnow as _utcnow, is_interrupt_message
@@ -62,8 +62,6 @@ _TMUX_CMD_TIMEOUT = TMUX_CMD_TIMEOUT
 _TUI_STARTUP_TIMEOUT = TUI_STARTUP_TIMEOUT
 _TUI_SETTLE_DELAY = TUI_SETTLE_DELAY
 _MAX_STARTING_AGENTS = MAX_STARTING_AGENTS
-_MAX_SEND_ATTEMPTS = MAX_SEND_ATTEMPTS
-_JSONL_POLL_PER_ATTEMPT = JSONL_POLL_PER_ATTEMPT
 _IMPORT_CHECK_TIMEOUT = IMPORT_CHECK_TIMEOUT
 _generate_worktree_name_local = generate_worktree_name_local
 _enrich_agent_briefs = enrich_agent_briefs
@@ -898,7 +896,7 @@ async def _launch_tmux_background(
 
     1. Wait for Claude's TUI to start (polls for a claude process in the pane)
     2. Send the user prompt
-    3. Detect the session JSONL and start the sync loop
+    3. Receive the session_id via SessionStart hook and start the sync loop
 
     On any failure, transitions the agent to ERROR so it doesn't stay
     stuck in STARTING forever.  Handles cancellation gracefully so that
@@ -909,12 +907,10 @@ async def _launch_tmux_background(
 
     from agent_dispatcher import (
         _build_tmux_claude_map,
-        _detect_pid_session_jsonl,
         capture_tmux_pane,
         send_tmux_message,
     )
     from database import SessionLocal
-    from session_cache import session_source_dir
     from websocket import emit_agent_update, emit_new_message
 
     def _mark_error(reason: str):
@@ -1018,16 +1014,10 @@ async def _launch_tmux_background(
         # to ensure the input handler is fully wired up.
         await asyncio.sleep(_TUI_SETTLE_DELAY)
 
-        # Step 2: Send the prompt, then wait for session JSONL as the
-        # definitive acceptance signal.  If the JSONL doesn't appear within
-        # a reasonable time, clear the input and re-send.
-        #
-        # Using session JSONL creation as the acceptance signal is far more
-        # reliable than pane-capture heuristics, which are fragile against
-        # TUI layout variations and re-render timing.
-        from session_cache import invalidate_path_cache
-        from agent_dispatcher import _get_session_pid
-
+        # Step 2: Send the prompt and wait for the SessionStart hook to
+        # tell us the session_id.  start_session_sync() needs the actual
+        # pane CWD (not project_path) so worktree agents watch the right
+        # session directory.
         actual_cwd = project_path
         try:
             cwd_result = subprocess.run(
@@ -1038,86 +1028,6 @@ async def _launch_tmux_background(
                 actual_cwd = os.path.realpath(cwd_result.stdout.strip())
         except (subprocess.TimeoutExpired, OSError) as e:
             logger.debug("tmux pane CWD lookup failed for %s: %s", pane_id, e)
-
-        session_dir = session_source_dir(actual_cwd)
-        base_session_dir = session_source_dir(project_path)
-
-        def _check_status_bar_processing() -> bool:
-            """Check if the status bar shows 'esc to interrupt' — definitive
-            indicator that Claude is actively processing."""
-            pane_text = capture_tmux_pane(pane_id)
-            if pane_text:
-                for ln in pane_text.split("\n"):
-                    if "\u23f5" in ln and "esc to interrupt" in ln:
-                        return True
-            return False
-
-        def _scan_for_session_jsonl(owned_sids: set, pane_pid: int | None) -> str | None:
-            """Find the JSONL created by our launch.
-
-            If pre_session_id was provided (pre-generated UUID passed to
-            Claude via --session-id), ONLY accept that exact session.
-            Falls back to FD/mtime scan only when no pre_session_id was set
-            (legacy launches without --session-id).
-            """
-            # When we pre-generated a session ID, only accept that one.
-            # Never fall back to mtime guessing — it causes session theft
-            # when the expected JSONL hasn't been written yet.
-            if pre_session_id:
-                for sdir in dict.fromkeys([session_dir, base_session_dir]):
-                    if not os.path.isdir(sdir):
-                        continue
-                    fpath = os.path.join(sdir, f"{pre_session_id}.jsonl")
-                    if os.path.exists(fpath):
-                        return pre_session_id
-                return None  # Not ready yet — caller will retry
-
-            # Legacy fallback (no pre_session_id): scan for newest unowned JSONL
-            if pane_pid:
-                sid = _detect_pid_session_jsonl(pane_pid)
-                if sid and sid not in owned_sids:
-                    return sid
-
-            best_sid, best_mtime = None, launch_start
-            for sdir in dict.fromkeys([session_dir, base_session_dir]):
-                if not os.path.isdir(sdir):
-                    continue
-                for fname in os.listdir(sdir):
-                    if not fname.endswith(".jsonl"):
-                        continue
-                    sid = fname.replace(".jsonl", "")
-                    if sid in owned_sids:
-                        continue
-                    fpath = os.path.join(sdir, fname)
-                    try:
-                        mtime = os.path.getmtime(fpath)
-                    except OSError:
-                        continue
-                    if mtime > best_mtime:
-                        best_sid, best_mtime = sid, mtime
-
-            return best_sid
-
-        # Collect session IDs already owned by other agents (once, reused)
-        db_check = SessionLocal()
-        try:
-            owned_sids = set()
-            for a in db_check.query(Agent).filter(
-                Agent.session_id.is_not(None),
-                Agent.id != agent_id,
-            ).all():
-                owned_sids.add(a.session_id)
-        finally:
-            db_check.close()
-
-        pane_pid = None
-        pane_map = _build_tmux_claude_map()
-        if pane_id in pane_map:
-            pane_pid = pane_map[pane_id].get("pid")
-
-        import time as _time
-        launch_start = _time.time()
-        session_id = None
 
         # If the SessionStart hook fired before we got here (its HTTP
         # POST can race the launch task being scheduled), the hook
@@ -1139,116 +1049,37 @@ async def _launch_tmux_background(
             except OSError as _e:
                 logger.debug("read early SessionStart signal: %s", _e)
 
-        # Watchdog: if the hook never fires (script broken, network issue,
-        # etc.), fall back to JSONL scan after this many seconds per attempt.
-        _HOOK_WAIT_SECS = 2.0
+        # SessionStart hook is mandatory infrastructure (xylocopa installs
+        # it into ~/.claude/settings.json on startup). If it doesn't fire
+        # within this window something is broken — surface that as a hard
+        # error rather than silently stalling launch with a JSONL scan.
+        _HOOK_TIMEOUT_SECS = 30.0
 
-        for attempt in range(_MAX_SEND_ATTEMPTS):
-            # Clear any leftover text from a prior failed attempt
-            if attempt > 0:
-                subprocess.run(
-                    ["tmux", "send-keys", "-t", pane_id, "C-u"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                # Increasing back-off between retries: 3s, 5s, 7s, 9s
-                await asyncio.sleep(1 + attempt * 2)
-
-            if not send_tmux_message(pane_id, prompt):
-                _mark_error(
-                    "Failed to send prompt to tmux pane %s "
-                    "(project_path: %s)" % (pane_id, project_path)
-                )
-                return
-
-            logger.info(
-                "tmux launch agent %s: prompt sent (attempt %d/%d)",
-                agent_id, attempt + 1, _MAX_SEND_ATTEMPTS,
-            )
-
-            # Wait for the SessionStart hook first (fast path).  If it
-            # doesn't arrive within the watchdog window, fall through to
-            # the JSONL scan loop so a broken hook can't stall launch.
-            try:
-                session_id = await asyncio.wait_for(
-                    asyncio.shield(hook_future), timeout=_HOOK_WAIT_SECS,
-                )
-                logger.info(
-                    "tmux launch agent %s: session %s received via SessionStart hook",
-                    agent_id, session_id[:12],
-                )
-                break
-            except asyncio.TimeoutError:
-                logger.info(
-                    "tmux launch agent %s: SessionStart hook didn't arrive in %.1fs, "
-                    "falling back to JSONL scan",
-                    agent_id, _HOOK_WAIT_SECS,
-                )
-
-            # Watchdog fallback: poll the JSONL directory the way we used
-            # to.  Most launches won't reach this branch.
-            for i in range(_JSONL_POLL_PER_ATTEMPT):
-                await asyncio.sleep(1)
-
-                # Hook may still arrive while we're polling
-                if hook_future.done() and not hook_future.cancelled():
-                    try:
-                        session_id = hook_future.result()
-                        break
-                    except Exception:
-                        pass
-
-                # Refresh PID if not yet known
-                if not pane_pid:
-                    pane_map = _build_tmux_claude_map()
-                    if pane_id in pane_map:
-                        pane_pid = pane_map[pane_id].get("pid")
-
-                # Quick check: is Claude processing?
-                if i < 5 and _check_status_bar_processing():
-                    logger.info(
-                        "tmux launch agent %s: status bar confirms processing",
-                        agent_id,
-                    )
-
-                # Invalidate path cache periodically to pick up new dirs
-                if i in (5, 10):
-                    invalidate_path_cache(actual_cwd)
-                    invalidate_path_cache(project_path)
-                    session_dir = session_source_dir(actual_cwd)
-                    base_session_dir = session_source_dir(project_path)
-
-                try:
-                    session_id = _scan_for_session_jsonl(owned_sids, pane_pid)
-                except OSError:
-                    continue
-                if session_id:
-                    break
-
-            if session_id:
-                break
-
-            # No JSONL after polling — check if the pane still has Claude
-            pane_map = _build_tmux_claude_map()
-            if pane_id not in pane_map:
-                _mark_error(
-                    "Claude process disappeared from pane %s during launch "
-                    "(project_path: %s)" % (pane_id, project_path)
-                )
-                return
-
-            logger.info(
-                "tmux launch agent %s: no session JSONL after attempt %d/%d, "
-                "will retry",
-                agent_id, attempt + 1, _MAX_SEND_ATTEMPTS,
-            )
-
-        if not session_id:
+        if not send_tmux_message(pane_id, prompt):
             _mark_error(
-                "No session JSONL appeared for agent %s after %d send attempts "
-                "(session_dir: %s, project_path: %s)"
-                % (agent_id, _MAX_SEND_ATTEMPTS, session_dir, project_path)
+                "Failed to send prompt to tmux pane %s "
+                "(project_path: %s)" % (pane_id, project_path)
             )
             return
+
+        logger.info("tmux launch agent %s: prompt sent", agent_id)
+
+        try:
+            session_id = await asyncio.wait_for(
+                hook_future, timeout=_HOOK_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            _mark_error(
+                "SessionStart hook did not fire within %.0fs for agent %s — "
+                "check ~/.claude/settings.json hook configuration "
+                "(project_path: %s)" % (_HOOK_TIMEOUT_SECS, agent_id, project_path)
+            )
+            return
+
+        logger.info(
+            "tmux launch agent %s: session %s received via SessionStart hook",
+            agent_id, session_id[:12],
+        )
 
         # Update agent with session_id and transition to IDLE
         db = SessionLocal()
