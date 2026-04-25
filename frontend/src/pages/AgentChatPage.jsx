@@ -3877,9 +3877,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
-                  onPointerDown={() => {
+                  onPointerDown={(e) => {
                     idLongPressFiredRef.current = false;
+                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
                     idPressTimerRef.current = setTimeout(() => {
+                      idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
                       navigator.clipboard.writeText(agent.id).then(() => {
                         showToast("Copied " + agent.id);
@@ -3892,7 +3894,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       idPressTimerRef.current = null;
                     }
                   }}
-                  onPointerLeave={() => {
+                  onPointerCancel={() => {
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
