@@ -1201,6 +1201,11 @@ async def hook_agent_session_start(request: Request):
         # Wake sync loop — new session means new JSONL content
         ad = getattr(request.app.state, "agent_dispatcher", None)
         if ad:
+            # If a launch is in flight for this agent, hand the session_id
+            # off directly so the launch task can skip JSONL polling.
+            fut = ad._launch_session_futures.get(agent_id)
+            if fut and not fut.done():
+                fut.set_result(session_id)
             ad.wake_sync(agent_id)
 
         return {}

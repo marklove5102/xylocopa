@@ -1536,6 +1536,12 @@ class AgentDispatcher:
         # agent_id -> pane_id  (populated by _launch_tmux_background)
         self._launching_panes: dict[str, str] = {}
 
+        # Pending session_id futures keyed by launching agent_id.  The
+        # SessionStart hook resolves these the moment it arrives, so the
+        # launch path no longer has to poll for the JSONL file.  Cleared
+        # by _launch_tmux_background once it consumes the result.
+        self._launch_session_futures: dict[str, asyncio.Future[str]] = {}
+
         # CLI auto-detect tick counter (run every ~30s, not every 2s tick)
         self._cli_detect_counter = 0
         self._cli_detect_interval = 15  # ticks (15 * 2s = 30s)

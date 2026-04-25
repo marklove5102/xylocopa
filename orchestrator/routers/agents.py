@@ -933,6 +933,13 @@ async def _launch_tmux_background(
             db.close()
         logger.warning("tmux launch failed for agent %s: %s", agent_id, reason)
 
+    # Register the SessionStart hook future BEFORE waiting on the
+    # semaphore: claude was already started by the synchronous request
+    # handler that scheduled us, so its SessionStart hook can fire
+    # any moment now.  We must be ready to catch it.
+    hook_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    ad._launch_session_futures[agent_id] = hook_future
+
     await _tmux_launch_sem.acquire()
     # Register this pane so _detect_successor_session skips sessions
     # belonging to this launching agent (prevents cross-agent theft).
@@ -1112,6 +1119,30 @@ async def _launch_tmux_background(
         launch_start = _time.time()
         session_id = None
 
+        # If the SessionStart hook fired before we got here (its HTTP
+        # POST can race the launch task being scheduled), the hook
+        # handler will have written the signal file even if the
+        # in-memory future was empty at that moment.  Drain it now so
+        # we don't pointlessly wait on an already-passed event.
+        from route_helpers import find_session_signal as _find_signal
+        _stale_signal = _find_signal(agent_id)
+        if _stale_signal and not hook_future.done():
+            try:
+                with open(_stale_signal) as _sf:
+                    _early_sid = _sf.read().strip()
+                if _early_sid:
+                    hook_future.set_result(_early_sid)
+                    try:
+                        os.unlink(_stale_signal)
+                    except OSError:
+                        pass
+            except OSError as _e:
+                logger.debug("read early SessionStart signal: %s", _e)
+
+        # Watchdog: if the hook never fires (script broken, network issue,
+        # etc.), fall back to JSONL scan after this many seconds per attempt.
+        _HOOK_WAIT_SECS = 2.0
+
         for attempt in range(_MAX_SEND_ATTEMPTS):
             # Clear any leftover text from a prior failed attempt
             if attempt > 0:
@@ -1134,11 +1165,37 @@ async def _launch_tmux_background(
                 agent_id, attempt + 1, _MAX_SEND_ATTEMPTS,
             )
 
-            # Poll for evidence that Claude accepted the prompt:
-            # 1. Status bar shows "esc to interrupt" (processing), or
-            # 2. Session JSONL file appears (definitive)
+            # Wait for the SessionStart hook first (fast path).  If it
+            # doesn't arrive within the watchdog window, fall through to
+            # the JSONL scan loop so a broken hook can't stall launch.
+            try:
+                session_id = await asyncio.wait_for(
+                    asyncio.shield(hook_future), timeout=_HOOK_WAIT_SECS,
+                )
+                logger.info(
+                    "tmux launch agent %s: session %s received via SessionStart hook",
+                    agent_id, session_id[:12],
+                )
+                break
+            except asyncio.TimeoutError:
+                logger.info(
+                    "tmux launch agent %s: SessionStart hook didn't arrive in %.1fs, "
+                    "falling back to JSONL scan",
+                    agent_id, _HOOK_WAIT_SECS,
+                )
+
+            # Watchdog fallback: poll the JSONL directory the way we used
+            # to.  Most launches won't reach this branch.
             for i in range(_JSONL_POLL_PER_ATTEMPT):
                 await asyncio.sleep(1)
+
+                # Hook may still arrive while we're polling
+                if hook_future.done() and not hook_future.cancelled():
+                    try:
+                        session_id = hook_future.result()
+                        break
+                    except Exception:
+                        pass
 
                 # Refresh PID if not yet known
                 if not pane_pid:
@@ -1253,6 +1310,9 @@ async def _launch_tmux_background(
         _tmux_launch_sem.release()
         ad._launch_tasks.pop(agent_id, None)
         ad._launching_panes.pop(agent_id, None)
+        _fut = ad._launch_session_futures.pop(agent_id, None)
+        if _fut and not _fut.done():
+            _fut.cancel()
 
 
 @router.post("/api/agents/scan")
