@@ -468,7 +468,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                       {relativeTime(task.notify_at)}
                     </span>
                   )}
-                  {task.deferred_to && (
+                  {task.deferred_to && new Date(task.deferred_to) > new Date() && (
                     <span className="text-[10px] text-indigo-400 flex items-center gap-0.5">
                       <Hourglass className="w-2.5 h-2.5" strokeWidth={2} />
                       {relativeTime(task.deferred_to)}
@@ -600,7 +600,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                       {relativeTime(task.notify_at)}
                     </span>
                   )}
-                  {task.deferred_to && (
+                  {task.deferred_to && new Date(task.deferred_to) > new Date() && (
                     <span className="text-[11px] text-indigo-400 flex items-center gap-0.5">
                       <Hourglass className="w-3 h-3" strokeWidth={2} />
                       {relativeTime(task.deferred_to)}
