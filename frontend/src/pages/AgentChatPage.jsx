@@ -3862,21 +3862,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   insights
                 </span>
               )}
-            </div>
-
-            {/* Task + Agent ID pills (interactive) */}
-            <div className="shrink-0 flex items-center gap-1">
               {agent.task_id && (
                 <button
                   type="button"
                   onClick={() => setShowTaskCard(true)}
                   title="View task"
-                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-orange-500/15 text-orange-500 dark:text-orange-400 hover:bg-orange-500/25 transition-colors"
+                  className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-orange-500/15 text-orange-500 dark:text-orange-400 hover:bg-orange-500/25 transition-colors"
                 >
                   Task
                 </button>
               )}
-              <div className="relative">
+              <div className="shrink-0 relative">
                 <button
                   type="button"
                   onClick={() => setShowIdPopover(v => !v)}
@@ -3888,9 +3884,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     }).catch(() => {});
                   }}
                   title="Click to expand · double-tap to copy"
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
-                  {agent.id.slice(0, 8)}
+                  id
                 </button>
                 {showIdPopover && (
                   <>
@@ -3898,7 +3894,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       className="fixed inset-0 z-10"
                       onClick={() => setShowIdPopover(false)}
                     />
-                    <div className="absolute z-20 right-0 mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
+                    <div className="absolute z-20 left-0 mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
                       <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                       <button
                         type="button"
