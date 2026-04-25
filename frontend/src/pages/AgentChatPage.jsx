@@ -3862,16 +3862,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
 
           {/* Row 2: Status dot + tags (card-list style) | action buttons (ml-9 aligns with name after back btn) */}
-          {!compactHeader && <div className="flex items-start gap-2 ml-9">
-            <div className="flex flex-wrap items-center gap-1 min-w-0 flex-1">
+          {!compactHeader && <div className="flex items-center gap-2 ml-9">
+            <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar">
               {/* Status indicator (dot only — no text) */}
               <span
-                className={`inline-block w-2 h-2 rounded-full shrink-0 mr-0.5 ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`}
+                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 mr-0.5 ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`}
                 title={agent.status.toLowerCase().replace("_", " ")}
               />
               {agent.project && (
                 <span
-                  className="text-[10px] font-medium px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
+                  className="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 max-w-[140px] truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
                   onClick={() => navigate(`/projects/${encodeURIComponent(agent.project)}`)}
                   title={agent.project}
                 >
@@ -3879,7 +3879,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 </span>
               )}
               {agent.worktree && (
-                <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
+                <span className="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
                   </svg>
@@ -3887,63 +3887,63 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 </span>
               )}
               {hasTmux && (
-                <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
+                <span className="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400">
                   tmux
                 </span>
               )}
               {agent.skip_permissions && (
-                <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
+                <span className="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
                   Auto
                 </span>
               )}
               {agent.model && (
-                <span className="text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
+                <span className="shrink-0 text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
                   {modelDisplayName(agent.model)}
                 </span>
               )}
               {agent.effort && (
-                <span className="text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
+                <span className="shrink-0 text-[10px] text-dim font-medium px-1.5 py-px rounded-full bg-elevated">
                   {agent.effort.charAt(0).toUpperCase() + agent.effort.slice(1)}
                 </span>
               )}
               {agent.branch && (
-                <span className="text-[10px] text-violet-400 font-mono truncate max-w-[120px]">
+                <span className="shrink-0 text-[10px] text-violet-400 font-mono truncate max-w-[120px]">
                   {agent.branch}
                 </span>
               )}
               {agent.insight_status === "failed" && !agent.has_pending_suggestions && (
-                <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
+                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
                   failed
                 </span>
               )}
               {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
-                <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
+                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
                   generating
                 </span>
               )}
               {agent.has_pending_suggestions && (
-                <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
+                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
                   insights
                 </span>
               )}
               {agent.deferred_to && new Date(agent.deferred_to) > new Date() && (
-                <span className="text-[10px] text-indigo-400 flex items-center gap-0.5">
+                <span className="shrink-0 text-[10px] text-indigo-400 flex items-center gap-0.5">
                   <Hourglass className="w-2.5 h-2.5" strokeWidth={2} />
                   {relativeTime(agent.deferred_to)}
                 </span>
               )}
             </div>
 
-            <div className="shrink-0 flex items-center gap-1.5">
+            <div className="shrink-0 flex items-center gap-1">
               {/* "Continued" link — only when a successor exists */}
               {(isStopped || isError) && agent?.successor_id && (
                 <button
                   type="button"
                   onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.successor_id) : navigate(`/agents/${agent.successor_id}`, { state: forwardState(location) })}
-                  className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                  className="px-2 py-px flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                 >
                   Continued
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                   </svg>
                 </button>
@@ -3954,9 +3954,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   type="button"
                   onClick={() => handleResume()}
                   disabled={resuming}
-                  className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-cyan-600 text-white transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500"
+                  className="px-2 py-px flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-600 text-white transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500"
                 >
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M6 4l14 8-14 8V4z" />
                   </svg>
                   {resuming ? "..." : "Resume"}
@@ -3965,9 +3965,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 <button
                   type="button"
                   onClick={() => setShowStopConfirm(true)}
-                  className="px-2.5 h-7 flex items-center gap-1 rounded-lg text-xs font-medium bg-red-600 text-white transition-colors hover:bg-red-500"
+                  className="px-2 py-px flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white transition-colors hover:bg-red-500"
                 >
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
                     <rect x="6" y="6" width="12" height="12" rx="2" />
                   </svg>
                   Stop
@@ -3978,7 +3978,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 type="button"
                 onClick={() => navigate("/monitor")}
                 title={health === null ? "Checking..." : isHealthy ? "System healthy" : "System issue"}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
+                className={`inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[10px] font-medium transition-colors hover:opacity-80 ${healthChipCls}`}
               >
                 <span className={`inline-block w-1.5 h-1.5 rounded-full ${healthDotColor} ${!isHealthy && health !== null ? "animate-pulse" : ""}`} />
                 {healthLabel}
