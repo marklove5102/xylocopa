@@ -1379,9 +1379,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                     ? "bg-cyan-600/60 text-white/80 rounded-br-md"
                     : isUndeliveredTimedOut
                       ? "bg-red-600/40 text-white/70 rounded-br-md"
-                      : isWebUndelivered
-                        ? "bg-cyan-600/70 text-white/80 rounded-br-md"
-                        : "bg-cyan-600 text-white rounded-br-md"
+                      : "bg-cyan-600 text-white rounded-br-md"
               : "bg-surface shadow-card text-body rounded-bl-md"
           } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
@@ -1508,7 +1506,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 </svg>
               </span>
             ) : status === "sent" || isSent ? (
-              <span className="ml-auto text-gray-400 opacity-50" title="Sent">
+              <span className="ml-auto text-green-400" title="Sent">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
