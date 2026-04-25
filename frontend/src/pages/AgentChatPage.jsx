@@ -2462,6 +2462,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [showBrowser, setShowBrowser] = useState(false);
   const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
   const [headerExpanded, setHeaderExpanded] = useState(false);
+  const [showIdPopover, setShowIdPopover] = useState(false);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3863,6 +3864,61 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               )}
             </div>
 
+            {/* Task + Agent ID pills (interactive) */}
+            <div className="shrink-0 flex items-center gap-1">
+              {agent.task_id && (
+                <button
+                  type="button"
+                  onClick={() => setShowTaskCard(true)}
+                  title="View task"
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-orange-500/15 text-orange-500 dark:text-orange-400 hover:bg-orange-500/25 transition-colors"
+                >
+                  Task
+                </button>
+              )}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowIdPopover(v => !v)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(agent.id).then(() => {
+                      showToast("Copied " + agent.id);
+                      setShowIdPopover(false);
+                    }).catch(() => {});
+                  }}
+                  title="Click to expand · double-tap to copy"
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
+                >
+                  {agent.id.slice(0, 8)}
+                </button>
+                {showIdPopover && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setShowIdPopover(false)}
+                    />
+                    <div className="absolute z-20 right-0 mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
+                      <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(agent.id).then(() => {
+                            showToast("Copied " + agent.id);
+                            setShowIdPopover(false);
+                          }).catch(() => {});
+                        }}
+                        className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Icon toolbar — moved down from row 1 */}
             <div className="shrink-0 flex items-center -mr-1">
               <button
@@ -3972,57 +4028,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           </div>}
         </div>
       </div>
-
-      {/* Agent ID + session size + parent link */}
-      {!compactHeader && <div className="shrink-0 bg-surface border-b border-divider px-4 py-1">
-        <div className={`${embedded ? "" : "max-w-2xl"} mx-auto flex items-center gap-2 pl-2.5`}>
-          {agent.parent_id && (
-            <button
-              type="button"
-              onClick={() => embedded && onNavigateAgent ? onNavigateAgent(agent.parent_id) : navigate(`/agents/${agent.parent_id}`, { state: forwardState(location) })}
-              className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
-            >
-              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-              </svg>
-              Continued from previous session
-            </button>
-          )}
-          {agent.task_id && (
-            <span
-              className="shrink-0 text-[10px] text-orange-500 opacity-50 cursor-pointer hover:opacity-80 transition-colors"
-              onClick={() => setShowTaskCard(true)}
-              title="View task"
-            >
-              Working on task
-            </span>
-          )}
-          <span className="ml-auto flex items-center gap-2">
-            <span
-              className="text-[10px] text-faint font-mono opacity-50 cursor-pointer active:text-cyan-400 transition-colors select-none"
-              onDoubleClick={() => {
-                navigator.clipboard.writeText(agent.id).then(() => {
-                  showToast("Copied " + agent.id);
-                }).catch(() => {});
-              }}
-              title="Double-tap to copy"
-            >{agent.id}</span>
-            {agent.session_size_bytes != null && agent.session_size_bytes > 0 && (
-              <span className="flex items-center gap-1" title="Large sessions use more tokens per message. Consider using /compact in the CLI.">
-                <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-                  agent.session_size_bytes < 512000 ? "bg-green-500" :
-                  agent.session_size_bytes < 2097152 ? "bg-amber-500" : "bg-red-500"
-                }`} />
-                <span className="text-[10px] text-dim">
-                  {agent.session_size_bytes < 1024 ? `${agent.session_size_bytes} B` :
-                    agent.session_size_bytes < 1048576 ? `${(agent.session_size_bytes / 1024).toFixed(1)} KB` :
-                    `${(agent.session_size_bytes / 1048576).toFixed(1)} MB`}
-                </span>
-              </span>
-            )}
-          </span>
-        </div>
-      </div>}
 
       {/* Messages */}
       <div
