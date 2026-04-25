@@ -60,6 +60,16 @@ _POSTAMBLE_RE = re.compile(
     re.DOTALL,
 )
 
+# Slash-command JSONL wrapper Claude Code emits when a `/cmd args` prompt
+# is accepted; reduced to "/cmd args" so ContentMatcher's exact strategy
+# matches it against the web row's literal user typing.
+_CMD_WRAPPER_RE = re.compile(
+    r"^<command-message>.*?</command-message>\s*"
+    r"<command-name>(?P<name>.*?)</command-name>"
+    r"(?:\s*<command-args>(?P<args>.*?)</command-args>)?",
+    re.DOTALL,
+)
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -521,23 +531,20 @@ def parse_session_turns_from_lines(
             # Real user message = string content (not tool_result list)
             if isinstance(content, str) and content.strip():
                 stripped = content.strip()
-                # Slash-command wrapper: unwrap to "/<cmd> <args>" so the
-                # turn flows through the normal user-turn path. Without this
-                # the turn was silently dropped, leaving web-originated
-                # /skill messages stuck in the "sent" state because the
-                # sync engine never saw a JSONL match candidate.
-                if stripped.startswith("<command-message>"):
-                    from content_matcher import ContentMatcher
-                    unwrapped = ContentMatcher.unwrap_command_message(stripped)
-                    if not unwrapped:
-                        continue
+                # Slash-command wrapper → canonical "/<cmd> <args>" so the
+                # sync engine's ContentMatcher can match it against the web
+                # row's literal user typing.
+                _m = _CMD_WRAPPER_RE.match(stripped)
+                if _m:
+                    _cmd, _args = _m.group("name").strip(), (_m.group("args") or "").strip()
                     flush_all()
-                    turns.append(("user", unwrapped, None, entry_uuid, None, entry_ts))
+                    turns.append(("user", f"{_cmd} {_args}".rstrip(), None, entry_uuid, None, entry_ts))
                     continue
                 # Skip system-injected messages that aren't real user input
                 if (
                     stripped.startswith("<local-command-caveat>")
                     or stripped.startswith("<command-name>")
+                    or stripped.startswith("<command-message>")
                     or stripped.startswith("<local-command-stdout>")
                     or stripped.startswith("<system-reminder>")
                     or stripped.startswith("<task-notification>")

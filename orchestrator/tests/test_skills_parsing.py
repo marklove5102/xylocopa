@@ -7,7 +7,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import skills as skills_mod
-from content_matcher import ContentMatcher
 from jsonl_parser import format_tool_summary, parse_session_turns_from_lines
 from skills import (
     BUNDLED_SKILLS,
@@ -211,43 +210,6 @@ class TestSkillFolding:
         assert "<<SKILL BODY>>" not in contents
         assert "real user message" in contents
         assert "second real message" in contents
-
-
-# ---------------------------------------------------------------------------
-# ContentMatcher.unwrap_command_message — sole canonicalisation point that
-# maps Claude Code's <command-message> JSONL wrapper back to the literal
-# "/cmd args" string stored on the web row. Once unwrapped (in jsonl_parser),
-# the matcher's existing exact strategy handles the match — no extra
-# strategies needed.
-# ---------------------------------------------------------------------------
-
-class TestUnwrapCommandMessage:
-    def test_with_args(self):
-        wrapped = (
-            "<command-message>paper-finder</command-message>\n"
-            "<command-name>/paper-finder</command-name>\n"
-            "<command-args>corl 2025 generalizable safety?</command-args>"
-        )
-        assert ContentMatcher.unwrap_command_message(wrapped) == (
-            "/paper-finder corl 2025 generalizable safety?"
-        )
-
-    def test_without_args(self):
-        wrapped = (
-            "<command-message>simplify</command-message>\n"
-            "<command-name>/simplify</command-name>"
-        )
-        assert ContentMatcher.unwrap_command_message(wrapped) == "/simplify"
-
-    def test_non_wrapper_returns_none(self):
-        assert ContentMatcher.unwrap_command_message("/just a slash command") is None
-        assert ContentMatcher.unwrap_command_message("hello world") is None
-        assert ContentMatcher.unwrap_command_message("") is None
-
-    def test_command_name_missing_returns_none(self):
-        assert ContentMatcher.unwrap_command_message(
-            "<command-message>orphan</command-message>"
-        ) is None
 
 
 # ---------------------------------------------------------------------------

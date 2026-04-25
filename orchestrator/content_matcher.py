@@ -40,14 +40,6 @@ _RETRY_BODY_RE = re.compile(
     re.DOTALL,
 )
 
-# Slash-command wrapper Claude Code injects when a `/skill args` prompt is
-# accepted. Format:
-#     <command-message>name</command-message>
-#     <command-name>/name</command-name>
-#     <command-args>args…</command-args>
-_CMD_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
-_CMD_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
-
 
 class ContentMatcher:
     """Match JSONL user-turn content against queued web/task DB messages.
@@ -60,13 +52,6 @@ class ContentMatcher:
     4. **task-normalized**   — strip task wrapper + normalise
     5. **task-description-contained** — stripped description found inside candidate
        (handles retry prompts where display_content includes title + retry info)
-
-    Slash-command (``/skill args``) wrappers Claude Code injects as
-    ``<command-message>name</command-message><command-name>/name</command-name>
-    <command-args>args</command-args>`` are reduced to the canonical
-    ``/<name> <args>`` form by ``unwrap_command_message`` *before* the
-    JSONL turn reaches the matcher (in ``jsonl_parser``), so strategy 1
-    handles them — no separate matcher strategy is needed.
     """
 
     # ------------------------------------------------------------------
@@ -163,27 +148,6 @@ class ContentMatcher:
             return m.group(1).strip()
 
         return content
-
-    @staticmethod
-    def unwrap_command_message(content: str) -> str | None:
-        """Reconstruct ``/<cmd> <args>`` from a ``<command-message>`` wrapper.
-
-        Returns the canonical slash-command form, or ``None`` if ``content``
-        is not a wrapper (i.e. doesn't begin with ``<command-message>``).
-        Used by both the matcher and ``jsonl_parser`` so the canonicalisation
-        is defined in exactly one place.
-        """
-        if not content or not content.lstrip().startswith("<command-message>"):
-            return None
-        name_m = _CMD_NAME_RE.search(content)
-        if not name_m:
-            return None
-        cmd = name_m.group(1).strip()
-        if not cmd:
-            return None
-        args_m = _CMD_ARGS_RE.search(content)
-        args = args_m.group(1).strip() if args_m else ""
-        return f"{cmd} {args}".rstrip() if args else cmd
 
     @staticmethod
     def normalize(text: str) -> str:
