@@ -3864,9 +3864,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           {/* Row 2: Status dot + tags (card-list style) | action buttons (ml-9 aligns with name after back btn) */}
           {!compactHeader && <div className="flex items-center gap-2 ml-9">
             <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar">
-              {/* Status indicator (dot only — no text) */}
+              {/* Status indicator (dot only — matches AgentRow card style) */}
               <span
-                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 mr-0.5 ${statusDot}${agent.status === "EXECUTING" ? " animate-pulse" : ""}`}
+                className={`inline-block w-2 h-2 rounded-full shrink-0 mr-0.5 ${
+                  agent.status === "EXECUTING" ? "bg-cyan-400 animate-glow"
+                    : agent.status === "IDLE" ? "bg-cyan-300/50"
+                    : agent.status === "ERROR" ? "bg-red-400"
+                    : "bg-zinc-400/50"
+                }`}
                 title={agent.status.toLowerCase().replace("_", " ")}
               />
               {agent.project && (
