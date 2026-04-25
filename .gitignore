@@ -82,3 +82,4 @@ research-*.txt
 frontend/dev-dist/
 frontend/vite.demo.config.js
 screenshots/
+.tmp/
