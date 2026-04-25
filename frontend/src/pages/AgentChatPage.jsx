@@ -3916,12 +3916,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   insights
                 </span>
               )}
-              {agent.deferred_to && new Date(agent.deferred_to) > new Date() && (
-                <span className="shrink-0 text-[10px] text-indigo-400 flex items-center gap-0.5">
-                  <Hourglass className="w-2.5 h-2.5" strokeWidth={2} />
-                  {relativeTime(agent.deferred_to)}
-                </span>
-              )}
             </div>
 
             <div className="shrink-0 flex items-center gap-1">
