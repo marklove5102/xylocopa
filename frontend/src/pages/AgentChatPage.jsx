@@ -2465,6 +2465,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [showIdPopover, setShowIdPopover] = useState(false);
   const idPressTimerRef = useRef(null);
   const idLongPressFiredRef = useRef(false);
+  const [idDebugLog, setIdDebugLog] = useState([]);
+  const idDebugPush = useCallback((msg) => {
+    setIdDebugLog((prev) => [...prev.slice(-7), `${Math.round(performance.now())}: ${msg}`]);
+  }, []);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3878,33 +3882,34 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 <button
                   type="button"
                   onPointerDown={(e) => {
-                    console.log("[idpill] pointerdown", { type: e.pointerType, t: Math.round(e.timeStamp), id: e.pointerId });
+                    idDebugPush(`down ${e.pointerType}`);
                     idLongPressFiredRef.current = false;
                     idPressTimerRef.current = setTimeout(() => {
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
-                      console.log("[idpill] long-press fired @", Math.round(performance.now()));
+                      idDebugPush("long-fired");
                       navigator.clipboard.writeText(agent.id).then(() => {
+                        idDebugPush("copy ok");
                         showToast("Copied " + agent.id);
-                      }).catch((err) => { console.log("[idpill] clipboard err", err?.message || err); });
+                      }).catch((err) => { idDebugPush("copy err: " + (err?.message || err)); });
                     }, LONG_PRESS_DELAY);
                   }}
                   onPointerUp={(e) => {
-                    console.log("[idpill] pointerup", { type: e.pointerType, t: Math.round(e.timeStamp), timerAlive: !!idPressTimerRef.current, longFired: idLongPressFiredRef.current });
+                    idDebugPush(`up ${e.pointerType} timer=${!!idPressTimerRef.current} long=${idLongPressFiredRef.current}`);
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
                   onPointerCancel={(e) => {
-                    console.log("[idpill] pointercancel", { type: e.pointerType, t: Math.round(e.timeStamp), timerAlive: !!idPressTimerRef.current });
+                    idDebugPush(`cancel ${e.pointerType}`);
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
                   onClick={(e) => {
-                    console.log("[idpill] click", { t: Math.round(e.timeStamp), longFired: idLongPressFiredRef.current });
+                    idDebugPush(`click long=${idLongPressFiredRef.current}`);
                     e.stopPropagation();
                     if (idLongPressFiredRef.current) {
                       idLongPressFiredRef.current = false;
@@ -3944,6 +3949,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   </>
                 )}
               </span>
+              {idDebugLog.length > 0 && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setIdDebugLog([]); }}
+                  className="fixed bottom-32 left-2 right-2 z-50 max-h-40 overflow-y-auto bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded-lg pointer-events-auto"
+                  style={{ touchAction: "auto" }}
+                >
+                  <div className="text-white/60 mb-1">id-pill log (tap to clear):</div>
+                  {idDebugLog.map((line, i) => <div key={i}>{line}</div>)}
+                </div>
+              )}
             </div>
 
             {/* Icon toolbar — moved down from row 1 */}
