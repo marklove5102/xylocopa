@@ -297,9 +297,11 @@ def _seed_predelivery_entry(store, agent_id: str, *, status="queued",
 
 
 @pytest.mark.anyio
-async def test_delete_queued_soft_cancels(
+async def test_delete_queued_tombstones_in_one_step(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
+    """Pressing delete on a queued entry hard-tombstones immediately —
+    no soft-cancel intermediate state surfaced to the client."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="delq11112222", status=AgentStatus.IDLE)
     db.close()
@@ -308,17 +310,22 @@ async def test_delete_queued_soft_cancels(
 
     resp = await client.delete(f"/api/agents/delq11112222/messages/{mid}")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["detail"] == "cancelled"
+    assert resp.json()["detail"] == "deleted"
 
+    # Storage layer still needs cancel→tombstone, but only the tombstone
+    # event is broadcast (no transient `predelivery_updated`).
     assert stub_store.cancel_calls == [("delq11112222", mid)]
-    assert stub_store.tombstone_calls == []
-    assert any(c[0] == "predelivery_updated" for c in ws_recorder)
+    assert stub_store.tombstone_calls == [("delq11112222", mid)]
+    assert any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+    assert not any(c[0] == "predelivery_updated" for c in ws_recorder)
 
 
 @pytest.mark.anyio
 async def test_delete_cancelled_hard_deletes(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
+    """Existing cancelled entries (e.g. created before single-step rollout)
+    still tombstone correctly without re-cancelling."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="delh11112222", status=AgentStatus.IDLE)
     db.close()

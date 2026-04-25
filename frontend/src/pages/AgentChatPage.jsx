@@ -3487,13 +3487,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Cancel a scheduled/pending message. Backend returns 400 if already cancelled,
-  // so this path is only reachable for PENDING/QUEUED/scheduled messages.
+  // Hard-delete a queued/scheduled/cancelled pre-delivery message.
+  // Backend tombstones in one step (no soft-cancel intermediate); the
+  // optimistic filter below matches that — the bubble disappears instead
+  // of flickering through a grey "cancelled" state.
   const handleCancelMessage = async (messageId) => {
     try {
       await cancelMessage(id, messageId);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      showToast("Message cancelled");
+      showToast("Message deleted");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
