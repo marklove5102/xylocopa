@@ -3773,7 +3773,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     type="button"
                     onClick={() => handleResume()}
                     disabled={resuming}
-                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-600 text-white transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500"
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500/25"
                   >
                     <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M6 4l14 8-14 8V4z" />
