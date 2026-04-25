@@ -32,7 +32,7 @@ import {
 import ProjectFileModal from "../components/ProjectFileModal";
 import FloatingTaskCard from "../components/FloatingTaskCard";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
-import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags } from "../lib/formatters";
+import { relativeTime, renderMarkdown, extractFileAttachments, stripAttachmentTags, toLocalInputValue } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
 import { uploadUrl } from "../lib/urls";
 import { forwardState, resolveBack } from "../lib/nav";
@@ -1328,7 +1328,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               {showEditPicker && (
                 <SendLaterPicker
                   title="Schedule At"
-                  onSelect={(iso) => { setEditSchedule(new Date(iso).toISOString().slice(0, 16)); setShowEditPicker(false); }}
+                  onSelect={(iso) => { setEditSchedule(toLocalInputValue(iso)); setShowEditPicker(false); }}
                   onClose={() => setShowEditPicker(false)}
                   onClear={editSchedule ? () => { setEditSchedule(""); setShowEditPicker(false); } : undefined}
                 />

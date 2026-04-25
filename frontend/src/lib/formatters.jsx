@@ -45,6 +45,24 @@ export const DATE_SHORT = { month: "short", day: "numeric", hour: "2-digit", min
 export const TIME_SHORT = { hour: "2-digit", minute: "2-digit" };
 
 /** Turn an ISO / unix timestamp into a relative string like "2m ago". */
+/**
+ * Format a Date / ISO string as the local-time `YYYY-MM-DDTHH:MM` value
+ * expected by `<input type="datetime-local">`. Returns "" for falsy input.
+ *
+ * Why this exists: `.toISOString().slice(0,16)` emits UTC numbers, but
+ * datetime-local treats its value as local time, so the input would render
+ * UTC hours mislabeled as local — a TZ bug for any non-UTC viewer.
+ */
+export function toLocalInputValue(dateInput) {
+  if (!dateInput) return "";
+  let s = dateInput;
+  if (typeof s === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(s)) s += "Z";
+  const d = s instanceof Date ? s : new Date(s);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function relativeTime(dateStr) {
   if (!dateStr) return "";
   const now = serverNow();

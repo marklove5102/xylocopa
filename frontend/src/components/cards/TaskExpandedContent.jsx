@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { updateTaskV2, dispatchTask, cancelTask } from "../../lib/api";
-import { relativeTime, renderMarkdown, DATE_SHORT } from "../../lib/formatters";
+import { relativeTime, renderMarkdown, toLocalInputValue, DATE_SHORT } from "../../lib/formatters";
 import ProjectSelector from "../ProjectSelector";
 import SendLaterPicker from "../SendLaterPicker";
 import { useToast } from "../../contexts/ToastContext";
@@ -23,7 +23,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
   const [editProject, setEditProject, clearProjectDraft] = useDraft(`task-edit:${task.id}:project`, task.project_name || "");
   const [editNotifyAt, setEditNotifyAt, clearNotifyDraft] = useDraft(
     `task-edit:${task.id}:notifyAt`,
-    task.notify_at ? new Date(task.notify_at).toISOString().slice(0, 16) : ""
+    toLocalInputValue(task.notify_at)
   );
 
   const clearAllDrafts = () => {
@@ -65,7 +65,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
       if (editTitle && editTitle !== task.title) updates.title = editTitle;
       if (editDesc !== (task.description || "")) updates.description = editDesc;
       if (editProject && editProject !== task.project_name) updates.project_name = editProject;
-      const origNotify = task.notify_at ? new Date(task.notify_at).toISOString().slice(0, 16) : "";
+      const origNotify = toLocalInputValue(task.notify_at);
       if (editNotifyAt !== origNotify) updates.notify_at = editNotifyAt ? new Date(editNotifyAt).toISOString() : null;
       if (Object.keys(updates).length > 0) {
         await updateTaskV2(task.id, updates);
@@ -124,7 +124,7 @@ export default function TaskExpandedContent({ task, onRefresh, onCollapse }) {
               </button>
               {showRemindPicker && (
                 <SendLaterPicker
-                  onSelect={(iso) => { setEditNotifyAt(new Date(iso).toISOString().slice(0, 16)); setShowRemindPicker(false); }}
+                  onSelect={(iso) => { setEditNotifyAt(toLocalInputValue(iso)); setShowRemindPicker(false); }}
                   onClose={() => setShowRemindPicker(false)}
                   onClear={editNotifyAt ? () => { setEditNotifyAt(""); setShowRemindPicker(false); } : undefined}
                 />

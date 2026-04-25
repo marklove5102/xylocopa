@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { fetchTaskV2, updateTaskV2, dispatchTask, cancelTask } from "../lib/api";
 import { TASK_STATUS_COLORS, TASK_STATUS_TEXT_COLORS, projectBadgeColor, modelDisplayName, POLL_INTERVAL } from "../lib/constants";
-import { relativeTime, renderMarkdown, durationDisplay, elapsedDisplay, DATE_SHORT } from "../lib/formatters";
+import { relativeTime, renderMarkdown, durationDisplay, elapsedDisplay, toLocalInputValue, DATE_SHORT } from "../lib/formatters";
 import { serverNow } from "../lib/serverTime";
 import ProjectSelector from "../components/ProjectSelector";
 import SendLaterPicker from "../components/SendLaterPicker";
@@ -103,7 +103,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     if (editTitle && editTitle !== task.title) updates.title = editTitle;
     if (editDesc !== (task.description || "")) updates.description = editDesc;
     if (editProject && editProject !== task.project_name) updates.project_name = editProject;
-    const origNotify = task.notify_at ? new Date(task.notify_at).toISOString().slice(0, 16) : "";
+    const origNotify = toLocalInputValue(task.notify_at);
     if (editNotifyAt !== origNotify) updates.notify_at = editNotifyAt ? new Date(editNotifyAt).toISOString() : null;
     if (Object.keys(updates).length > 0) {
       await doAction(updateTaskV2, id, updates);
@@ -129,7 +129,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     setEditTitle(task.title);
     setEditDesc(task.description || "");
     setEditProject(task.project_name || "");
-    setEditNotifyAt(task.notify_at ? new Date(task.notify_at).toISOString().slice(0, 16) : "");
+    setEditNotifyAt(toLocalInputValue(task.notify_at));
     setEditMode(true);
   };
 
@@ -277,7 +277,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
                   </button>
                   {showRemindPicker && (
                     <SendLaterPicker
-                      onSelect={(iso) => { setEditNotifyAt(new Date(iso).toISOString().slice(0, 16)); setShowRemindPicker(false); }}
+                      onSelect={(iso) => { setEditNotifyAt(toLocalInputValue(iso)); setShowRemindPicker(false); }}
                       onClose={() => setShowRemindPicker(false)}
                       onClear={editNotifyAt ? () => { setEditNotifyAt(""); setShowRemindPicker(false); } : undefined}
                     />
