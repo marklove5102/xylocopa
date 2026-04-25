@@ -3487,13 +3487,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Hard-delete a queued/scheduled/cancelled pre-delivery message.
-  // Backend tombstones in one step (no soft-cancel intermediate); the
-  // optimistic filter below matches that — the bubble disappears instead
-  // of flickering through a grey "cancelled" state.
+  // Per-message DELETE button: walks the two-stage backend in one user
+  // action (cancel → tombstone) so the bubble disappears immediately
+  // instead of flickering through grey. The ESC handler keeps using
+  // cancelMessage once for its soft-cancel-only semantics (queued
+  // messages should stay visible as cancelled when bailing out a wedged
+  // TUI session).
   const handleCancelMessage = async (messageId) => {
     try {
-      await cancelMessage(id, messageId);
+      const cur = messages.find((m) => m.id === messageId);
+      const status = (cur?.status || "").toLowerCase();
+      // queued/scheduled → soft-cancel first, then tombstone.
+      // already cancelled → just tombstone.
+      if (status === "queued" || status === "scheduled") {
+        await cancelMessage(id, messageId); // soft-cancel
+      }
+      await cancelMessage(id, messageId);   // tombstone
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
       showToast("Message deleted");
     } catch (err) {
