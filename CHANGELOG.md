@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-25
+
+### Fixed
+
+- Telemetry `daily_heartbeat` was reporting `v0.6.1` after the v0.7.0 release because `_load_version()` read the root `package.json` (the `create-xylocopa` npm installer's own version), which the v0.7.0 release commit didn't bump. Version source switched to `frontend/package.json` — release flow already bumps that on every tag, so heartbeat version stays in sync automatically going forward.
+
+### Changed
+
+- Sent-bubble check icon brightened from `gray-400/50` to `gray-100/80`; sent bubble matches delivered colour while the grey check distinguishes the two states.
+
+### Removed
+
+- Stale refactor plan docs and references to them in source comments.
+
 ## [0.7.0] - 2026-04-24
 
 ### Added
