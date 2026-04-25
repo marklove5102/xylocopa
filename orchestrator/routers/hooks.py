@@ -1206,7 +1206,17 @@ async def hook_agent_session_start(request: Request):
             fut = ad._launch_session_futures.get(agent_id)
             if fut and not fut.done():
                 fut.set_result(session_id)
-            ad.wake_sync(agent_id)
+
+            # Same JSONL_FLUSH_DELAY-then-wake pattern as the other hooks:
+            # gives the launch task time to set agent.session_id and call
+            # start_session_sync (~10-20ms typical), then wakes the freshly
+            # registered sync loop so it imports the user's first turn
+            # without waiting for the next external hook.
+            async def _delayed_wake(_aid: str):
+                from config import JSONL_FLUSH_DELAY
+                await asyncio.sleep(JSONL_FLUSH_DELAY)
+                ad.wake_sync(_aid)
+            asyncio.ensure_future(_delayed_wake(agent_id))
 
         return {}
 
