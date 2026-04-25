@@ -2464,7 +2464,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [headerExpanded, setHeaderExpanded] = useState(false);
   const [showIdPopover, setShowIdPopover] = useState(false);
   const idClickTimerRef = useRef(null);
-  const idLastTapRef = useRef(0);
+  const idClickCountRef = useRef(0);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3879,29 +3879,30 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const now = Date.now();
-                    // double-tap → copy full id
-                    if (now - idLastTapRef.current < DOUBLE_TAP_WINDOW) {
-                      idLastTapRef.current = 0;
-                      if (idClickTimerRef.current) {
-                        clearTimeout(idClickTimerRef.current);
-                        idClickTimerRef.current = null;
-                      }
-                      navigator.clipboard.writeText(agent.id).then(() => {
-                        showToast("Copied " + agent.id);
-                        setShowIdPopover(false);
-                      }).catch(() => {});
-                      return;
-                    }
-                    idLastTapRef.current = now;
-                    // single-tap → toggle popover after the dbl-tap window
+                    // Click-count pattern (use-double-click): every click bumps
+                    // the count and (re)arms a single timer; when the timer
+                    // fires it inspects the count to decide single vs double.
+                    // This avoids onDoubleClick (unreliable for finger taps on
+                    // iOS) and the timestamp-compare variant (which loses the
+                    // 2nd tap if the browser swallows it).
+                    idClickCountRef.current += 1;
                     if (idClickTimerRef.current) clearTimeout(idClickTimerRef.current);
                     idClickTimerRef.current = setTimeout(() => {
+                      const count = idClickCountRef.current;
+                      idClickCountRef.current = 0;
                       idClickTimerRef.current = null;
-                      setShowIdPopover(v => !v);
+                      if (count >= 2) {
+                        navigator.clipboard.writeText(agent.id).then(() => {
+                          showToast("Copied " + agent.id);
+                          setShowIdPopover(false);
+                        }).catch(() => {});
+                      } else {
+                        setShowIdPopover(v => !v);
+                      }
                     }, DOUBLE_TAP_WINDOW);
                   }}
                   title="Tap to expand · double-tap to copy"
+                  style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
                   {agent.id.slice(0, 4)}
