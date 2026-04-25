@@ -3784,7 +3784,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   <button
                     type="button"
                     onClick={() => setShowStopConfirm(true)}
-                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white transition-colors hover:bg-red-500"
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-500 dark:text-red-400 transition-colors hover:bg-red-500/25"
                   >
                     <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
                       <rect x="6" y="6" width="12" height="12" rx="2" />
