@@ -3875,19 +3875,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
-                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowIdPopover(v => !v);
                   }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(agent.id).then(() => {
-                      showToast("Copied " + agent.id);
-                      setShowIdPopover(false);
-                    }).catch(() => {});
-                  }}
-                  title="Click to expand · double-tap to copy"
+                  title="Tap to expand"
+                  style={{ touchAction: "manipulation" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
                   {agent.id.slice(0, 4)}
