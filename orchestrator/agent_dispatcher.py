@@ -3935,7 +3935,14 @@ Here are the day's conversations (with timestamps):
         self._sync_contexts[agent_id] = ctx
 
         # Initial full scan (reconcile DB with JSONL, reset pointer)
-        await sync_full_scan(self, ctx, reason="startup")
+        _scan_result = await sync_full_scan(self, ctx, reason="startup")
+        # If startup scan reset the pointer because turns were missing from DB,
+        # import them now instead of waiting for the next external hook to wake
+        # the loop. Without this, a freshly launched agent's first user message
+        # sits in the JSONL until something else fires wake_sync.
+        if isinstance(_scan_result, dict) and _scan_result.get("missing_in_db"):
+            async with sync_lock:
+                await sync_import_new_turns(self, ctx)
 
         # Background loop — handles streaming preview, session rotation, tmux health
         _GETSIZE_ERROR_LIMIT = 5  # ~5min at 60s poll interval
