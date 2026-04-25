@@ -239,8 +239,7 @@ class DisplayEntry(BaseModel):
     # Accept both the legacy uppercase MessageStatus values
     # ("PENDING", "QUEUED", "COMPLETED", ...) and the new lowercase
     # pre-delivery / post-send states ("queued", "scheduled",
-    # "cancelled", "sent", "delivered", "executed"). Phase 3 of the
-    # REFACTOR_PREDELIVERY_PLAN picks a single canonical set.
+    # "cancelled", "sent", "delivered", "executed").
     status: str | None = None
     metadata: dict | None = None
     tool_use_id: str | None = None
@@ -253,9 +252,9 @@ class DisplayEntry(BaseModel):
     queued: bool | None = Field(default=None, alias="_queued")
     replace: bool | None = Field(default=None, alias="_replace")
     deleted: bool | None = Field(default=None, alias="_deleted")
-    # Pre-delivery marker (Phase 1 of REFACTOR_PREDELIVERY_PLAN). Entries
-    # with `_pre: true` have no DB row — they live exclusively in the
-    # display file until a dispatcher promotes them to sent.
+    # Pre-delivery marker. Entries with `_pre: true` have no DB row — they
+    # live exclusively in the display file until a dispatcher promotes them
+    # to sent.
     pre: bool | None = Field(default=None, alias="_pre")
 
     model_config = {"populate_by_name": True}

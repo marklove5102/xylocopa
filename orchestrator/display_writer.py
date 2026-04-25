@@ -47,11 +47,10 @@ DISPLAY_DIR = _resolve("data/display")
 
 # ---- Pre-delivery in-memory index ----
 #
-# Per the Phase 1 plan in docs/REFACTOR_PREDELIVERY_PLAN.md, pre-delivery
-# messages (queued / scheduled / cancelled) are eventually going to live
-# exclusively in the per-agent display file (no DB row). Until a message is
-# promoted to "sent", the authoritative view of it lives here in memory
-# (backed by the JSONL file on disk so it survives restart).
+# Pre-delivery messages (queued / scheduled / cancelled) live exclusively
+# in the per-agent display file (no DB row). Until a message is promoted to
+# "sent", the authoritative view of it lives here in memory (backed by the
+# JSONL file on disk so it survives restart).
 #
 # `_predelivery_index[agent_id][msg_id] = entry_dict` — latest state of each
 # pre-delivery entry. Mutations to the index are guarded by
@@ -399,7 +398,7 @@ def update_after_metadata_change(agent_id: str, message_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Pre-delivery API (Phase 1 of docs/REFACTOR_PREDELIVERY_PLAN.md)
+# Pre-delivery API
 # ---------------------------------------------------------------------------
 #
 # These functions maintain the in-memory `_predelivery_index` and append

@@ -285,10 +285,7 @@ async def emit_message_delivered(agent_id: str, message_id: str,
     })
 
 
-# ---- Pre-delivery event emitters (Phase 1 of REFACTOR_PREDELIVERY_PLAN) ----
-#
-# Phase 1 only defines these; no callers yet. Impl-B/C/D (Phase 2) will
-# wire them into routers/agents.py, agent_dispatcher.py, and sync_engine.py.
+# ---- Pre-delivery event emitters ----
 
 
 async def emit_predelivery_created(agent_id: str, entry: dict):

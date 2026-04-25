@@ -246,10 +246,10 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
 
     # One-shot migration: move legacy pre-delivery DB rows to predelivery zone.
-    # Per docs/REFACTOR_PREDELIVERY_PLAN.md §7, pre-delivery web/task/plan_continue
-    # messages no longer own DB rows. Any legacy PENDING/QUEUED/CANCELLED rows
-    # from before the cutover are reconciled here. Idempotent — after the first
-    # successful run the SELECT returns zero rows.
+    # Pre-delivery web/task/plan_continue messages no longer own DB rows. Any
+    # legacy PENDING/QUEUED/CANCELLED rows from before the cutover are
+    # reconciled here. Idempotent — after the first successful run the SELECT
+    # returns zero rows.
     try:
         _migrate_predelivery_legacy()
     except Exception:
