@@ -61,8 +61,11 @@ See: https://github.com/jyao97/xylocopa#telemetry
 # ---- Version ----
 
 def _load_version() -> str:
+    # Read frontend/package.json — release process bumps this on every tag,
+    # so it's the single source of truth. Root package.json is the npm
+    # installer's own version and can drift independently.
     try:
-        pkg = Path(__file__).resolve().parent.parent / "package.json"
+        pkg = Path(__file__).resolve().parent.parent / "frontend" / "package.json"
         with open(pkg) as f:
             return json.load(f).get("version", "unknown")
     except Exception:
