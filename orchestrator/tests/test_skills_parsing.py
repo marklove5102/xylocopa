@@ -22,13 +22,6 @@ from skills import (
 from slash_commands import COMMANDS
 
 
-class _StubMsg:
-    """Stand-in for ``models.Message`` in matcher tests (avoids DB setup)."""
-
-    def __init__(self, content: str):
-        self.content = content
-
-
 # ---------------------------------------------------------------------------
 # skills.py — pure helpers
 # ---------------------------------------------------------------------------
@@ -221,13 +214,15 @@ class TestSkillFolding:
 
 
 # ---------------------------------------------------------------------------
-# ContentMatcher — slash-command wrapper unwrap (regression: skill messages
-# that web-dispatched as "/cmd args" stayed stuck at "sent" because JSONL
-# echoes them as <command-message> wrappers — matcher must recognise both)
+# ContentMatcher.unwrap_command_message — sole canonicalisation point that
+# maps Claude Code's <command-message> JSONL wrapper back to the literal
+# "/cmd args" string stored on the web row. Once unwrapped (in jsonl_parser),
+# the matcher's existing exact strategy handles the match — no extra
+# strategies needed.
 # ---------------------------------------------------------------------------
 
-class TestContentMatcherCommandUnwrap:
-    def test_unwrap_with_args(self):
+class TestUnwrapCommandMessage:
+    def test_with_args(self):
         wrapped = (
             "<command-message>paper-finder</command-message>\n"
             "<command-name>/paper-finder</command-name>\n"
@@ -237,54 +232,22 @@ class TestContentMatcherCommandUnwrap:
             "/paper-finder corl 2025 generalizable safety?"
         )
 
-    def test_unwrap_without_args(self):
+    def test_without_args(self):
         wrapped = (
             "<command-message>simplify</command-message>\n"
             "<command-name>/simplify</command-name>"
         )
         assert ContentMatcher.unwrap_command_message(wrapped) == "/simplify"
 
-    def test_unwrap_returns_none_for_non_wrapper(self):
+    def test_non_wrapper_returns_none(self):
         assert ContentMatcher.unwrap_command_message("/just a slash command") is None
         assert ContentMatcher.unwrap_command_message("hello world") is None
         assert ContentMatcher.unwrap_command_message("") is None
 
-    def test_unwrap_returns_none_when_command_name_missing(self):
-        wrapped = "<command-message>orphan</command-message>"
-        assert ContentMatcher.unwrap_command_message(wrapped) is None
-
-    def test_match_uses_command_unwrap_strategy(self):
-        wrapped = (
-            "<command-message>paper-finder</command-message>\n"
-            "<command-name>/paper-finder</command-name>\n"
-            "<command-args>corl 2025</command-args>"
-        )
-        candidate = _StubMsg("/paper-finder corl 2025")
-        msg, method = ContentMatcher.match(wrapped, [candidate])
-        assert msg is candidate
-        assert method == "command-unwrap"
-
-    def test_match_command_unwrap_normalized(self):
-        """tmux can collapse whitespace inside args — normalised path covers it."""
-        wrapped = (
-            "<command-message>simplify</command-message>\n"
-            "<command-name>/simplify</command-name>\n"
-            "<command-args>foo  bar</command-args>"
-        )
-        candidate = _StubMsg("/simplify foo bar")
-        msg, method = ContentMatcher.match(wrapped, [candidate])
-        assert msg is candidate
-        assert method == "command-unwrap-normalized"
-
-    def test_match_no_candidate_returns_none(self):
-        wrapped = (
-            "<command-message>paper-finder</command-message>\n"
-            "<command-name>/paper-finder</command-name>\n"
-            "<command-args>corl 2025</command-args>"
-        )
-        msg, method = ContentMatcher.match(wrapped, [_StubMsg("/something-else")])
-        assert msg is None
-        assert method == "none"
+    def test_command_name_missing_returns_none(self):
+        assert ContentMatcher.unwrap_command_message(
+            "<command-message>orphan</command-message>"
+        ) is None
 
 
 # ---------------------------------------------------------------------------

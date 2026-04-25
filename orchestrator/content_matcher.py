@@ -60,8 +60,13 @@ class ContentMatcher:
     4. **task-normalized**   — strip task wrapper + normalise
     5. **task-description-contained** — stripped description found inside candidate
        (handles retry prompts where display_content includes title + retry info)
-    6. **command-unwrap**    — strip ``<command-message>`` wrapper to ``/cmd args``,
-       exact-match against candidate (skill / project-command invocations)
+
+    Slash-command (``/skill args``) wrappers Claude Code injects as
+    ``<command-message>name</command-message><command-name>/name</command-name>
+    <command-args>args</command-args>`` are reduced to the canonical
+    ``/<name> <args>`` form by ``unwrap_command_message`` *before* the
+    JSONL turn reaches the matcher (in ``jsonl_parser``), so strategy 1
+    handles them — no separate matcher strategy is needed.
     """
 
     # ------------------------------------------------------------------
@@ -121,21 +126,6 @@ class ContentMatcher:
             for msg in candidates:
                 if msg.content and norm_stripped in ContentMatcher.normalize(msg.content):
                     return msg, "task-description-contained"
-
-        # 6. Slash-command wrapper unwrap.  The web row stores the literal
-        #    user typing (e.g. "/paper-finder corl 2025?"), but JSONL records
-        #    the same turn as <command-message>name</command-message>...
-        #    <command-name>/name</command-name><command-args>args</command-args>.
-        #    Reconstruct the canonical "/<name> <args>" form and exact-match.
-        unwrapped = ContentMatcher.unwrap_command_message(content)
-        if unwrapped is not None:
-            for msg in candidates:
-                if msg.content and msg.content == unwrapped:
-                    return msg, "command-unwrap"
-            norm_un = ContentMatcher.normalize(unwrapped)
-            for msg in candidates:
-                if msg.content and ContentMatcher.normalize(msg.content) == norm_un:
-                    return msg, "command-unwrap-normalized"
 
         return None, "none"
 
