@@ -1773,6 +1773,12 @@ async def stop_agent(agent_id: str, request: Request,
     if _should_summarize:
         agent.insight_status = "generating"
         db.commit()
+        # Push the insight_status flip so the agent list / chat header switch
+        # to the "generating" indicator without waiting for a poll.
+        asyncio.ensure_future(emit_agent_update(
+            agent.id, agent.status.value, agent.project,
+            insight_status="generating",
+        ))
         thread = threading.Thread(
             target=_run_agent_summary_background,
             args=(agent.id, agent.name, _task_title, agent.project, _project_path),
