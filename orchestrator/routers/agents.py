@@ -1877,6 +1877,13 @@ async def apply_agent_suggestions(agent_id: str, body: _ApplySuggestionsBody,
     # Clear flag
     agent.has_pending_suggestions = False
     db.commit()
+    # Push agent_update so connected chat pages refetch the agent record and
+    # pick up the cleared has_pending_suggestions flag. emit_agent_update
+    # itself doesn't carry the field, but the frontend's WS handler triggers
+    # refreshMessages, which calls fetchAgent for the up-to-date state.
+    asyncio.ensure_future(emit_agent_update(
+        agent.id, agent.status.value, agent.project,
+    ))
 
     # Write accepted insights to PROGRESS.md
     if accepted_contents:
@@ -1925,6 +1932,11 @@ async def discard_agent_suggestions(agent_id: str, db: Session = Depends(get_db)
     ).update({"status": "rejected"})
     agent.has_pending_suggestions = False
     db.commit()
+    # Push agent_update so the chat page refetches and clears the
+    # "insights ready" indicator. Mirrors apply_agent_suggestions.
+    asyncio.ensure_future(emit_agent_update(
+        agent.id, agent.status.value, agent.project,
+    ))
     return {"success": True}
 
 
