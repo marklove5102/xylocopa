@@ -5,6 +5,7 @@ import { relativeTime } from "../../lib/formatters";
 import { updateTaskV2, uploadFile, cancelTask, dispatchTask, regenerateTaskSummary } from "../../lib/api";
 import useVoiceRecorder from "../../hooks/useVoiceRecorder";
 import useDraft from "../../hooks/useDraft";
+import useLongPress from "../../hooks/useLongPress";
 import useProjects from "../../hooks/useProjects";
 import CardShell, { cardPadding } from "./CardShell";
 import TagPicker from "./TagPicker";
@@ -50,7 +51,7 @@ function isImagePath(path) {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(path);
 }
 
-export default memo(function InboxCard({ task, selecting, selected, onToggle, expanded, onExpand, onRefresh, dragHandleProps }) {
+export default memo(function InboxCard({ task, selecting, selected, onToggle, onEnterSelect, expanded, onExpand, onRefresh, dragHandleProps }) {
   const projColor = "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400";
   const isExpanded = expanded && !selecting;
   const { projects } = useProjects();
@@ -337,6 +338,21 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
     else onExpand?.(task.id);
   };
 
+  // Long-press → enter multi-select mode (only when not already selecting,
+  // and only when the press starts on a non-interactive area). Tap on inner
+  // interactive elements should not trigger the parent's click logic either.
+  const isInteractiveTarget = (e) =>
+    !!e?.target?.closest?.("button, input, textarea, [contenteditable='true']");
+  const longPressHandlers = useLongPress((e) => {
+    if (selecting) return;
+    if (isInteractiveTarget(e)) return;
+    if (navigator.vibrate) navigator.vibrate(15);
+    onEnterSelect?.(task.id);
+  }, (e) => {
+    if (isInteractiveTarget(e)) return;
+    handleClick();
+  });
+
   const update = async (field, value) => {
     await updateTaskV2(task.id, { [field]: value });
     onRefresh?.();
@@ -354,10 +370,11 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
           className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${
             expanded && !selecting ? "pt-5 pb-3" : cardPadding(expanded, selecting)
           }`}
-          onClick={handleClick}
+          {...longPressHandlers}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
+          style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
         >
           {dragHandleProps && (
             <button

@@ -3,20 +3,23 @@ import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending } from "../lib/api";
+import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
 import FluentEmoji from "../components/FluentEmoji";
 import PageHeader from "../components/PageHeader";
 import useDraft from "../hooks/useDraft";
+import useLongPress from "../hooks/useLongPress";
 import usePageVisible from "../hooks/usePageVisible";
+import { useToast } from "../contexts/ToastContext";
 
 function DragHandle({ listeners, attributes }) {
   return (
     <button
       type="button"
-      {...listeners}
       {...attributes}
+      {...listeners}
+      data-no-longpress
       className="touch-none p-1 -ml-2 mr-0 rounded text-ghost hover:text-faint transition-colors cursor-grab active:cursor-grabbing self-center"
       onClick={(e) => e.stopPropagation()}
     >
@@ -30,7 +33,10 @@ function DragHandle({ listeners, attributes }) {
 }
 
 function SortableFolderCard(props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.folder.name });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.folder.name,
+    disabled: props.selecting,
+  });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -45,16 +51,35 @@ function SortableFolderCard(props) {
   );
 }
 
-const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd }) {
+const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, hasPendingClaudeMd, selecting = false, selected = false, onToggle, onEnterSelect }) {
   const running = folder.active ? (folder.agent_active || 0) : 0;
+
+  const handleClick = () => {
+    if (selecting) onToggle?.(folder.name);
+    else onClick?.();
+  };
+
+  const isInner = (e) => !!e?.target?.closest?.("[data-no-longpress]");
+  const longPressHandlers = useLongPress((e) => {
+    if (selecting) return;
+    if (isInner(e)) return;
+    if (navigator.vibrate) navigator.vibrate(15);
+    onEnterSelect?.(folder.name);
+  }, (e) => {
+    if (isInner(e)) return;
+    handleClick();
+  });
 
   return (
     <button
       type="button"
-      onClick={onClick}
+      {...longPressHandlers}
+      style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
       data-project-name={folder.name}
       data-claudemd-pending={hasPendingClaudeMd ? "1" : undefined}
-      className="relative w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover"
+      className={`relative w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
+        selecting && selected ? "ring-2 ring-cyan-500/60" : ""
+      }`}
     >
       {hasPendingClaudeMd && (
         <span className="absolute top-2.5 right-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white shadow z-10">
@@ -63,7 +88,22 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
         </span>
       )}
       <div className="flex items-start gap-4 px-5 py-4">
-        {dragHandleProps && <DragHandle {...dragHandleProps} />}
+        {dragHandleProps && !selecting && <DragHandle {...dragHandleProps} />}
+        {selecting && (
+          <div className="shrink-0 flex items-center justify-center w-6 h-6 self-center">
+            <div
+              className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-colors ${
+                selected ? "bg-cyan-500 border-cyan-500" : "border-edge bg-transparent"
+              }`}
+            >
+              {selected && (
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+          </div>
+        )}
         <ProjectRing
           emoji={folder.emoji}
           hasActiveAgents={running > 0}
@@ -152,6 +192,31 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   });
   const [activeDragId, setActiveDragId] = useState(null);
   const [pendingProjects, setPendingProjects] = useState([]);
+
+  // Multi-select state
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [bulkArchiving, setBulkArchiving] = useState(false);
+  const toast = useToast();
+
+  const enterSelectMode = useCallback((preSelectName) => {
+    setSelecting(true);
+    setSelected(preSelectName ? new Set([preSelectName]) : new Set());
+  }, []);
+
+  const exitSelectMode = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, []);
+
+  const toggleOne = useCallback((name) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
 
   // Poll claudemd-pending projects
   useEffect(() => {
@@ -298,6 +363,37 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     { key: "INACTIVE", label: "Inactive" },
   ];
 
+  const allSelected = filtered.length > 0 && selected.size === filtered.length;
+
+  const selectAll = useCallback(() => {
+    setSelected(new Set(filtered.map((f) => f.name)));
+  }, [filtered]);
+
+  const deselectAll = useCallback(() => {
+    setSelected(new Set());
+  }, []);
+
+  const handleBulkArchive = useCallback(async () => {
+    if (selected.size === 0 || bulkArchiving) return;
+    if (!confirm(`Archive ${selected.size} project${selected.size > 1 ? "s" : ""}? They'll be moved to Trash.`)) return;
+    setBulkArchiving(true);
+    let ok = 0, failed = 0;
+    for (const name of selected) {
+      try {
+        await archiveProject(name);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setBulkArchiving(false);
+    if (failed > 0) toast.error(`Archived ${ok}, failed ${failed}`);
+    else toast.success(`Archived ${ok} project${ok !== 1 ? "s" : ""}`);
+    exitSelectMode();
+    load();
+    window.dispatchEvent(new CustomEvent("projects-data-changed"));
+  }, [selected, bulkArchiving, toast, exitSelectMode, load]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     setScanResult(null);
@@ -345,35 +441,57 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} showTimeRing hideMonitor actions={headerButtons}>
-        <div className="flex items-center px-4 pb-3 gap-1.5">
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0">
-            {FILTER_TABS.map((tab) => {
-              const isActive = filter === tab.key;
-              const count = { ALL: folders.length, ACTIVE: activeCount, INACTIVE: inactiveCount }[tab.key];
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setFilter(tab.key)}
-                  className={`shrink-0 min-h-[36px] px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
-                    isActive
-                      ? "bg-cyan-600 text-white"
-                      : "bg-surface text-label hover:bg-input hover:text-body"
-                  }`}
-                >
-                  {tab.label}
-                  {count != null && (
-                    <span className={`ml-1.5 text-xs ${isActive ? "text-cyan-200" : "text-faint"}`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+      <PageHeader title="Projects" theme={theme} onToggleTheme={onToggleTheme} showTimeRing hideMonitor actions={!selecting ? headerButtons : undefined}>
+        {selecting ? (
+          <div className="flex items-center justify-between px-4 pb-2">
+            <button
+              type="button"
+              onClick={allSelected ? deselectAll : selectAll}
+              className="text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+            >
+              {allSelected ? "Deselect All" : "Select All"}
+            </button>
+            <span className="text-sm text-label">
+              {selected.size > 0 ? `${selected.size} selected` : "Select projects"}
+            </span>
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              className="text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+            >
+              Done
+            </button>
           </div>
-          <div className="ml-auto max-w-[7rem]">{sortDropdown}</div>
-        </div>
+        ) : (
+          <div className="flex items-center px-4 pb-3 gap-1.5">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0">
+              {FILTER_TABS.map((tab) => {
+                const isActive = filter === tab.key;
+                const count = { ALL: folders.length, ACTIVE: activeCount, INACTIVE: inactiveCount }[tab.key];
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setFilter(tab.key)}
+                    className={`shrink-0 min-h-[36px] px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
+                      isActive
+                        ? "bg-cyan-600 text-white"
+                        : "bg-surface text-label hover:bg-input hover:text-body"
+                    }`}
+                  >
+                    {tab.label}
+                    {count != null && (
+                      <span className={`ml-1.5 text-xs ${isActive ? "text-cyan-200" : "text-faint"}`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="ml-auto max-w-[7rem]">{sortDropdown}</div>
+          </div>
+        )}
       </PageHeader>
       {/* Scan result toast */}
       {scanResult && (
@@ -431,6 +549,10 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
                   folder={folder}
                   onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
                   hasPendingClaudeMd={pendingProjects.includes(folder.name)}
+                  selecting={selecting}
+                  selected={selected.has(folder.name)}
+                  onToggle={toggleOne}
+                  onEnterSelect={enterSelectMode}
                 />
               ))}
             </div>
@@ -454,6 +576,10 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
               folder={folder}
               onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
               hasPendingClaudeMd={pendingProjects.includes(folder.name)}
+              selecting={selecting}
+              selected={selected.has(folder.name)}
+              onToggle={toggleOne}
+              onEnterSelect={enterSelectMode}
             />
           ))}
         </div>
@@ -470,6 +596,24 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
       )}
       </div>
       </div>
+
+      {selecting && selected.size > 0 && (
+        <div className="fixed bottom-20 left-0 right-0 z-20 px-4 pb-2 animate-bar-slide-up">
+          <div className="max-w-xl mx-auto bg-surface border border-divider rounded-xl shadow-lg p-3 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleBulkArchive}
+              disabled={bulkArchiving}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 disabled:opacity-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              {bulkArchiving ? "Archiving..." : `Archive ${selected.size}`}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Hourglass } from "lucide-react";
 import { relativeTime } from "../lib/formatters";
 import { modelDisplayName } from "../lib/constants";
+import useLongPress from "../hooks/useLongPress";
 import WorktreePill from "./WorktreePill";
 
 /**
@@ -24,6 +25,7 @@ const AgentRow = memo(function AgentRow({
   selecting = false,
   selected = false,
   onToggle,
+  onEnterSelect,
   hideProjectTag = false,
 }) {
   const navigate = useNavigate();
@@ -36,12 +38,26 @@ const AgentRow = memo(function AgentRow({
     }
   };
 
+  // Long-press → enter multi-select; ignore presses on inner interactive
+  // elements (project tag, etc) so they keep their own click handlers.
+  const isInner = (e) => !!e?.target?.closest?.("[data-no-longpress]");
+  const longPressHandlers = useLongPress((e) => {
+    if (selecting) return;
+    if (isInner(e)) return;
+    if (navigator.vibrate) navigator.vibrate(15);
+    onEnterSelect?.(agent.id);
+  }, (e) => {
+    if (isInner(e)) return;
+    handleClick();
+  });
+
   return (
     <button
       type="button"
       data-agent-id={agent.id}
       data-unread={agent.unread_count > 0 ? "1" : undefined}
-      onClick={handleClick}
+      {...longPressHandlers}
+      style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
       className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
         selecting && selected ? "ring-1 ring-cyan-500" : ""
       }`}
@@ -98,6 +114,7 @@ const AgentRow = memo(function AgentRow({
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             {!hideProjectTag && agent.project && (
               <span
+                data-no-longpress
                 className="text-[10px] font-medium px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 truncate cursor-pointer hover:bg-cyan-500/25 transition-colors"
                 onClick={(e) => { e.stopPropagation(); navigate(`/projects/${encodeURIComponent(agent.project)}`); }}
                 title={agent.project}

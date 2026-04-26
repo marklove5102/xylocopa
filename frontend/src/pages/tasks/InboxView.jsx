@@ -31,7 +31,7 @@ function SortableTaskCard(props) {
   );
 }
 
-export default function InboxView({ tasks, loading, selecting, selected, onToggle, expandedTaskId, onExpandTask, onRefresh, sortMode = "custom" }) {
+export default function InboxView({ tasks, loading, selecting, selected, onToggle, onEnterSelect, expandedTaskId, onExpandTask, onRefresh, sortMode = "custom" }) {
   // Optimistic order: local override until next props update (custom sort only)
   const [optimisticIds, setOptimisticIds] = useState(null);
   const prevTasksRef = useRef(tasks);
@@ -173,6 +173,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
               selecting={selecting}
               selected={selected.has(task.id)}
               onToggle={onToggle}
+              onEnterSelect={onEnterSelect}
               expanded={expandedTaskId === task.id}
               onExpand={onExpandTask}
               onRefresh={onRefresh}
@@ -195,6 +196,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
               selecting={selecting}
               selected={selected.has(task.id)}
               onToggle={onToggle}
+              onEnterSelect={onEnterSelect}
               expanded={expandedTaskId === task.id}
               onExpand={onExpandTask}
               onRefresh={onRefresh}
@@ -226,6 +228,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
                 selecting={selecting}
                 selected={selected.has(task.id)}
                 onToggle={onToggle}
+                onEnterSelect={onEnterSelect}
                 expanded={!activeDragId && expandedTaskId === task.id}
                 onExpand={onExpandTask}
                 onRefresh={onRefresh}
