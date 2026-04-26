@@ -733,7 +733,14 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             len(new_turns), ctx.agent_id,
             [r for r, *_ in new_turns],
         )
-        if any(r != "user" for r, *_ in new_turns):
+        # Emit on any actual insert. The original guard "skip if all turns
+        # are user role" was meant to suppress redundant emits for web-sent
+        # turns (already announced via emit_message_delivered). Promoted
+        # rows don't increment _actually_inserted, so this signal correctly
+        # excludes them while still firing for CLI-typed user input AND
+        # post-compact synthetic user-role summary turns (which never match
+        # a web row and would otherwise drop silently).
+        if _actually_inserted > 0:
             ad._emit(emit_new_message(
                 agent.id, "sync", ctx.agent_name, ctx.agent_project,
             ))
