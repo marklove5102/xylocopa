@@ -70,6 +70,7 @@ import {
 } from "../lib/constants";
 import { DATE_SHORT, TIME_SHORT } from "../lib/formatters";
 import VoiceRecorder from "../components/VoiceRecorder";
+import WorktreePill from "../components/WorktreePill";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing, touchAgentInteraction } from "../hooks/useWebSocket";
@@ -3862,14 +3863,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   {agent.project}
                 </span>
               )}
-              {agent.worktree && (
-                <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-                  </svg>
-                  Worktree
-                </span>
-              )}
+              {agent.worktree && <WorktreePill name={agent.worktree} padY="py-0.5" />}
               {agent.skip_permissions && (
                 <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
                   Auto

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Hourglass } from "lucide-react";
 import { relativeTime } from "../lib/formatters";
 import { modelDisplayName } from "../lib/constants";
+import WorktreePill from "./WorktreePill";
 
 /**
  * Shared Chats-style agent row, used on both AgentsPage and inside
@@ -102,14 +103,7 @@ const AgentRow = memo(function AgentRow({
                 title={agent.project}
               >{agent.project}</span>
             )}
-            {agent.worktree && (
-              <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-                </svg>
-                Worktree
-              </span>
-            )}
+            {agent.worktree && <WorktreePill name={agent.worktree} />}
             {agent.skip_permissions && (
               <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
                 Auto

@@ -10,6 +10,7 @@ import CardShell, { cardPadding } from "./CardShell";
 import TagPicker from "./TagPicker";
 import ImageLightbox from "../ImageLightbox";
 import SendLaterPicker from "../SendLaterPicker";
+import WorktreePill from "../WorktreePill";
 import { uploadUrl } from "../../lib/urls";
 
 const MODEL_PICKER = MODEL_OPTIONS.map(m => ({ value: m.value, label: m.label }));
@@ -438,12 +439,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, ex
                     {task.project_name || "Project"}
                   </span>
                   {task.use_worktree !== false && (
-                    <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 flex items-center gap-0.5">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zm0 0v3a3 3 0 01-3 3H9m-3 0a3 3 0 100 6 3 3 0 000-6z" />
-                      </svg>
-                      {task.worktree_name || "Worktree"}
-                    </span>
+                    <WorktreePill name={task.worktree_name} />
                   )}
                   {task.skip_permissions && (
                     <span className="text-[10px] font-medium px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
