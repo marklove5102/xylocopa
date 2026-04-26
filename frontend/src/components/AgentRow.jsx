@@ -58,8 +58,8 @@ const AgentRow = memo(function AgentRow({
       data-unread={agent.unread_count > 0 ? "1" : undefined}
       {...longPressHandlers}
       style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
-      className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
-        selecting && selected ? "ring-1 ring-cyan-500" : ""
+      className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-300 active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
+        selecting && selected ? "ring-2 ring-cyan-500/50 brightness-[0.88]" : ""
       }`}
     >
       <div className="flex items-start gap-3 px-5 py-[18px]">
@@ -70,24 +70,6 @@ const AgentRow = memo(function AgentRow({
             : agent.status === "ERROR" ? "bg-red-400"
             : "bg-zinc-400/50"
         }`} />
-        {/* Selection checkbox */}
-        {selecting && (
-          <div className="shrink-0 flex items-center justify-center w-6 h-6 mt-0.5">
-            <div
-              className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-colors ${
-                selected
-                  ? "bg-cyan-500 border-cyan-500"
-                  : "border-edge bg-transparent"
-              }`}
-            >
-              {selected && (
-                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              )}
-            </div>
-          </div>
-        )}
 
         <div className="min-w-0 flex-1">
           {/* Title + time */}

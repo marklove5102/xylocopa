@@ -77,8 +77,8 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
       style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
       data-project-name={folder.name}
       data-claudemd-pending={hasPendingClaudeMd ? "1" : undefined}
-      className={`relative w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
-        selecting && selected ? "ring-2 ring-cyan-500/60" : ""
+      className={`relative w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-300 active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
+        selecting && selected ? "ring-2 ring-cyan-500/50 brightness-[0.88]" : ""
       }`}
     >
       {hasPendingClaudeMd && (
@@ -89,21 +89,6 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
       )}
       <div className="flex items-start gap-4 px-5 py-4">
         {dragHandleProps && !selecting && <DragHandle {...dragHandleProps} />}
-        {selecting && (
-          <div className="shrink-0 flex items-center justify-center w-6 h-6 self-center">
-            <div
-              className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-colors ${
-                selected ? "bg-cyan-500 border-cyan-500" : "border-edge bg-transparent"
-              }`}
-            >
-              {selected && (
-                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              )}
-            </div>
-          </div>
-        )}
         <ProjectRing
           emoji={folder.emoji}
           hasActiveAgents={running > 0}
