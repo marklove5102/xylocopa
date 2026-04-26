@@ -3973,6 +3973,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     onPointerEnter={idCancelHoverClose}
                     onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
                   >
+                    <span className="text-[11px] text-dim">xylo id:</span>
                     <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                     <button
                       type="button"
