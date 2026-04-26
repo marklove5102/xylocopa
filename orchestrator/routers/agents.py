@@ -2652,6 +2652,12 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Agent not found")
     agent.unread_count = 0
     db.commit()
+    # Push the unread reset so the agent list badge clears across other
+    # connected clients without waiting for the 5s poll. emit_agent_update
+    # already attaches the fresh unread_count from the DB to the payload.
+    asyncio.ensure_future(emit_agent_update(
+        agent.id, agent.status.value, agent.project,
+    ))
     return {"detail": "ok"}
 
 
