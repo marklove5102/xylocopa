@@ -2469,6 +2469,20 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const idPressTimerRef = useRef(null);
   const idLongPressFiredRef = useRef(false);
   const idClickTimerRef = useRef(null);
+  const idHoverCloseTimerRef = useRef(null);
+  const idCancelHoverClose = useCallback(() => {
+    if (idHoverCloseTimerRef.current) {
+      clearTimeout(idHoverCloseTimerRef.current);
+      idHoverCloseTimerRef.current = null;
+    }
+  }, []);
+  const idScheduleHoverClose = useCallback(() => {
+    idCancelHoverClose();
+    idHoverCloseTimerRef.current = setTimeout(() => {
+      idHoverCloseTimerRef.current = null;
+      setShowIdPopover(false);
+    }, 150);
+  }, [idCancelHoverClose]);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3884,13 +3898,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   type="button"
                   onPointerEnter={(e) => {
                     if (e.pointerType !== "mouse") return;
+                    idCancelHoverClose();
                     const rect = idPillRef.current?.getBoundingClientRect();
-                    if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
+                    if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left });
                     setShowIdPopover(true);
                   }}
                   onPointerLeave={(e) => {
                     if (e.pointerType !== "mouse") return;
-                    setShowIdPopover(false);
+                    idScheduleHoverClose();
                   }}
                   onPointerDown={(e) => {
                     if (e.pointerType === "mouse") return;
@@ -3945,7 +3960,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     />
                     <div
                       className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
-                      style={{ top: idPopoverPos.top, left: idPopoverPos.left }}
+                      style={{ top: idPopoverPos.top, left: idPopoverPos.left, paddingTop: "0.625rem", marginTop: "-0.25rem" }}
+                      onPointerEnter={idCancelHoverClose}
+                      onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
                     >
                       <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                       <button
