@@ -2465,10 +2465,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [showIdPopover, setShowIdPopover] = useState(false);
   const idPressTimerRef = useRef(null);
   const idLongPressFiredRef = useRef(false);
-  const [idDebugLog, setIdDebugLog] = useState([]);
-  const idDebugPush = useCallback((msg) => {
-    setIdDebugLog((prev) => [...prev.slice(-7), `${Math.round(performance.now())}: ${msg}`]);
-  }, []);
+  const idClickTimerRef = useRef(null);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3881,44 +3878,56 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               <span className="shrink-0 relative inline-flex items-center">
                 <button
                   type="button"
-                  onPointerDown={(e) => {
-                    idDebugPush(`down ${e.pointerType}`);
+                  onPointerDown={() => {
                     idLongPressFiredRef.current = false;
                     idPressTimerRef.current = setTimeout(() => {
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
-                      idDebugPush("long-fired");
                       navigator.clipboard.writeText(agent.id).then(() => {
-                        idDebugPush("copy ok");
                         showToast("Copied " + agent.id);
-                      }).catch((err) => { idDebugPush("copy err: " + (err?.message || err)); });
+                      }).catch(() => {});
                     }, LONG_PRESS_DELAY);
                   }}
-                  onPointerUp={(e) => {
-                    idDebugPush(`up ${e.pointerType} timer=${!!idPressTimerRef.current} long=${idLongPressFiredRef.current}`);
+                  onPointerUp={() => {
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
-                  onPointerCancel={(e) => {
-                    idDebugPush(`cancel ${e.pointerType}`);
+                  onPointerCancel={() => {
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
                     }
                   }}
                   onClick={(e) => {
-                    idDebugPush(`click long=${idLongPressFiredRef.current}`);
                     e.stopPropagation();
                     if (idLongPressFiredRef.current) {
                       idLongPressFiredRef.current = false;
                       return;
                     }
-                    setShowIdPopover(v => !v);
+                    // Defer popover toggle so a double-click can preempt it
+                    if (idClickTimerRef.current) {
+                      clearTimeout(idClickTimerRef.current);
+                    }
+                    idClickTimerRef.current = setTimeout(() => {
+                      idClickTimerRef.current = null;
+                      setShowIdPopover(v => !v);
+                    }, DOUBLE_TAP_WINDOW);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (idClickTimerRef.current) {
+                      clearTimeout(idClickTimerRef.current);
+                      idClickTimerRef.current = null;
+                    }
+                    setShowIdPopover(false);
+                    navigator.clipboard.writeText(agent.id).then(() => {
+                      showToast("Copied " + agent.id);
+                    }).catch(() => {});
                   }}
                   onContextMenu={(e) => e.preventDefault()}
-                  title="Tap to expand · long-press to copy"
+                  title="Click: show id · Double-click / long-press: copy"
                   style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
@@ -3949,16 +3958,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   </>
                 )}
               </span>
-              {idDebugLog.length > 0 && (
-                <div
-                  onClick={(e) => { e.stopPropagation(); setIdDebugLog([]); }}
-                  className="fixed bottom-32 left-2 right-2 z-50 max-h-40 overflow-y-auto bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded-lg pointer-events-auto"
-                  style={{ touchAction: "auto" }}
-                >
-                  <div className="text-white/60 mb-1">id-pill log (tap to clear):</div>
-                  {idDebugLog.map((line, i) => <div key={i}>{line}</div>)}
-                </div>
-              )}
             </div>
 
             {/* Icon toolbar — moved down from row 1 */}
