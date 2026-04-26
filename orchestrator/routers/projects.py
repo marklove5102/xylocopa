@@ -717,13 +717,35 @@ Task: {task_title}{reason_line}
 def _clear_generating_marker(task_id: str):
     """Clear :::generating::: so the UI shows the 'Generate summary' button."""
     own_db = SessionLocal()
+    _emit_args = None
     try:
         task = own_db.get(Task, task_id)
         if task and task.agent_summary == ":::generating:::":
             task.agent_summary = None
             own_db.commit()
+            _emit_args = (
+                task.id,
+                task.status.value if task.status else "INBOX",
+                task.project_name or "",
+                task.title or "",
+            )
     finally:
         own_db.close()
+
+    # Push the cleared marker so TaskDetailPage drops the spinner and
+    # shows "Generate summary" without waiting for a poll. Background-
+    # thread caller, so dispatch via the stored main event loop.
+    if _emit_args is not None:
+        from websocket import emit_task_update
+        loop = _main_event_loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                emit_task_update(
+                    _emit_args[0], _emit_args[1], _emit_args[2],
+                    title=_emit_args[3],
+                ),
+                loop,
+            )
 
 
 # ---- Project directory browser (read-only) ----
