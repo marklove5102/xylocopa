@@ -3874,21 +3874,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   {agent.branch}
                 </span>
               )}
-              {agent.insight_status === "failed" && !agent.has_pending_suggestions && (
-                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500 dark:text-red-400">
-                  failed
-                </span>
-              )}
-              {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
-                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
-                  generating
-                </span>
-              )}
-              {agent.has_pending_suggestions && (
-                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-                  insights
-                </span>
-              )}
               {agent.task_id && (
                 <button
                   type="button"
