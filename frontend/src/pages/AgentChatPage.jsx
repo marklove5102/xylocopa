@@ -3946,26 +3946,34 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 {showIdPopover && idPopoverPos && createPortal(
                   <div
                     ref={idPopoverRef}
-                    className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
-                    style={{ top: idPopoverPos.top, left: idPopoverPos.left, transform: "translateX(-50%)" }}
+                    className="fixed z-[61]"
+                    style={{ top: idPopoverPos.top, left: idPopoverPos.left, transform: "translateX(-50%)", paddingTop: 6 }}
                     onPointerEnter={idCancelHoverClose}
                     onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
                   >
-                    <span className="text-[11px] text-dim">xylo id:</span>
-                    <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigator.clipboard.writeText(agent.id).then(() => {
-                          showToast("Copied " + agent.id);
-                          setShowIdPopover(false);
-                        }).catch(() => {});
-                      }}
-                      className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
-                    >
-                      Copy
-                    </button>
+                    <div className="relative">
+                      <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-xl shadow-black/40 flex items-center gap-2 whitespace-nowrap">
+                        <span className="text-[11px] text-dim">xylo id:</span>
+                        <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(agent.id).then(() => {
+                              showToast("Copied " + agent.id);
+                              setShowIdPopover(false);
+                            }).catch(() => {});
+                          }}
+                          className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <div
+                        className="absolute left-1/2 w-2 h-2 bg-surface border-l border-t border-divider"
+                        style={{ top: -4, transform: "translateX(-50%) rotate(45deg)" }}
+                      />
+                    </div>
                   </div>,
                   document.body
                 )}
