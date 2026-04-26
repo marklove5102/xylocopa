@@ -1,11 +1,36 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 
-export default function WorktreePill({ name, padY = "py-px" }) {
+const LONG_PRESS_DELAY = 500;
+
+export default function WorktreePill({ name, padY = "py-px", onCopy }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const pillRef = useRef(null);
   const popRef = useRef(null);
+  const pressTimerRef = useRef(null);
+  const longPressFiredRef = useRef(false);
+  const hoverCloseTimerRef = useRef(null);
+
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current) {
+      clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  }, []);
+  const scheduleHoverClose = useCallback(() => {
+    cancelHoverClose();
+    hoverCloseTimerRef.current = setTimeout(() => {
+      hoverCloseTimerRef.current = null;
+      setOpen(false);
+    }, 150);
+  }, [cancelHoverClose]);
+
+  const openAt = useCallback(() => {
+    const rect = pillRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom, left: rect.left + rect.width / 2 });
+    setOpen(true);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -18,14 +43,12 @@ export default function WorktreePill({ name, padY = "py-px" }) {
     return () => document.removeEventListener("pointerdown", handler);
   }, [open]);
 
-  const toggle = (e) => {
-    e.stopPropagation();
-    if (!open) {
-      const rect = pillRef.current?.getBoundingClientRect();
-      if (rect) setPos({ top: rect.bottom, left: rect.left + rect.width / 2 });
-    }
-    setOpen((v) => !v);
-  };
+  const doCopy = useCallback(() => {
+    if (!name) return;
+    navigator.clipboard.writeText(name).catch(() => {});
+    setOpen(false);
+    onCopy?.(name);
+  }, [name, onCopy]);
 
   const display = name || "(unnamed)";
 
@@ -35,8 +58,55 @@ export default function WorktreePill({ name, padY = "py-px" }) {
         ref={pillRef}
         role="button"
         tabIndex={0}
-        onClick={toggle}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); } }}
+        onPointerEnter={(e) => {
+          if (e.pointerType !== "mouse") return;
+          cancelHoverClose();
+          openAt();
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== "mouse") return;
+          scheduleHoverClose();
+        }}
+        onPointerDown={(e) => {
+          if (e.pointerType === "mouse") return;
+          longPressFiredRef.current = false;
+          pressTimerRef.current = setTimeout(() => {
+            pressTimerRef.current = null;
+            longPressFiredRef.current = true;
+            openAt();
+          }, LONG_PRESS_DELAY);
+        }}
+        onPointerUp={(e) => {
+          if (e.pointerType === "mouse") return;
+          if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current);
+            pressTimerRef.current = null;
+          }
+        }}
+        onPointerCancel={() => {
+          if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current);
+            pressTimerRef.current = null;
+          }
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (longPressFiredRef.current) {
+            longPressFiredRef.current = false;
+          }
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          doCopy();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openAt();
+          }
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
         className={`text-[10px] font-medium px-1.5 ${padY} rounded-full bg-purple-500/15 text-purple-500 dark:text-purple-400 inline-flex items-center cursor-pointer hover:bg-purple-500/25 transition-colors`}
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -46,24 +116,36 @@ export default function WorktreePill({ name, padY = "py-px" }) {
       {open && pos && createPortal(
         <div
           ref={popRef}
-          className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
-          style={{ top: pos.top, left: pos.left, transform: "translateX(-50%)" }}
+          className="fixed z-[61]"
+          style={{ top: pos.top, left: pos.left, transform: "translateX(-50%)", paddingTop: 6 }}
+          onPointerEnter={cancelHoverClose}
+          onPointerLeave={(e) => { if (e.pointerType === "mouse") scheduleHoverClose(); }}
         >
-          <span className="text-[11px] text-dim">worktree:</span>
-          <span className="text-[11px] font-mono text-body select-all">{display}</span>
-          {name && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(name).catch(() => {});
-                setOpen(false);
-              }}
-              className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
-            >
-              Copy
-            </button>
-          )}
+          <div className="relative">
+            <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
+              <span className="text-[11px] text-dim">worktree:</span>
+              <span className="text-[11px] font-mono text-body select-all">{display}</span>
+              {name && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    doCopy();
+                  }}
+                  className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
+                >
+                  Copy
+                </button>
+              )}
+            </div>
+            {/* Arrow — rendered after content so it paints on top, hiding the
+                content's border at the seam. Borders show only on the upper
+                edges (which after 45deg rotation become the visible triangle). */}
+            <div
+              className="absolute left-1/2 w-2 h-2 bg-surface border-l border-t border-divider"
+              style={{ top: -4, transform: "translateX(-50%) rotate(45deg)" }}
+            />
+          </div>
         </div>,
         document.body
       )}
