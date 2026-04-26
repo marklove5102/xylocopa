@@ -3913,7 +3913,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     if (e.pointerType !== "mouse") return;
                     idCancelHoverClose();
                     const rect = idPillRef.current?.getBoundingClientRect();
-                    if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left });
+                    if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left + rect.width / 2 });
                     setShowIdPopover(true);
                   }}
                   onPointerLeave={(e) => {
@@ -3927,7 +3927,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
                       const rect = idPillRef.current?.getBoundingClientRect();
-                      if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left });
+                      if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left + rect.width / 2 });
                       setShowIdPopover(true);
                     }, LONG_PRESS_DELAY);
                   }}
@@ -3959,7 +3959,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     }).catch(() => {});
                   }}
                   onContextMenu={(e) => e.preventDefault()}
-                  title="Hover / long-press: show id · Double-click: copy"
                   style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
@@ -3969,7 +3968,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   <div
                     ref={idPopoverRef}
                     className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
-                    style={{ top: idPopoverPos.top, left: idPopoverPos.left }}
+                    style={{ top: idPopoverPos.top, left: idPopoverPos.left, transform: "translateX(-50%)" }}
                     onPointerEnter={idCancelHoverClose}
                     onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
                   >
