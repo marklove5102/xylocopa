@@ -2466,6 +2466,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [showIdPopover, setShowIdPopover] = useState(false);
   const [idPopoverPos, setIdPopoverPos] = useState(null);
   const idPillRef = useRef(null);
+  const idPopoverRef = useRef(null);
   const idPressTimerRef = useRef(null);
   const idLongPressFiredRef = useRef(false);
   const idClickTimerRef = useRef(null);
@@ -2483,6 +2484,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setShowIdPopover(false);
     }, 150);
   }, [idCancelHoverClose]);
+  // Close on outside pointerdown — replaces the full-screen overlay that was
+  // intercepting hover and click events on the pill itself.
+  useEffect(() => {
+    if (!showIdPopover) return;
+    const handleDocDown = (e) => {
+      if (idPillRef.current?.contains(e.target)) return;
+      if (idPopoverRef.current?.contains(e.target)) return;
+      setShowIdPopover(false);
+    };
+    document.addEventListener("pointerdown", handleDocDown);
+    return () => document.removeEventListener("pointerdown", handleDocDown);
+  }, [showIdPopover]);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
@@ -3914,7 +3927,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
                       const rect = idPillRef.current?.getBoundingClientRect();
-                      if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
+                      if (rect) setIdPopoverPos({ top: rect.bottom, left: rect.left });
                       setShowIdPopover(true);
                     }, LONG_PRESS_DELAY);
                   }}
@@ -3953,33 +3966,28 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   {agent.id.slice(0, 4)}
                 </button>
                 {showIdPopover && idPopoverPos && createPortal(
-                  <>
-                    <div
-                      className="fixed inset-0 z-[60]"
-                      onClick={() => setShowIdPopover(false)}
-                    />
-                    <div
-                      className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
-                      style={{ top: idPopoverPos.top, left: idPopoverPos.left, paddingTop: "0.625rem", marginTop: "-0.25rem" }}
-                      onPointerEnter={idCancelHoverClose}
-                      onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
+                  <div
+                    ref={idPopoverRef}
+                    className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
+                    style={{ top: idPopoverPos.top, left: idPopoverPos.left }}
+                    onPointerEnter={idCancelHoverClose}
+                    onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
+                  >
+                    <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(agent.id).then(() => {
+                          showToast("Copied " + agent.id);
+                          setShowIdPopover(false);
+                        }).catch(() => {});
+                      }}
+                      className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
                     >
-                      <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigator.clipboard.writeText(agent.id).then(() => {
-                            showToast("Copied " + agent.id);
-                            setShowIdPopover(false);
-                          }).catch(() => {});
-                        }}
-                        className="text-[10px] text-cyan-500 dark:text-cyan-400 hover:underline"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </>,
+                      Copy
+                    </button>
+                  </div>,
                   document.body
                 )}
               </span>
