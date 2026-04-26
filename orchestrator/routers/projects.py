@@ -1668,7 +1668,10 @@ async def list_project_agents(
     db: Session = Depends(get_db),
 ):
     """List agents for a project (works for active, archived, and unregistered projects)."""
-    q = db.query(Agent).filter(Agent.project == name)
+    q = db.query(Agent).filter(
+        Agent.project == name,
+        Agent.is_subagent == False,  # noqa: E712
+    )
     if status:
         q = q.filter(Agent.status == status)
     rows = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc()).limit(limit).all()

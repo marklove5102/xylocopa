@@ -352,6 +352,15 @@ def init_db():
                 "ALTER TABLE agents ADD COLUMN is_subagent BOOLEAN NOT NULL DEFAULT 0"
             ))
             conn.commit()
+        # Backfill: any row with parent_id set is by definition a subagent.
+        # The original migration above only sets the default; legacy rows
+        # created before the column existed would otherwise leak into the
+        # top-level agent list because list endpoints filter on is_subagent.
+        conn.execute(text(
+            "UPDATE agents SET is_subagent = 1 "
+            "WHERE parent_id IS NOT NULL AND is_subagent = 0"
+        ))
+        conn.commit()
         if "claude_agent_id" not in agent_cols:
             conn.execute(text(
                 "ALTER TABLE agents ADD COLUMN claude_agent_id VARCHAR(30)"
