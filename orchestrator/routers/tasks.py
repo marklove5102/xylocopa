@@ -789,6 +789,12 @@ async def dispatch_task_v2(task_id: str, request: Request, db: Session = Depends
         task.id, task.status.value, task.project_name or "",
         title=task.title, agent_id=agent_id,
     ))
+    # Push the new agent so the agent list / chat header pick it up
+    # without waiting for a 5s poll. Mirrors _dispatch_pending_tasks
+    # in agent_dispatcher.py which emits both events on its dispatch path.
+    asyncio.ensure_future(emit_agent_update(
+        agent_id, AgentStatus.STARTING.value, task.project_name or "",
+    ))
     return TaskOut.model_validate(task)
 
 
