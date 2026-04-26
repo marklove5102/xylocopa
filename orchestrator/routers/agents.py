@@ -1108,7 +1108,7 @@ async def _launch_tmux_background(
             # set EXECUTING via _start_generating, don't overwrite it.
             if agent.status != AgentStatus.EXECUTING:
                 agent.status = AgentStatus.IDLE
-            # Under the Phase 2 predelivery model, the initial task message
+            # Under the Phase 2 pre_sent model, the initial task message
             # is either already COMPLETED (task launch path writes that
             # directly) or lives as a _pre entry in the display file
             # (web-originated). No PENDING DB rows exist at this point —
@@ -2385,7 +2385,7 @@ async def get_agent_display(
                 agent_id[:8], entry.id,
             )
 
-    # Initial load: return the authoritative pre-delivery snapshot from
+    # Initial load: return the authoritative pre-sent snapshot from
     # the in-memory index. This is the Phase 1 fix for the "queued bubble
     # disappears on poll" regression — file-scanned entries that don't
     # have _pre markers (legacy _queued lines from Phase 0 writers) are
@@ -2396,21 +2396,21 @@ async def get_agent_display(
     # queued_authoritative=False so the frontend leaves its queued state
     # untouched.
     if is_initial:
-        from display_writer import predelivery_list
+        from display_writer import pre_sent_list
         merged_queued: dict[str, DisplayEntry] = {}
         # Seed with legacy file entries (backwards compat during Phase 1).
         for entry in queued_from_file:
             merged_queued[entry.id] = entry
         # Overlay authoritative in-memory _pre entries — these win on
         # id collision.
-        for raw_entry in predelivery_list(agent_id):
+        for raw_entry in pre_sent_list(agent_id):
             try:
                 merged_queued[raw_entry["id"]] = DisplayEntry.model_validate(
                     raw_entry
                 )
             except Exception as e:
                 logger.warning(
-                    "get_agent_display: failed to validate predelivery "
+                    "get_agent_display: failed to validate pre_sent "
                     "entry id=%s: %s", raw_entry.get("id"), e,
                 )
         queued_out = list(merged_queued.values())
@@ -2466,13 +2466,13 @@ def _allocate_message_id() -> str:
 
 
 def _synthetic_message_out(agent_id: str, entry: dict) -> MessageOut:
-    """Build a MessageOut from a pre-delivery entry dict (no DB row).
+    """Build a MessageOut from a pre-sent entry dict (no DB row).
 
-    Maps pre-delivery status ('queued' | 'scheduled') to the corresponding
+    Maps pre-sent status ('queued' | 'scheduled') to the corresponding
     legacy MessageStatus enum value so existing frontend code that still
     reads uppercase strings continues to work during Phase 2 transition.
     """
-    # Map the new lowercase pre-delivery statuses to the legacy uppercase
+    # Map the new lowercase pre-sent statuses to the legacy uppercase
     # MessageStatus values the response model still uses. Scheduled sends
     # surface as PENDING (matching today's behavior for _dispatch_tmux_scheduled).
     raw_status = entry.get("status") or "queued"
@@ -2525,11 +2525,11 @@ async def send_agent_message(
 ):
     """Send a follow-up message to an agent.
 
-    Pre-delivery refactor (Phase 2): this endpoint writes a pre-delivery
-    entry to the per-agent display file via `display_writer.predelivery_*`
+    Pre-sent refactor (Phase 2): this endpoint writes a pre-sent
+    entry to the per-agent display file via `display_writer.pre_sent_*`
     and returns a synthetic MessageOut. No DB row is created here — the
     dispatcher creates the DB row at the moment of tmux send (promoting
-    the pre-delivery entry to sent).
+    the pre-sent entry to sent).
     """
     import slash_commands
     if slash_commands.is_slash_command(body.content) and not slash_commands.is_allowed(body.content):
@@ -2541,7 +2541,7 @@ async def send_agent_message(
     if agent.status == AgentStatus.STOPPED:
         raise HTTPException(status_code=400, detail="Agent is stopped")
 
-    # --- Scheduled messages: store as pre-delivery 'scheduled' entry ---
+    # --- Scheduled messages: store as pre-sent 'scheduled' entry ---
     scheduled_at = None
     if body.scheduled_at:
         try:
@@ -2579,7 +2579,7 @@ async def send_agent_message(
                 db.commit()
                 has_tmux = False
 
-    # Build the pre-delivery entry.
+    # Build the pre-sent entry.
     project = db.get(Project, agent.project)
     if not project:
         raise HTTPException(status_code=400, detail="Project not found")
@@ -2589,7 +2589,7 @@ async def send_agent_message(
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
-        entry, _prompt, insights_list = ad._prepare_predelivery_entry(
+        entry, _prompt, insights_list = ad._prepare_pre_sent_entry(
             db, agent, project, body.content,
             source="web",
             status=status,
@@ -2612,11 +2612,11 @@ async def send_agent_message(
             "metadata": None,
         }
 
-    # Write the pre-delivery entry + emit WS + kick dispatcher.
-    from display_writer import predelivery_create
-    from websocket import emit_predelivery_created
-    predelivery_create(agent.id, entry)
-    asyncio.ensure_future(emit_predelivery_created(agent.id, entry))
+    # Write the pre-sent entry + emit WS + kick dispatcher.
+    from display_writer import pre_sent_create
+    from websocket import emit_pre_sent_created
+    pre_sent_create(agent.id, entry)
+    asyncio.ensure_future(emit_pre_sent_created(agent.id, entry))
 
     if ad and not scheduled_at:
         # IDLE / BUSY: dispatcher decides whether to send immediately or
@@ -2625,7 +2625,7 @@ async def send_agent_message(
         asyncio.ensure_future(ad.dispatch_pending_message(agent.id, delay=0))
 
     logger.info(
-        "Message %s pre-delivery entry created for agent %s (status=%s)",
+        "Message %s pre-sent entry created for agent %s (status=%s)",
         msg_id, agent.id, status,
     )
     return _synthetic_message_out(agent.id, entry)
@@ -2645,9 +2645,9 @@ async def mark_agent_read(agent_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/agents/{agent_id}/messages/{message_id}")
 async def delete_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Hard-delete a pre-delivery message: bubble disappears.
+    """Hard-delete a pre-sent message: bubble disappears.
 
-    Accepts any pre-delivery state (queued / scheduled / cancelled).
+    Accepts any pre-sent state (queued / scheduled / cancelled).
     Storage layer requires `cancelled` before tombstone, so for
     queued/scheduled entries this internally walks cancel→tombstone.
     Sent / delivered / executed messages cannot be deleted via this
@@ -2661,19 +2661,19 @@ async def delete_message(agent_id: str, message_id: str, db: Session = Depends(g
         raise HTTPException(status_code=404, detail="Agent not found")
 
     from display_writer import (
-        predelivery_cancel,
-        predelivery_get,
-        predelivery_tombstone,
+        pre_sent_cancel,
+        pre_sent_get,
+        pre_sent_tombstone,
     )
-    from websocket import emit_predelivery_tombstoned
+    from websocket import emit_pre_sent_tombstoned
 
-    entry = predelivery_get(agent_id, message_id)
+    entry = pre_sent_get(agent_id, message_id)
     if entry is None:
         db_msg = db.get(Message, message_id)
         if db_msg and db_msg.agent_id == agent_id:
             raise HTTPException(
                 status_code=400,
-                detail="Only pre-delivery messages can be deleted",
+                detail="Only pre-sent messages can be deleted",
             )
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -2681,20 +2681,20 @@ async def delete_message(agent_id: str, message_id: str, db: Session = Depends(g
     if status not in ("queued", "scheduled", "cancelled"):
         raise HTTPException(
             status_code=400,
-            detail="Only pre-delivery messages can be deleted",
+            detail="Only pre-sent messages can be deleted",
         )
 
     if status in ("queued", "scheduled"):
-        predelivery_cancel(agent_id, message_id)
-    predelivery_tombstone(agent_id, message_id)
-    asyncio.ensure_future(emit_predelivery_tombstoned(agent_id, message_id))
+        pre_sent_cancel(agent_id, message_id)
+    pre_sent_tombstone(agent_id, message_id)
+    asyncio.ensure_future(emit_pre_sent_tombstoned(agent_id, message_id))
     logger.info("Message %s tombstoned for agent %s", message_id, agent_id)
     return {"detail": "deleted"}
 
 
 @router.post("/api/agents/{agent_id}/messages/{message_id}/cancel")
 async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(get_db)):
-    """Soft-cancel a queued/scheduled pre-delivery message: bubble stays
+    """Soft-cancel a queued/scheduled pre-sent message: bubble stays
     visible (greyed) so the user can see what was bailed out of.
 
     Used by the ESC button to clear queued backlog without making the
@@ -2705,10 +2705,10 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    from display_writer import predelivery_cancel, predelivery_get
-    from websocket import emit_predelivery_updated
+    from display_writer import pre_sent_cancel, pre_sent_get
+    from websocket import emit_pre_sent_updated
 
-    entry = predelivery_get(agent_id, message_id)
+    entry = pre_sent_get(agent_id, message_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -2719,9 +2719,9 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
             detail="Only queued/scheduled messages can be cancelled",
         )
 
-    predelivery_cancel(agent_id, message_id)
+    pre_sent_cancel(agent_id, message_id)
     asyncio.ensure_future(
-        emit_predelivery_updated(agent_id, message_id, {"status": "cancelled"})
+        emit_pre_sent_updated(agent_id, message_id, {"status": "cancelled"})
     )
     logger.info("Message %s cancelled (soft) for agent %s", message_id, agent_id)
     return {"detail": "cancelled"}
@@ -2734,15 +2734,15 @@ async def update_message(
     body: UpdateMessage,
     db: Session = Depends(get_db),
 ):
-    """Update content and/or scheduled_at of a queued/scheduled pre-delivery message."""
+    """Update content and/or scheduled_at of a queued/scheduled pre-sent message."""
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    from display_writer import predelivery_get, predelivery_update
-    from websocket import emit_predelivery_updated
+    from display_writer import pre_sent_get, pre_sent_update
+    from websocket import emit_pre_sent_updated
 
-    entry = predelivery_get(agent_id, message_id)
+    entry = pre_sent_get(agent_id, message_id)
     if entry is None or entry.get("status") not in ("queued", "scheduled"):
         raise HTTPException(
             status_code=400,
@@ -2772,13 +2772,13 @@ async def update_message(
                 patch["status"] = "scheduled"
 
     if patch:
-        predelivery_update(agent_id, message_id, patch)
+        pre_sent_update(agent_id, message_id, patch)
         asyncio.ensure_future(
-            emit_predelivery_updated(agent_id, message_id, patch)
+            emit_pre_sent_updated(agent_id, message_id, patch)
         )
 
     # Build the synthetic MessageOut from the updated entry.
-    updated = predelivery_get(agent_id, message_id) or entry
+    updated = pre_sent_get(agent_id, message_id) or entry
     logger.info("Message %s updated for agent %s", message_id, agent_id)
     return _synthetic_message_out(agent_id, updated)
 
@@ -2884,7 +2884,7 @@ def _patch_interactive_answer(
             msg.meta_json = json.dumps(meta)
             db.commit()
             # Update display file so the answer persists across page refreshes.
-            # Branch on display_seq: pre-delivery cards land in the queued
+            # Branch on display_seq: pre-sent cards land in the queued
             # partition, post-delivery in the main partition.
             from display_writer import update_after_metadata_change as _update_ia
             _update_ia(agent_id, msg.id)
@@ -2938,7 +2938,7 @@ def _dismiss_pending_interactive_cards(db: Session, agent_id: str) -> list[dict]
     if patched:
         db.commit()
         # Dismissals are usually post-delivery (the card was visible to the
-        # user), but rare pre-delivery dismissals exist — branch per-message.
+        # user), but rare pre-sent dismissals exist — branch per-message.
         from display_writer import update_after_metadata_change as _update_dismiss
         for p in patched:
             _update_dismiss(agent_id, p["message_id"])

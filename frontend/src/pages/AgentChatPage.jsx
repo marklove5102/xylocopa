@@ -1111,7 +1111,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   const isUser = message.role === "USER";
   // Normalize status for comparison: the Phase 2 refactor introduces
-  // lowercase pre-delivery statuses ('queued', 'scheduled', 'cancelled',
+  // lowercase pre-sent statuses ('queued', 'scheduled', 'cancelled',
   // 'sent', 'delivered', 'executed') alongside the legacy uppercase
   // MessageStatus values. Match on both during the transition.
   const status = message.status || "";
@@ -1184,7 +1184,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   // `canModify` gates the action popover opening at all — anything with
   // any action button (including Copy-only) should still show the menu,
   // but keeping the name for minimal diff: open the popover for any
-  // pre-delivery state + any user message (Copy-only path).
+  // pre-sent state + any user message (Copy-only path).
   const canModify = canEdit; // legacy name: controls edit-path UI only
 
   const handleLongPressStart = (e) => {
@@ -1212,7 +1212,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   };
   const handleDoubleClick = () => {
-    // Pre-delivery (queued/scheduled/cancelled): open the action menu so
+    // Pre-sent (queued/scheduled/cancelled): open the action menu so
     // the user can Modify / Delete / Send Now / Copy. Post-send bubbles
     // (sent/delivered/executed) get direct-copy — their only available
     // action today is Copy, and an immediate copy is the snappier UX.
@@ -1475,7 +1475,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               <span className="text-orange-400">Timed out</span>
             )}
             {/* Check icon: three-state delivery indicator (skipped for
-                pre-delivery states — queued/scheduled/cancelled — and
+                pre-sent states — queued/scheduled/cancelled — and
                 slash commands which share the same state machine but have
                 their own executed double-check below). */}
             {isUser && message.source === "web" && !isPreDelivery && (isSlashCommand ? (
@@ -2547,10 +2547,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // initial=true replaces all messages (preserving WS-delivered_at);
   // initial=false merges incrementally (handles _replace entries from update_last).
   //
-  // Queued/pre-delivery state rules:
+  // Queued/pre-sent state rules:
   // - Initial load OR data.queued_authoritative=true: merge data.queued into state.
   // - Incremental poll with data.queued_authoritative=false (or absent): preserve
-  //   prev's pre-delivery entries (no seq); WS events drive changes.
+  //   prev's pre-sent entries (no seq); WS events drive changes.
   const applyDisplayData = useCallback((data, { initial = false } = {}) => {
     if (data.next_offset != null) {
       nextOffsetRef.current = data.next_offset;
@@ -2587,13 +2587,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       // Queued messages: ONLY merge on initial load OR when backend flags
       // queued_authoritative=true. On incremental polls, backend returns
       // queued_authoritative=false and queued should not clobber prev state —
-      // WS events (predelivery_*/message_sent) are the source of truth.
+      // WS events (pre_sent_*/message_sent) are the source of truth.
       if (initial || data.queued_authoritative) {
         const queued = (data.queued || []).filter((q) => !displayedIds.has(q.id));
         return [...displayed, ...queued];
       }
 
-      // Incremental: preserve prev's pre-delivery entries (no seq, not
+      // Incremental: preserve prev's pre-sent entries (no seq, not
       // already-sent). Skip any that are now in `displayed` (promoted to sent).
       const prevQueued = prev.filter((m) => m.seq == null);
       const preservedQueued = prevQueued.filter((m) => !displayedIds.has(m.id));
@@ -2793,7 +2793,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   hasPendingInteractiveRef.current = hasPendingInteractive;
 
   // Bottom-area user messages: active queue (queued / scheduled / cancelled).
-  // Under the Phase 2 pre-delivery refactor, the file's `status` field uses
+  // Under the Phase 2 pre-sent refactor, the file's `status` field uses
   // the lowercase strings 'queued' | 'scheduled' | 'cancelled'. We keep the
   // uppercase 'QUEUED' / 'PENDING' fallbacks for legacy rows during the
   // transition. `scheduled_at` filtering stays the same — only non-scheduled
@@ -2809,7 +2809,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     [messages],
   );
   // Subset that still needs dispatch — drives escape-button urgency and
-  // bulk cancel. Excludes cancelled entries (they are terminal pre-delivery).
+  // bulk cancel. Excludes cancelled entries (they are terminal pre-sent).
   const activeQueuedMessages = useMemo(
     () => queuedMessages.filter((m) => m.status !== "cancelled" && m.status !== "CANCELLED"),
     [queuedMessages],
@@ -3298,12 +3298,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
-    // Pre-delivery WS events (refactor: pre-delivery messages live in display file).
-    // Backend emits these whenever pre-delivery state changes; frontend reacts
+    // Pre-sent WS events (refactor: pre-sent messages live in display file).
+    // Backend emits these whenever pre-sent state changes; frontend reacts
     // directly, bypassing poll. All handlers are idempotent against duplicates
-    // and order-insensitive between predelivery_created and message_sent.
-    if (event.type === "predelivery_created") {
-      pushWsEvent('predelivery_created', { id: event.data?.entry?.id });
+    // and order-insensitive between pre_sent_created and message_sent.
+    if (event.type === "pre_sent_created") {
+      pushWsEvent('pre_sent_created', { id: event.data?.entry?.id });
       const entry = event.data?.entry;
       if (!entry?.id) return;
       setMessages((prev) => {
@@ -3313,8 +3313,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
-    if (event.type === "predelivery_updated") {
-      pushWsEvent('predelivery_updated', { id: event.data?.message_id });
+    if (event.type === "pre_sent_updated") {
+      pushWsEvent('pre_sent_updated', { id: event.data?.message_id });
       const { message_id, patch } = event.data || {};
       if (!message_id || !patch) return;
       setMessages((prev) => prev.map((m) =>
@@ -3323,8 +3323,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
-    if (event.type === "predelivery_tombstoned") {
-      pushWsEvent('predelivery_tombstoned', { id: event.data?.message_id });
+    if (event.type === "pre_sent_tombstoned") {
+      pushWsEvent('pre_sent_tombstoned', { id: event.data?.message_id });
       const message_id = event.data?.message_id;
       if (!message_id) return;
       setMessages((prev) => prev.filter((m) => m.id !== message_id));
@@ -4179,17 +4179,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               const isRetryAgent = (taskData?.attempt_agents || []).findIndex(a => a.agent_id === id) >= 1;
               const retryContext = taskData?.retry_context;
               let replacedFirstTask = false;
-              // Exclude pre-delivery user messages (they render in the bottom
+              // Exclude pre-sent user messages (they render in the bottom
               // queue list separately). Covers both legacy uppercase statuses
               // (PENDING/QUEUED) and new lowercase vocabulary (queued/
               // scheduled/cancelled) introduced by the Phase 2 refactor.
-              // Without this, a predelivery entry shows in BOTH the main
+              // Without this, a pre_sent entry shows in BOTH the main
               // flow and the bottom list → duplicate bubble.
-              const _preDeliveryStatuses = new Set([
+              const _preSentStatuses = new Set([
                 "PENDING", "QUEUED", "CANCELLED",
                 "queued", "scheduled", "cancelled",
               ]);
-              const visible = messages.filter((m) => !(m.role === "USER" && _preDeliveryStatuses.has(m.status)) && m.kind !== "stop_hook")
+              const visible = messages.filter((m) => !(m.role === "USER" && _preSentStatuses.has(m.status)) && m.kind !== "stop_hook")
                 .map((m) => {
                   // For retry agents, replace first source=task user message text with retry_context,
                   // but keep all [Attached file: ...] tags from both original and retry_context

@@ -1,7 +1,7 @@
-"""Endpoint tests for the Phase 2 pre-delivery refactor.
+"""Endpoint tests for the Phase 2 pre-sent refactor.
 
 Covers POST /messages, DELETE /messages/{id}, and PUT /messages/{id} as
-refactored by Impl-B. The display_writer `predelivery_*` API is stubbed
+refactored by Impl-B. The display_writer `pre_sent_*` API is stubbed
 via monkeypatch so these tests do not touch the real display file.
 """
 
@@ -46,7 +46,7 @@ def _seed_agent(db, *, agent_id="pre111122223", project_name="pre-proj",
 
 
 class _PredeliveryStubStore:
-    """In-memory stand-in for display_writer.predelivery_*.
+    """In-memory stand-in for display_writer.pre_sent_*.
 
     Records calls for assertion and maintains a minimal per-agent map of
     entries keyed by message id.
@@ -115,12 +115,12 @@ class _PredeliveryStubStore:
 def stub_store(monkeypatch):
     store = _PredeliveryStubStore()
     import display_writer as _dw
-    monkeypatch.setattr(_dw, "predelivery_create", store.create)
-    monkeypatch.setattr(_dw, "predelivery_update", store.update)
-    monkeypatch.setattr(_dw, "predelivery_cancel", store.cancel)
-    monkeypatch.setattr(_dw, "predelivery_tombstone", store.tombstone)
-    monkeypatch.setattr(_dw, "predelivery_get", store.get)
-    monkeypatch.setattr(_dw, "predelivery_list", store.list)
+    monkeypatch.setattr(_dw, "pre_sent_create", store.create)
+    monkeypatch.setattr(_dw, "pre_sent_update", store.update)
+    monkeypatch.setattr(_dw, "pre_sent_cancel", store.cancel)
+    monkeypatch.setattr(_dw, "pre_sent_tombstone", store.tombstone)
+    monkeypatch.setattr(_dw, "pre_sent_get", store.get)
+    monkeypatch.setattr(_dw, "pre_sent_list", store.list)
     # Also patch the router-level re-imports (the endpoint re-imports
     # inside the function body, so patching just display_writer works —
     # both import paths resolve to the same module attribute).
@@ -144,9 +144,9 @@ def ws_recorder(monkeypatch):
         return _fake
 
     import websocket as _ws
-    monkeypatch.setattr(_ws, "emit_predelivery_created", _make("predelivery_created"))
-    monkeypatch.setattr(_ws, "emit_predelivery_updated", _make("predelivery_updated"))
-    monkeypatch.setattr(_ws, "emit_predelivery_tombstoned", _make("predelivery_tombstoned"))
+    monkeypatch.setattr(_ws, "emit_pre_sent_created", _make("pre_sent_created"))
+    monkeypatch.setattr(_ws, "emit_pre_sent_updated", _make("pre_sent_updated"))
+    monkeypatch.setattr(_ws, "emit_pre_sent_tombstoned", _make("pre_sent_tombstoned"))
     return calls
 
 
@@ -173,7 +173,7 @@ def dispatcher_noop(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
-async def test_post_messages_creates_predelivery_entry(
+async def test_post_messages_creates_pre_sent_entry(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
     db = _make_session(db_engine)
@@ -182,7 +182,7 @@ async def test_post_messages_creates_predelivery_entry(
 
     resp = await client.post(
         "/api/agents/postidle0001/messages",
-        json={"content": "hello predelivery"},
+        json={"content": "hello pre_sent"},
     )
     assert resp.status_code == 201, resp.text
     data = resp.json()
@@ -192,20 +192,20 @@ async def test_post_messages_creates_predelivery_entry(
     assert db.query(Message).filter(Message.agent_id == "postidle0001").count() == 0
     db.close()
 
-    # predelivery_create was called once with the right shape.
+    # pre_sent_create was called once with the right shape.
     assert len(stub_store.create_calls) == 1
     agent_arg, entry_arg = stub_store.create_calls[0]
     assert agent_arg == "postidle0001"
     assert entry_arg["role"] == "USER"
     assert entry_arg["source"] == "web"
     assert entry_arg["status"] == "queued"
-    assert entry_arg["content"] == "hello predelivery"
+    assert entry_arg["content"] == "hello pre_sent"
     assert entry_arg["id"] == data["id"]
     assert entry_arg["scheduled_at"] is None
 
     # WS event emitted.
     event_names = [c[0] for c in ws_recorder]
-    assert "predelivery_created" in event_names
+    assert "pre_sent_created" in event_names
 
 
 @pytest.mark.anyio
@@ -280,7 +280,7 @@ async def test_post_messages_agent_stopped_returns_400(
 # DELETE /messages/{id}
 # ---------------------------------------------------------------------------
 
-def _seed_predelivery_entry(store, agent_id: str, *, status="queued",
+def _seed_pre_sent_entry(store, agent_id: str, *, status="queued",
                             content="hi", msg_id=None):
     mid = msg_id or "mid00000001"
     store.entries.setdefault(agent_id, {})[mid] = {
@@ -306,7 +306,7 @@ async def test_delete_queued_tombstones_in_one_call(
     _seed_agent(db, agent_id="delq11112222", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "delq11112222", status="queued")
+    mid = _seed_pre_sent_entry(stub_store, "delq11112222", status="queued")
 
     resp = await client.delete(f"/api/agents/delq11112222/messages/{mid}")
     assert resp.status_code == 200, resp.text
@@ -314,8 +314,8 @@ async def test_delete_queued_tombstones_in_one_call(
 
     assert stub_store.cancel_calls == [("delq11112222", mid)]
     assert stub_store.tombstone_calls == [("delq11112222", mid)]
-    assert any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
-    assert not any(c[0] == "predelivery_updated" for c in ws_recorder)
+    assert any(c[0] == "pre_sent_tombstoned" for c in ws_recorder)
+    assert not any(c[0] == "pre_sent_updated" for c in ws_recorder)
 
 
 @pytest.mark.anyio
@@ -328,7 +328,7 @@ async def test_delete_cancelled_hard_deletes(
     _seed_agent(db, agent_id="delh11112222", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "delh11112222", status="cancelled")
+    mid = _seed_pre_sent_entry(stub_store, "delh11112222", status="cancelled")
 
     resp = await client.delete(f"/api/agents/delh11112222/messages/{mid}")
     assert resp.status_code == 200, resp.text
@@ -336,7 +336,7 @@ async def test_delete_cancelled_hard_deletes(
 
     assert stub_store.tombstone_calls == [("delh11112222", mid)]
     assert stub_store.cancel_calls == []
-    assert any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+    assert any(c[0] == "pre_sent_tombstoned" for c in ws_recorder)
 
 
 @pytest.mark.anyio
@@ -348,7 +348,7 @@ async def test_cancel_endpoint_soft_cancels_only(
     _seed_agent(db, agent_id="cancsoft0001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "cancsoft0001", status="queued")
+    mid = _seed_pre_sent_entry(stub_store, "cancsoft0001", status="queued")
 
     resp = await client.post(f"/api/agents/cancsoft0001/messages/{mid}/cancel")
     assert resp.status_code == 200, resp.text
@@ -356,8 +356,8 @@ async def test_cancel_endpoint_soft_cancels_only(
 
     assert stub_store.cancel_calls == [("cancsoft0001", mid)]
     assert stub_store.tombstone_calls == []
-    assert any(c[0] == "predelivery_updated" for c in ws_recorder)
-    assert not any(c[0] == "predelivery_tombstoned" for c in ws_recorder)
+    assert any(c[0] == "pre_sent_updated" for c in ws_recorder)
+    assert not any(c[0] == "pre_sent_tombstoned" for c in ws_recorder)
 
 
 @pytest.mark.anyio
@@ -370,7 +370,7 @@ async def test_cancel_endpoint_rejects_already_cancelled(
     _seed_agent(db, agent_id="cancrej00001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "cancrej00001", status="cancelled")
+    mid = _seed_pre_sent_entry(stub_store, "cancrej00001", status="cancelled")
 
     resp = await client.post(f"/api/agents/cancrej00001/messages/{mid}/cancel")
     assert resp.status_code == 400
@@ -380,7 +380,7 @@ async def test_cancel_endpoint_rejects_already_cancelled(
 async def test_delete_sent_returns_400(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
-    """A message with a DB row but no pre-delivery entry cannot be deleted."""
+    """A message with a DB row but no pre-sent entry cannot be deleted."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="delsent00001", status=AgentStatus.IDLE)
     # Insert a DB row simulating a sent/delivered message.
@@ -425,7 +425,7 @@ async def test_put_queued_updates_content(
     _seed_agent(db, agent_id="putedit00001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(
+    mid = _seed_pre_sent_entry(
         stub_store, "putedit00001", status="queued", content="original",
     )
 
@@ -447,7 +447,7 @@ async def test_put_queued_updates_content(
     assert model.content == "edited"
     assert model.id == mid
 
-    assert any(c[0] == "predelivery_updated" for c in ws_recorder)
+    assert any(c[0] == "pre_sent_updated" for c in ws_recorder)
 
 
 @pytest.mark.anyio
@@ -458,7 +458,7 @@ async def test_put_scheduled_updates_schedule(
     _seed_agent(db, agent_id="putsched0001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "putsched0001", status="scheduled")
+    mid = _seed_pre_sent_entry(stub_store, "putsched0001", status="scheduled")
     # Put the original into scheduled state properly.
     stub_store.entries["putsched0001"][mid]["scheduled_at"] = "2099-01-01T00:00:00+00:00"
 
@@ -476,7 +476,7 @@ async def test_put_scheduled_updates_schedule(
 async def test_put_sent_returns_400(
     client, db_engine, stub_store, ws_recorder, dispatcher_noop,
 ):
-    """Editing a non-pre-delivery message is rejected."""
+    """Editing a non-pre-sent message is rejected."""
     db = _make_session(db_engine)
     _seed_agent(db, agent_id="putsent00001", status=AgentStatus.IDLE)
     db.add(Message(
@@ -506,7 +506,7 @@ async def test_put_cancelled_returns_400(
     _seed_agent(db, agent_id="putcanc00001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "putcanc00001", status="cancelled")
+    mid = _seed_pre_sent_entry(stub_store, "putcanc00001", status="cancelled")
 
     resp = await client.put(
         f"/api/agents/putcanc00001/messages/{mid}",
@@ -524,7 +524,7 @@ async def test_put_empty_content_returns_400(
     _seed_agent(db, agent_id="putemt00001", status=AgentStatus.IDLE)
     db.close()
 
-    mid = _seed_predelivery_entry(stub_store, "putemt00001", status="queued")
+    mid = _seed_pre_sent_entry(stub_store, "putemt00001", status="queued")
 
     resp = await client.put(
         f"/api/agents/putemt00001/messages/{mid}",

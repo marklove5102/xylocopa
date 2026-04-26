@@ -913,7 +913,7 @@ async def hook_agent_permission(request: Request):
                 _m.meta_json = json.dumps(_meta)
                 _db_to.commit()
                 # Post-delivery metadata patch → update_last (via helper).
-                # Pre-delivery interactive cards go through predelivery_update
+                # Pre-sent interactive cards go through pre_sent_update
                 # directly; this path is reserved for delivered AGENT cards.
                 from display_writer import (
                     flush_agent as _flush_to,

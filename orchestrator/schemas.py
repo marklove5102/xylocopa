@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from models import AgentMode, AgentStatus, MessageRole, MessageStatus, TaskStatus
 
@@ -238,7 +238,7 @@ class DisplayEntry(BaseModel):
     source: str | None = None
     # Accept both the legacy uppercase MessageStatus values
     # ("PENDING", "QUEUED", "COMPLETED", ...) and the new lowercase
-    # pre-delivery / post-send states ("queued", "scheduled",
+    # pre-sent / post-send states ("queued", "scheduled",
     # "cancelled", "sent", "delivered", "executed").
     status: str | None = None
     metadata: dict | None = None
@@ -252,10 +252,14 @@ class DisplayEntry(BaseModel):
     queued: bool | None = Field(default=None, alias="_queued")
     replace: bool | None = Field(default=None, alias="_replace")
     deleted: bool | None = Field(default=None, alias="_deleted")
-    # Pre-delivery marker. Entries with `_pre: true` have no DB row — they
-    # live exclusively in the display file until a dispatcher promotes them
-    # to sent.
-    pre: bool | None = Field(default=None, alias="_pre")
+    # Pre-sent marker. Entries with `_pre_sent: true` (or legacy
+    # `_pre: true`) have no DB row — they live exclusively in the display
+    # file until a dispatcher promotes them to sent.
+    pre_sent: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("_pre_sent", "_pre"),
+        serialization_alias="_pre_sent",
+    )
 
     model_config = {"populate_by_name": True}
 

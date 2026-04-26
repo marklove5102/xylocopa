@@ -1568,20 +1568,20 @@ class AgentDispatcher:
     def next_dispatch_seq(db, agent_id: str) -> int:
         """Return the next dispatch_seq for an agent (max + 1, or 1).
 
-        Considers both DB.messages.dispatch_seq and any pre-delivery
+        Considers both DB.messages.dispatch_seq and any pre-sent
         entries that carry a `dispatch_seq` field — the latter can be set
-        optionally by predelivery_create callers that want to reserve an
+        optionally by pre_sent_create callers that want to reserve an
         ordering slot ahead of tmux dispatch.
         """
         from sqlalchemy import func
-        from display_writer import predelivery_list
+        from display_writer import pre_sent_list
         db_max = db.query(func.max(Message.dispatch_seq)).filter(
             Message.agent_id == agent_id,
         ).scalar() or 0
         pre_max = 0
         try:
             pre_max = max(
-                (e.get("dispatch_seq") or 0 for e in predelivery_list(agent_id)),
+                (e.get("dispatch_seq") or 0 for e in pre_sent_list(agent_id)),
                 default=0,
             )
         except Exception:
@@ -2041,11 +2041,11 @@ Here are the day's conversations (with timestamps):
 
     def _fail_pending_messages(self, db: Session, agent_id: str, reason: str):
         """Fail all EXECUTING messages for an agent. Also tombstones any
-        pre-delivery entries (`_pre` lines in the display file) so the user
+        pre-sent entries (`_pre_sent` lines in the display file) so the user
         doesn't see zombie queued bubbles on a dead agent.
 
         PENDING DB rows no longer exist under the Phase 2 model — legacy
-        rows are migrated on startup (see `main._migrate_predelivery_legacy`).
+        rows are migrated on startup (see `main._migrate_pre_sent_legacy`).
         Kept in the filter as a defensive belt-and-suspenders.
         """
         pending = db.query(Message).filter(
@@ -2055,7 +2055,7 @@ Here are the day's conversations (with timestamps):
         for m in pending:
             self._fail_message(m, reason)
 
-        self._fail_all_predelivery(agent_id, reason=reason)
+        self._fail_all_pre_sent(agent_id, reason=reason)
 
     def _add_system_message(self, db, agent_id, content, *, status=MessageStatus.COMPLETED, error_message=None):
         """Add a system message with consistent fields."""
@@ -2213,7 +2213,7 @@ Here are the day's conversations (with timestamps):
 
         # Pre-delivery entries (queued / scheduled / cancelled in file)
         # will never be dispatched for a stopped agent — tombstone them.
-        self._fail_all_predelivery(agent.id, reason=reason or "agent_stopped")
+        self._fail_all_pre_sent(agent.id, reason=reason or "agent_stopped")
 
         if add_message:
             self._add_system_message(db, agent.id, reason)
@@ -2301,8 +2301,8 @@ Here are the day's conversations (with timestamps):
             ).all():
                 self._fail_message(m, reason)
 
-        # Tombstone any pre-delivery entries — they won't be dispatched now.
-        self._fail_all_predelivery(agent.id, reason=reason or "agent_error")
+        # Tombstone any pre-sent entries — they won't be dispatched now.
+        self._fail_all_pre_sent(agent.id, reason=reason or "agent_error")
 
         if add_message:
             db.add(Message(
@@ -2493,21 +2493,21 @@ Here are the day's conversations (with timestamps):
             asyncio.ensure_future(self.dispatch_pending_message(agent_id, delay=0))
 
     async def dispatch_pending_message(self, agent_id: str, delay: float = 0):
-        """Dispatch the first queued pre-delivery entry to the agent's tmux pane.
+        """Dispatch the first queued pre-sent entry to the agent's tmux pane.
 
         Called after interrupt/escape or manual wake-sync — paths where
         the stop hook doesn't fire but queued messages need to be sent.
-        Reads from the pre-delivery index (file-only, no DB row yet) and
+        Reads from the pre-sent index (file-only, no DB row yet) and
         promotes the entry to a sent DB row on successful tmux send.
         """
         if delay > 0:
             await asyncio.sleep(delay)
         db = SessionLocal()
         try:
-            from display_writer import predelivery_list
+            from display_writer import pre_sent_list
 
             entries = [
-                e for e in predelivery_list(agent_id)
+                e for e in pre_sent_list(agent_id)
                 if e.get("status") == "queued" and not e.get("scheduled_at")
             ]
             entries.sort(key=lambda e: e.get("created_at") or "")
@@ -2548,19 +2548,19 @@ Here are the day's conversations (with timestamps):
                 )
                 return
 
-            self._promote_predelivery_to_sent(db, agent, entry)
+            self._promote_pre_sent_to_sent(db, agent, entry)
         except Exception:
             logger.exception("dispatch_pending: error for agent %s", agent_id[:8])
         finally:
             db.close()
 
-    def _promote_predelivery_to_sent(
+    def _promote_pre_sent_to_sent(
         self, db: Session, agent: Agent, entry: dict,
     ) -> None:
-        """Atomic _pre → sent transition: INSERT DB row, write sent line
+        """Atomic _pre_sent → sent transition: INSERT DB row, write sent line
         to display file, emit message_sent WS.
 
-        `entry` is a pre-delivery dict returned by `predelivery_list`.
+        `entry` is a pre-sent dict returned by `pre_sent_list`.
         Caller must have already verified the entry is still pending in
         the index and that tmux send succeeded.
 
@@ -2572,7 +2572,7 @@ Here are the day's conversations (with timestamps):
 
         from display_writer import (
             _serialize_message,
-            predelivery_promote_to_sent,
+            pre_sent_promote_to_sent,
         )
         from websocket import emit_message_sent
 
@@ -2627,7 +2627,7 @@ Here are the day's conversations (with timestamps):
         sent_line = json.loads(_serialize_message(msg, next_seq))
         sent_line["status"] = "sent"
 
-        predelivery_promote_to_sent(agent.id, msg_id, next_seq, sent_line)
+        pre_sent_promote_to_sent(agent.id, msg_id, next_seq, sent_line)
         asyncio.ensure_future(emit_message_sent(
             agent.id, msg_id, next_seq, sent_line,
         ))
@@ -2641,9 +2641,9 @@ Here are the day's conversations (with timestamps):
         agent.last_message_at = _utcnow()
         db.commit()
 
-    def _fail_all_predelivery(self, agent_id: str,
+    def _fail_all_pre_sent(self, agent_id: str,
                               reason: str = "agent_stopped") -> None:
-        """Tombstone every pre-delivery entry for an agent.
+        """Tombstone every pre-sent entry for an agent.
 
         Used on agent terminal shutdown paths (stop_agent_cleanup,
         error_agent_cleanup) — those messages will never be delivered
@@ -2651,55 +2651,55 @@ Here are the day's conversations (with timestamps):
         ceremony and go straight to tombstone.
         """
         from display_writer import (
-            predelivery_cancel,
-            predelivery_list,
-            predelivery_tombstone,
+            pre_sent_cancel,
+            pre_sent_list,
+            pre_sent_tombstone,
         )
-        from websocket import emit_predelivery_tombstoned
+        from websocket import emit_pre_sent_tombstoned
 
-        for e in predelivery_list(agent_id):
+        for e in pre_sent_list(agent_id):
             try:
                 # tombstone() requires status='cancelled' first — honor the
                 # two-stage contract by soft-cancelling pending/scheduled
                 # entries before tombstoning.
                 if e.get("status") != "cancelled":
                     try:
-                        predelivery_cancel(agent_id, e["id"])
+                        pre_sent_cancel(agent_id, e["id"])
                     except Exception:
                         logger.debug(
-                            "_fail_all_predelivery: soft-cancel skipped for %s "
+                            "_fail_all_pre_sent: soft-cancel skipped for %s "
                             "(already cancelled / not cancellable)",
                             e.get("id", "?")[:8],
                         )
-                predelivery_tombstone(agent_id, e["id"])
+                pre_sent_tombstone(agent_id, e["id"])
                 # Push tombstone so the chat page removes the entry without
                 # waiting for a refresh; mirrors the per-entry cancel path
                 # in routers/agents.py.
                 asyncio.ensure_future(
-                    emit_predelivery_tombstoned(agent_id, e["id"])
+                    emit_pre_sent_tombstoned(agent_id, e["id"])
                 )
             except Exception:
                 logger.exception(
-                    "_fail_all_predelivery: failed to tombstone %s for agent %s "
+                    "_fail_all_pre_sent: failed to tombstone %s for agent %s "
                     "(reason=%s)", e.get("id", "?")[:8], agent_id[:8], reason,
                 )
 
     async def redispatch_stuck_queued(self, agent_id: str):
-        """Re-dispatch queued pre-delivery entries older than 10s that never
+        """Re-dispatch queued pre-sent entries older than 10s that never
         got sent.
 
         Called from wake-sync when the user manually triggers a sync.
-        Handles the case where a queued pre-delivery entry sat around
+        Handles the case where a queued pre-sent entry sat around
         because the agent was busy when it arrived — gives it another shot
         via the same promote path as dispatch_pending_message.
         """
         db = SessionLocal()
         try:
-            from display_writer import predelivery_list
+            from display_writer import pre_sent_list
 
             cutoff = _utcnow() - timedelta(seconds=10)
             entries: list[tuple[datetime, dict]] = []
-            for e in predelivery_list(agent_id):
+            for e in pre_sent_list(agent_id):
                 if e.get("status") != "queued" or e.get("scheduled_at"):
                     continue
                 ca = e.get("created_at")
@@ -2748,7 +2748,7 @@ Here are the day's conversations (with timestamps):
                         agent_id[:8],
                     )
                     break
-                self._promote_predelivery_to_sent(db, agent, entry)
+                self._promote_pre_sent_to_sent(db, agent, entry)
                 logger.info(
                     "redispatch_stuck_queued: re-sent message %s to agent %s",
                     entry["id"][:8], agent_id[:8],
@@ -3018,14 +3018,14 @@ Here are the day's conversations (with timestamps):
             )
 
     def _dispatch_tmux_scheduled(self, db: Session):
-        """Send scheduled pre-delivery entries whose scheduled_at has arrived.
+        """Send scheduled pre-sent entries whose scheduled_at has arrived.
 
         Only handles entries with status='scheduled' and scheduled_at <= now.
         Non-scheduled messages are sent immediately via `dispatch_pending_message`.
         On send success, promote the entry to a sent DB row via the shared
-        `_promote_predelivery_to_sent` helper.
+        `_promote_pre_sent_to_sent` helper.
         """
-        from display_writer import predelivery_list
+        from display_writer import pre_sent_list
 
         now = _utcnow()
         active_sync_agents = db.query(Agent).filter(
@@ -3042,7 +3042,7 @@ Here are the day's conversations (with timestamps):
 
             # Collect due scheduled entries for this agent, oldest first.
             due: list[tuple[datetime, dict]] = []
-            for entry in predelivery_list(agent.id):
+            for entry in pre_sent_list(agent.id):
                 if entry.get("status") != "scheduled":
                     continue
                 sch = entry.get("scheduled_at")
@@ -3083,7 +3083,7 @@ Here are the day's conversations (with timestamps):
                 "Dispatched scheduled message %s to agent %s via tmux",
                 entry["id"], agent.id,
             )
-            self._promote_predelivery_to_sent(db, agent, entry)
+            self._promote_pre_sent_to_sent(db, agent, entry)
 
     # ------------------------------------------------------------------
     # Unified message preparation
@@ -3098,7 +3098,7 @@ Here are the day's conversations (with timestamps):
             Message.status.in_([MessageStatus.COMPLETED, MessageStatus.EXECUTING]),
         ).first() is None
 
-    def _prepare_predelivery_entry(
+    def _prepare_pre_sent_entry(
         self,
         db: Session,
         agent: Agent,
@@ -3112,20 +3112,20 @@ Here are the day's conversations (with timestamps):
         include_history: bool = False,
         msg_id: str | None = None,
     ) -> tuple[dict, str, list[str]]:
-        """Build a pre-delivery entry dict (NOT a DB row) plus the prompt to
+        """Build a pre-sent entry dict (NOT a DB row) plus the prompt to
         send to tmux.  Companion to `_prepare_dispatch` for the Phase 2
-        pre-delivery refactor — callers use `display_writer.predelivery_create`
+        pre-sent refactor — callers use `display_writer.pre_sent_create`
         to persist the returned dict.
 
         Returns ``(entry_dict, prompt, insights_list)`` where:
-        - *entry_dict*: ready for `predelivery_create(agent_id, entry)`.
+        - *entry_dict*: ready for `pre_sent_create(agent_id, entry)`.
         - *prompt*: the text to send to Claude (wrapped or raw).
         - *insights_list*: RAG insights found (may be empty).
 
         The caller is responsible for:
         - Picking the final status ('queued' | 'scheduled') and any
           `scheduled_at` value (already placed on the entry here).
-        - Calling `predelivery_create(agent_id, entry_dict)`.
+        - Calling `pre_sent_create(agent_id, entry_dict)`.
         - Emitting WS + kicking the dispatcher.
         """
         import uuid as _uuid

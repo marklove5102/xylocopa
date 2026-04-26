@@ -90,35 +90,35 @@ def load_registry(db: Session):
     logger.info("Loaded %d projects from registry.yaml", len(projects))
 
 
-# ---- One-shot migration: predelivery legacy rows ----
+# ---- One-shot migration: pre_sent legacy rows ----
 
-def _migrate_predelivery_legacy():
+def _migrate_pre_sent_legacy():
     """Clean up pre-cutover DB rows that no longer belong in `messages`.
 
     Pre-Phase-2 code created DB rows for PENDING/QUEUED/CANCELLED web/task/
     plan_continue messages. Post-Phase-2 those states live in the display
-    file's pre-delivery zone (no DB row) or, once dispatched, as COMPLETED
+    file's pre-sent zone (no DB row) or, once dispatched, as COMPLETED
     rows. This migration reconciles residue.
 
     Rules:
-      - PENDING (never sent to tmux): move to predelivery zone with
+      - PENDING (never sent to tmux): move to pre_sent zone with
         status='queued' (or 'scheduled' if scheduled_at is set); delete row.
       - QUEUED with delivered_at set: was actually delivered, legacy status
         is stale; flip to COMPLETED, keep row.
-      - QUEUED without delivered_at (never confirmed): move to predelivery
+      - QUEUED without delivered_at (never confirmed): move to pre_sent
         zone; delete row. CC may have received the message but we have no
         UserPromptSubmit confirmation — user can re-send if needed.
       - CANCELLED with display_seq: was delivered then cancelled (historical
         quirk); flip to COMPLETED to honor the "DB only holds delivered"
         invariant; display-file tombstone already hides the bubble.
-      - CANCELLED without display_seq: pure pre-delivery cancel; display
+      - CANCELLED without display_seq: pure pre-sent cancel; display
         file already has the tombstone; just delete the row.
 
     Idempotent. Runs on every startup; a clean DB makes it a no-op.
     """
     import json
     from models import Message, MessageRole, MessageStatus
-    from display_writer import predelivery_create
+    from display_writer import pre_sent_create
 
     db = SessionLocal()
     migrated_pre = 0
@@ -159,7 +159,7 @@ def _migrate_predelivery_legacy():
                     fixed_completed += 1
                     continue
 
-                # Move to predelivery zone.
+                # Move to pre_sent zone.
                 entry_status = "scheduled" if msg.scheduled_at else "queued"
                 metadata = None
                 if msg.meta_json:
@@ -179,7 +179,7 @@ def _migrate_predelivery_legacy():
                     ),
                     "metadata": metadata,
                 }
-                predelivery_create(msg.agent_id, entry)
+                pre_sent_create(msg.agent_id, entry)
                 db.delete(msg)
                 migrated_pre += 1
             except Exception:
@@ -245,13 +245,13 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
 
-    # One-shot migration: move legacy pre-delivery DB rows to predelivery zone.
+    # One-shot migration: move legacy pre-sent DB rows to pre_sent zone.
     # Pre-delivery web/task/plan_continue messages no longer own DB rows. Any
     # legacy PENDING/QUEUED/CANCELLED rows from before the cutover are
     # reconciled here. Idempotent — after the first successful run the SELECT
     # returns zero rows.
     try:
-        _migrate_predelivery_legacy()
+        _migrate_pre_sent_legacy()
     except Exception:
         logger.exception("Predelivery migration failed on startup")
 

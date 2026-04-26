@@ -152,10 +152,10 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                                  deferred_updates: list | None = None):
     """Match a JSONL user turn to a sent-state DB row, or create a CLI message.
 
-    Strategy (pre-delivery refactor):
+    Strategy (pre-sent refactor):
     1. UUID dedup — skip if already imported.
     2. Content-match against sent-state rows — messages that were promoted
-       from the pre-delivery file on tmux send (status=QUEUED, jsonl_uuid
+       from the pre-sent file on tmux send (status=QUEUED, jsonl_uuid
        NULL, delivered_at NULL) but not yet confirmed by UserPromptSubmit.
     3. No match → genuine CLI-typed user input, create a fresh row.
 
@@ -182,7 +182,7 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
 
     # 2. Fetch unpromoted candidates.
     # Two shapes end up here:
-    #   (a) pre-delivery → sent rows: status=QUEUED, delivered_at=NULL,
+    #   (a) pre-sent → sent rows: status=QUEUED, delivered_at=NULL,
     #       jsonl_uuid=NULL (web/plan_continue path).
     #   (b) task-launched rows from _dispatch_task_tmux: status=COMPLETED
     #       synchronously, but still delivered_at=NULL, jsonl_uuid=NULL

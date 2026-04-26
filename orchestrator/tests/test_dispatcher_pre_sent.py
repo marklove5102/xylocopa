@@ -1,8 +1,8 @@
-"""Tests for the pre-delivery dispatch flow in agent_dispatcher.
+"""Tests for the pre-sent dispatch flow in agent_dispatcher.
 
 Covers dispatch_pending_message, redispatch_stuck_queued, and
-_dispatch_tmux_scheduled reading from the display_writer pre-delivery
-index and promoting to DB sent rows via _promote_predelivery_to_sent.
+_dispatch_tmux_scheduled reading from the display_writer pre-sent
+index and promoting to DB sent rows via _promote_pre_sent_to_sent.
 
 These tests monkey-patch:
 - `agent_dispatcher.send_tmux_message` / `verify_tmux_pane` to avoid real tmux.
@@ -56,9 +56,9 @@ def ad_env(db_engine, monkeypatch):
     from display_writer import (
         DISPLAY_DIR,
         _display_path,
-        _predelivery_index,
-        _predelivery_index_ready,
-        _predelivery_lock,
+        _pre_sent_index,
+        _pre_sent_index_ready,
+        _pre_sent_lock,
     )
     Session = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
 
@@ -125,9 +125,9 @@ def ad_env(db_engine, monkeypatch):
             os.unlink(_display_path(aid))
         except FileNotFoundError:
             pass
-        with _predelivery_lock:
-            _predelivery_index.pop(aid, None)
-            _predelivery_index_ready.discard(aid)
+        with _pre_sent_lock:
+            _pre_sent_index.pop(aid, None)
+            _pre_sent_index_ready.discard(aid)
 
 
 def _make_dispatcher():
@@ -152,13 +152,13 @@ def _make_dispatcher():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
-async def test_dispatch_pending_promotes_predelivery(ad_env):
-    """dispatch_pending_message promotes the first queued _pre entry to sent."""
-    from display_writer import predelivery_create, predelivery_get, _display_path
+async def test_dispatch_pending_promotes_pre_sent(ad_env):
+    """dispatch_pending_message promotes the first queued _pre_sent entry to sent."""
+    from display_writer import pre_sent_create, pre_sent_get, _display_path
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
-    predelivery_create(agent_id, _mk_entry(msg_id, content="ping"))
+    pre_sent_create(agent_id, _mk_entry(msg_id, content="ping"))
 
     d = _make_dispatcher()
     await d.dispatch_pending_message(agent_id)
@@ -182,52 +182,53 @@ async def test_dispatch_pending_promotes_predelivery(ad_env):
         db.close()
 
     # Pre-delivery index no longer has it.
-    assert predelivery_get(agent_id, msg_id) is None
+    assert pre_sent_get(agent_id, msg_id) is None
 
-    # File ends with a non-_pre line carrying status=sent + seq.
+    # File ends with a non-_pre_sent line carrying status=sent + seq.
     import json
     with open(_display_path(agent_id)) as f:
         lines = [json.loads(l) for l in f.read().splitlines() if l.strip()]
-    # Last line is the sent line; the line before is the tombstone of the _pre entry.
+    # Last line is the sent line; the line before is the tombstone of the _pre_sent entry.
     sent_line = lines[-1]
     assert sent_line["id"] == msg_id
     assert sent_line["status"] == "sent"
     assert sent_line.get("_queued") is None
     assert sent_line.get("_pre") is None
+    assert sent_line.get("_pre_sent") is None
     assert sent_line["seq"] == row.display_seq
 
 
 @pytest.mark.anyio
 async def test_dispatch_pending_skips_when_agent_busy(ad_env):
     """When the agent is EXECUTING, the queued entry stays untouched."""
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"](status=AgentStatus.EXECUTING)
     msg_id = uuid.uuid4().hex[:12]
-    predelivery_create(agent_id, _mk_entry(msg_id))
+    pre_sent_create(agent_id, _mk_entry(msg_id))
 
     d = _make_dispatcher()
     await d.dispatch_pending_message(agent_id)
 
-    # Nothing sent; DB row not created; predelivery still present.
+    # Nothing sent; DB row not created; pre_sent still present.
     assert ad_env["sent"] == []
     db = ad_env["Session"]()
     try:
         assert db.get(Message, msg_id) is None
     finally:
         db.close()
-    assert predelivery_get(agent_id, msg_id) is not None
+    assert pre_sent_get(agent_id, msg_id) is not None
 
 
 @pytest.mark.anyio
 async def test_dispatch_pending_skips_scheduled_entries(ad_env):
     """Entries with scheduled_at are not touched by dispatch_pending_message."""
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
     future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    predelivery_create(
+    pre_sent_create(
         agent_id,
         _mk_entry(msg_id, status="scheduled", scheduled_at=future),
     )
@@ -236,7 +237,7 @@ async def test_dispatch_pending_skips_scheduled_entries(ad_env):
     await d.dispatch_pending_message(agent_id)
 
     assert ad_env["sent"] == []
-    assert predelivery_get(agent_id, msg_id) is not None
+    assert pre_sent_get(agent_id, msg_id) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +251,12 @@ async def test_dispatch_scheduled_picks_due_entries(ad_env):
     Marked async so an event loop is available for the `asyncio.ensure_future`
     call that ships the message_sent WS event (we stubbed the broadcast).
     """
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
     past = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-    predelivery_create(
+    pre_sent_create(
         agent_id,
         _mk_entry(msg_id, content="scheduled hi", status="scheduled",
                   scheduled_at=past),
@@ -278,18 +279,18 @@ async def test_dispatch_scheduled_picks_due_entries(ad_env):
         assert row.display_seq is not None
     finally:
         db.close()
-    assert predelivery_get(agent_id, msg_id) is None
+    assert pre_sent_get(agent_id, msg_id) is None
 
 
 @pytest.mark.anyio
 async def test_dispatch_scheduled_skips_future_entries(ad_env):
     """Entries with scheduled_at in the future stay in the index."""
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
     future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    predelivery_create(
+    pre_sent_create(
         agent_id,
         _mk_entry(msg_id, status="scheduled", scheduled_at=future),
     )
@@ -302,7 +303,7 @@ async def test_dispatch_scheduled_skips_future_entries(ad_env):
         db.close()
 
     assert ad_env["sent"] == []
-    assert predelivery_get(agent_id, msg_id) is not None
+    assert pre_sent_get(agent_id, msg_id) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +313,13 @@ async def test_dispatch_scheduled_skips_future_entries(ad_env):
 @pytest.mark.anyio
 async def test_redispatch_stuck_queued_retries_old_entries(ad_env):
     """redispatch_stuck_queued re-sends queued entries older than the 10s grace."""
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
     # Older than the 10s cutoff.
     old = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-    predelivery_create(
+    pre_sent_create(
         agent_id,
         _mk_entry(msg_id, content="stuck", status="queued", created_at=old),
     )
@@ -332,32 +333,32 @@ async def test_redispatch_stuck_queued_retries_old_entries(ad_env):
         assert db.get(Message, msg_id) is not None
     finally:
         db.close()
-    assert predelivery_get(agent_id, msg_id) is None
+    assert pre_sent_get(agent_id, msg_id) is None
 
 
 @pytest.mark.anyio
 async def test_redispatch_stuck_queued_skips_fresh_entries(ad_env):
     """Entries newer than 10s are left for the normal dispatch path."""
-    from display_writer import predelivery_create, predelivery_get
+    from display_writer import pre_sent_create, pre_sent_get
 
     agent_id = ad_env["mk_agent"]()
     msg_id = uuid.uuid4().hex[:12]
-    predelivery_create(agent_id, _mk_entry(msg_id))  # created_at=now
+    pre_sent_create(agent_id, _mk_entry(msg_id))  # created_at=now
 
     d = _make_dispatcher()
     await d.redispatch_stuck_queued(agent_id)
 
     assert ad_env["sent"] == []
-    assert predelivery_get(agent_id, msg_id) is not None
+    assert pre_sent_get(agent_id, msg_id) is not None
 
 
 # ---------------------------------------------------------------------------
 # next_dispatch_seq
 # ---------------------------------------------------------------------------
 
-def test_next_dispatch_seq_considers_predelivery(ad_env):
-    """next_dispatch_seq returns max(db, predelivery) + 1."""
-    from display_writer import predelivery_create
+def test_next_dispatch_seq_considers_pre_sent(ad_env):
+    """next_dispatch_seq returns max(db, pre_sent) + 1."""
+    from display_writer import pre_sent_create
     from agent_dispatcher import AgentDispatcher
 
     agent_id = ad_env["mk_agent"]()
@@ -382,7 +383,7 @@ def test_next_dispatch_seq_considers_predelivery(ad_env):
     # Pre-delivery with a higher dispatch_seq=7.
     entry = _mk_entry(uuid.uuid4().hex[:12])
     entry["dispatch_seq"] = 7
-    predelivery_create(agent_id, entry)
+    pre_sent_create(agent_id, entry)
 
     db = ad_env["Session"]()
     try:
@@ -393,7 +394,7 @@ def test_next_dispatch_seq_considers_predelivery(ad_env):
 
 
 def test_next_dispatch_seq_defaults_to_one(ad_env):
-    """With no rows and no pre-delivery entries, next_dispatch_seq returns 1."""
+    """With no rows and no pre-sent entries, next_dispatch_seq returns 1."""
     from agent_dispatcher import AgentDispatcher
 
     agent_id = ad_env["mk_agent"]()

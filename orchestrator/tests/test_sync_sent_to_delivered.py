@@ -1,9 +1,9 @@
-"""Tests for sync_engine._promote_or_create_user_msg under the pre-delivery
+"""Tests for sync_engine._promote_or_create_user_msg under the pre-sent
 refactor.
 
 The match pool is now restricted to sent-state DB rows (status=QUEUED,
 jsonl_uuid IS NULL, delivered_at IS NULL) — the rows created when
-dispatch_pending_message promotes a pre-delivery entry to sent.
+dispatch_pending_message promotes a pre-sent entry to sent.
 """
 
 import os
@@ -34,9 +34,9 @@ def sync_env(db_engine, monkeypatch):
     from display_writer import (
         DISPLAY_DIR,
         _display_path,
-        _predelivery_index,
-        _predelivery_index_ready,
-        _predelivery_lock,
+        _pre_sent_index,
+        _pre_sent_index_ready,
+        _pre_sent_lock,
     )
     Session = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
 
@@ -74,9 +74,9 @@ def sync_env(db_engine, monkeypatch):
         os.unlink(_display_path(agent_id))
     except FileNotFoundError:
         pass
-    with _predelivery_lock:
-        _predelivery_index.pop(agent_id, None)
-        _predelivery_index_ready.discard(agent_id)
+    with _pre_sent_lock:
+        _pre_sent_index.pop(agent_id, None)
+        _pre_sent_index_ready.discard(agent_id)
 
 
 def _mk_sync_context(agent_id: str):

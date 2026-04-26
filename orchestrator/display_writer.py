@@ -15,13 +15,13 @@ Functions:
     update_last            — append a replacement line for a streaming update
     update_after_metadata_change — append a `_replace` line after meta_json
                                     patch on a delivered message
-    predelivery_create     — append a `_queued + _pre` line (no DB row)
-    predelivery_update     — append a `_queued + _pre + _replace` line
-    predelivery_cancel     — soft-cancel (status='cancelled', still visible)
-    predelivery_tombstone  — hard-delete (append `_deleted: true`)
-    predelivery_promote_to_sent — atomic _pre → sent transition
-    predelivery_list / predelivery_get — read helpers (in-memory)
-    rebuild_agent          — rebuild the display file, preserving _pre entries
+    pre_sent_create     — append a `_queued + _pre_sent` line (no DB row)
+    pre_sent_update     — append a `_queued + _pre_sent + _replace` line
+    pre_sent_cancel     — soft-cancel (status='cancelled', still visible)
+    pre_sent_tombstone  — hard-delete (append `_deleted: true`)
+    pre_sent_promote_to_sent — atomic _pre_sent → sent transition
+    pre_sent_list / pre_sent_get — read helpers (in-memory)
+    rebuild_agent          — rebuild the display file, preserving _pre_sent entries
     delete_agent           — remove the display file
     startup_rebuild_all    — rebuild all active agents on server startup
 """
@@ -52,18 +52,18 @@ DISPLAY_DIR = _resolve("data/display")
 # "sent", the authoritative view of it lives here in memory (backed by the
 # JSONL file on disk so it survives restart).
 #
-# `_predelivery_index[agent_id][msg_id] = entry_dict` — latest state of each
-# pre-delivery entry. Mutations to the index are guarded by
-# `_predelivery_lock` (a threading.Lock; the existing fcntl.flock on the
+# `_pre_sent_index[agent_id][msg_id] = entry_dict` — latest state of each
+# pre-sent entry. Mutations to the index are guarded by
+# `_pre_sent_lock` (a threading.Lock; the existing fcntl.flock on the
 # file only guards multi-process append ordering, not in-process index
 # writes).
 #
 # The index is built lazily per agent on first access (see
 # `_ensure_index_loaded`) or eagerly during `rebuild_agent` /
 # `startup_rebuild_all`.
-_predelivery_index: dict[str, dict[str, dict]] = {}
-_predelivery_index_ready: set[str] = set()
-_predelivery_lock = threading.Lock()
+_pre_sent_index: dict[str, dict[str, dict]] = {}
+_pre_sent_index_ready: set[str] = set()
+_pre_sent_lock = threading.Lock()
 
 
 _VALID_PRE_SOURCES = {"web", "task", "plan_continue"}
@@ -193,7 +193,7 @@ def _serialize_message(msg: Message, seq: int, replace: bool = False) -> str:
 
 
 def _serialize_queued(msg: Message, replace: bool = False) -> str:
-    """Serialize a pre-delivery (queued) Message as a `_queued` JSONL line.
+    """Serialize a pre-sent (queued) Message as a `_queued` JSONL line.
 
     No `seq` field — queued entries are not part of the main partition.
     Carries the same fields the frontend's queued-bubble render consumes
@@ -369,7 +369,7 @@ def update_after_metadata_change(agent_id: str, message_id: str):
     """Append a `_replace` line after the caller committed a meta_json
     patch on a post-delivery message (interactive AGENT card).
 
-    Under the Phase 2 model, pre-delivery messages have no DB row — so this
+    Under the Phase 2 model, pre-sent messages have no DB row — so this
     helper only handles the post-delivery path and delegates to
     `update_last`. Silently no-ops if the row has been deleted between
     commit and call.
@@ -381,13 +381,13 @@ def update_after_metadata_change(agent_id: str, message_id: str):
             # Defensive: row deleted between caller's commit and this call.
             return
         if msg.display_seq is None:
-            # Defensive: caller passed a pre-delivery id. Under the new
-            # model this shouldn't happen (pre-delivery has no DB row); log
+            # Defensive: caller passed a pre-sent id. Under the new
+            # model this shouldn't happen (pre-sent has no DB row); log
             # loudly so we catch regressions rather than silently no-op.
             logger.warning(
                 "update_after_metadata_change: msg %s has no display_seq "
                 "(agent %s) — skipping. Pre-delivery metadata patches must "
-                "go through predelivery_update instead.",
+                "go through pre_sent_update instead.",
                 message_id, agent_id[:8],
             )
             return
@@ -401,10 +401,10 @@ def update_after_metadata_change(agent_id: str, message_id: str):
 # Pre-delivery API
 # ---------------------------------------------------------------------------
 #
-# These functions maintain the in-memory `_predelivery_index` and append
+# These functions maintain the in-memory `_pre_sent_index` and append
 # matching JSONL lines to the per-agent display file. They do NOT touch the
-# DB — a pre-delivery entry has no DB row by design. The moment a message is
-# sent, `predelivery_promote_to_sent` transfers ownership from file-only to
+# DB — a pre-sent entry has no DB row by design. The moment a message is
+# sent, `pre_sent_promote_to_sent` transfers ownership from file-only to
 # file+DB. See the plan for the full state machine.
 #
 # All functions are process-safe (fcntl.flock) and thread-safe
@@ -412,12 +412,13 @@ def update_after_metadata_change(agent_id: str, message_id: str):
 
 
 def _scan_file_into_index(agent_id: str) -> dict[str, dict]:
-    """Read the agent's display file once and return the pre-delivery
+    """Read the agent's display file once and return the pre-sent
     index state implied by the file (last-occurrence-wins by id, entries
-    with `_pre: true`, dropping tombstoned ones).
+    with `_pre_sent: true` (or legacy `_pre: true`), dropping tombstoned
+    ones).
 
     Returns an empty dict if the file does not exist. Does NOT mutate the
-    shared index — callers do that under `_predelivery_lock`.
+    shared index — callers do that under `_pre_sent_lock`.
     """
     path = _display_path(agent_id)
     try:
@@ -426,7 +427,7 @@ def _scan_file_into_index(agent_id: str) -> dict[str, dict]:
     except FileNotFoundError:
         return {}
     except OSError:
-        logger.exception("predelivery: failed to read %s", path)
+        logger.exception("pre_sent: failed to read %s", path)
         return {}
 
     seen: dict[str, dict] = {}
@@ -447,60 +448,64 @@ def _scan_file_into_index(agent_id: str) -> dict[str, dict]:
     for mid, obj in seen.items():
         if obj.get("_deleted"):
             continue
-        if not obj.get("_pre"):
+        if not (obj.get("_pre_sent") or obj.get("_pre")):
             continue
+        # Normalise: in-memory state always uses _pre_sent going forward.
+        if "_pre" in obj and "_pre_sent" not in obj:
+            obj = dict(obj)
+            obj["_pre_sent"] = obj.pop("_pre")
         result[mid] = obj
     return result
 
 
 def _ensure_index_loaded(agent_id: str) -> None:
-    """Populate `_predelivery_index[agent_id]` from disk if not yet loaded.
+    """Populate `_pre_sent_index[agent_id]` from disk if not yet loaded.
 
-    Idempotent: subsequent calls are O(1). Holds `_predelivery_lock` for
+    Idempotent: subsequent calls are O(1). Holds `_pre_sent_lock` for
     the duration of the load so concurrent calls don't double-scan.
     """
-    with _predelivery_lock:
-        if agent_id in _predelivery_index_ready:
+    with _pre_sent_lock:
+        if agent_id in _pre_sent_index_ready:
             return
         loaded = _scan_file_into_index(agent_id)
-        _predelivery_index[agent_id] = loaded
-        _predelivery_index_ready.add(agent_id)
+        _pre_sent_index[agent_id] = loaded
+        _pre_sent_index_ready.add(agent_id)
 
 
-def _validate_predelivery_entry(entry: dict) -> None:
-    """Validate a caller-supplied pre-delivery entry dict.
+def _validate_pre_sent_entry(entry: dict) -> None:
+    """Validate a caller-supplied pre-sent entry dict.
 
     Raises ValueError on missing/invalid required fields.
     """
     required = ("id", "role", "content", "source", "status", "created_at")
     for field in required:
         if field not in entry:
-            raise ValueError(f"predelivery entry missing required field: {field}")
+            raise ValueError(f"pre_sent entry missing required field: {field}")
     if entry["role"] != "USER":
         raise ValueError(
-            f"predelivery entry role must be 'USER', got {entry['role']!r}"
+            f"pre_sent entry role must be 'USER', got {entry['role']!r}"
         )
     if entry["source"] not in _VALID_PRE_SOURCES:
         raise ValueError(
-            f"predelivery entry source must be one of {_VALID_PRE_SOURCES}, "
+            f"pre_sent entry source must be one of {_VALID_PRE_SOURCES}, "
             f"got {entry['source']!r}"
         )
     if entry["status"] not in _VALID_PRE_STATUSES:
         raise ValueError(
-            f"predelivery entry status must be one of {_VALID_PRE_STATUSES}, "
+            f"pre_sent entry status must be one of {_VALID_PRE_STATUSES}, "
             f"got {entry['status']!r}"
         )
 
 
-def predelivery_create(agent_id: str, entry: dict) -> str:
-    """Append a new pre-delivery entry to the agent's display file and
+def pre_sent_create(agent_id: str, entry: dict) -> str:
+    """Append a new pre-sent entry to the agent's display file and
     insert it into the in-memory index.
 
     Precondition: `entry` is a dict with the required fields (id, role,
     content, source, status, created_at). Optional fields (scheduled_at,
     metadata) may be present.
 
-    Fills defaults (_queued=True, _pre=True, delivered_at=None,
+    Fills defaults (_queued=True, _pre_sent=True, delivered_at=None,
     completed_at=None, tool_use_id=None) if absent.
 
     Returns the entry id.
@@ -508,13 +513,13 @@ def predelivery_create(agent_id: str, entry: dict) -> str:
     Raises:
         ValueError: if required fields are missing or invalid.
     """
-    _validate_predelivery_entry(entry)
+    _validate_pre_sent_entry(entry)
     _ensure_index_loaded(agent_id)
 
     full = dict(entry)
     full.setdefault("_queued", True)
     full["_queued"] = True  # enforce
-    full["_pre"] = True
+    full["_pre_sent"] = True
     full.setdefault("scheduled_at", None)
     full.setdefault("metadata", None)
     full.setdefault("delivered_at", None)
@@ -528,48 +533,52 @@ def predelivery_create(agent_id: str, entry: dict) -> str:
     path = _display_path(agent_id)
     _write_locked(path, [line])
 
-    with _predelivery_lock:
-        bucket = _predelivery_index.setdefault(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.setdefault(agent_id, {})
         bucket[msg_id] = full
-        _predelivery_index_ready.add(agent_id)
+        _pre_sent_index_ready.add(agent_id)
 
     return msg_id
 
 
-def predelivery_update(agent_id: str, msg_id: str, patch: dict) -> None:
-    """Merge `patch` into the existing pre-delivery entry and append a
-    `_queued + _pre + _replace` line.
+def pre_sent_update(agent_id: str, msg_id: str, patch: dict) -> None:
+    """Merge `patch` into the existing pre-sent entry and append a
+    `_queued + _pre_sent + _replace` line.
 
     Only these fields are mergeable: content, scheduled_at, metadata,
     status. Other fields in `patch` are ignored.
 
-    Precondition: entry must exist in the index (no DB row, still _pre).
+    Precondition: entry must exist in the index (no DB row, still
+    _pre_sent).
 
     Raises:
-        KeyError: if msg_id is not a pre-delivery entry for this agent.
+        KeyError: if msg_id is not a pre-sent entry for this agent.
     """
     _ensure_index_loaded(agent_id)
 
     merged: dict
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         current = bucket.get(msg_id)
         if current is None:
             raise KeyError(
-                f"predelivery_update: no pre-delivery entry for msg_id="
+                f"pre_sent_update: no pre-sent entry for msg_id="
                 f"{msg_id} on agent {agent_id[:8]}"
             )
-        if not current.get("_pre"):
+        if not (current.get("_pre_sent") or current.get("_pre")):
             raise KeyError(
-                f"predelivery_update: msg {msg_id} is not a pre-delivery "
-                "entry (no _pre marker) — caller must use update_last"
+                f"pre_sent_update: msg {msg_id} is not a pre-sent "
+                "entry (no _pre_sent marker) — caller must use update_last"
             )
         merged = dict(current)
+        # Drop legacy field if present so the rewritten line carries the
+        # canonical _pre_sent marker only.
+        merged.pop("_pre", None)
         for field in ("content", "scheduled_at", "metadata", "status"):
             if field in patch:
                 merged[field] = patch[field]
         merged["_queued"] = True
-        merged["_pre"] = True
+        merged["_pre_sent"] = True
         merged["_replace"] = True
         bucket[msg_id] = {k: v for k, v in merged.items() if k != "_replace"}
 
@@ -580,36 +589,36 @@ def predelivery_update(agent_id: str, msg_id: str, patch: dict) -> None:
     _write_locked(path, [json.dumps(merged, separators=(",", ":"))])
 
 
-def predelivery_cancel(agent_id: str, msg_id: str) -> None:
-    """Soft-cancel a queued/scheduled pre-delivery entry.
+def pre_sent_cancel(agent_id: str, msg_id: str) -> None:
+    """Soft-cancel a queued/scheduled pre-sent entry.
 
     Patches status='cancelled' and appends a _replace line. The entry
-    remains visible (grey bubble) until `predelivery_tombstone` is called.
+    remains visible (grey bubble) until `pre_sent_tombstone` is called.
 
     Raises:
         KeyError: if the entry doesn't exist.
         ValueError: if the current status is not 'queued' or 'scheduled'.
     """
     _ensure_index_loaded(agent_id)
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         current = bucket.get(msg_id)
         if current is None:
             raise KeyError(
-                f"predelivery_cancel: no pre-delivery entry for msg_id="
+                f"pre_sent_cancel: no pre-sent entry for msg_id="
                 f"{msg_id} on agent {agent_id[:8]}"
             )
         cur_status = current.get("status")
         if cur_status not in ("queued", "scheduled"):
             raise ValueError(
-                f"predelivery_cancel: current status is {cur_status!r}, "
+                f"pre_sent_cancel: current status is {cur_status!r}, "
                 "only 'queued' or 'scheduled' can be cancelled"
             )
-    predelivery_update(agent_id, msg_id, {"status": "cancelled"})
+    pre_sent_update(agent_id, msg_id, {"status": "cancelled"})
 
 
-def predelivery_tombstone(agent_id: str, msg_id: str) -> None:
-    """Hard-delete a cancelled pre-delivery entry.
+def pre_sent_tombstone(agent_id: str, msg_id: str) -> None:
+    """Hard-delete a cancelled pre-sent entry.
 
     Appends `{"id": msg_id, "_deleted": True}` tombstone and removes the
     id from the in-memory index.
@@ -620,17 +629,17 @@ def predelivery_tombstone(agent_id: str, msg_id: str) -> None:
             cancel first).
     """
     _ensure_index_loaded(agent_id)
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         current = bucket.get(msg_id)
         if current is None:
             raise KeyError(
-                f"predelivery_tombstone: no pre-delivery entry for msg_id="
+                f"pre_sent_tombstone: no pre-sent entry for msg_id="
                 f"{msg_id} on agent {agent_id[:8]}"
             )
         if current.get("status") != "cancelled":
             raise ValueError(
-                "predelivery_tombstone: entry must be 'cancelled' first "
+                "pre_sent_tombstone: entry must be 'cancelled' first "
                 f"(current status={current.get('status')!r})"
             )
         bucket.pop(msg_id, None)
@@ -640,8 +649,8 @@ def predelivery_tombstone(agent_id: str, msg_id: str) -> None:
     _write_locked(path, [_serialize_tombstone(msg_id)])
 
 
-def predelivery_list(agent_id: str) -> list[dict]:
-    """Return the current pre-delivery entries for an agent as a list.
+def pre_sent_list(agent_id: str) -> list[dict]:
+    """Return the current pre-sent entries for an agent as a list.
 
     Cheap — reads the in-memory index. Returns shallow copies of each
     entry dict, so callers can mutate freely without affecting index
@@ -649,35 +658,35 @@ def predelivery_list(agent_id: str) -> list[dict]:
     for entries that have not been updated out of band.
     """
     _ensure_index_loaded(agent_id)
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         return [dict(v) for v in bucket.values()]
 
 
-def predelivery_get(agent_id: str, msg_id: str) -> dict | None:
-    """Return a shallow copy of a pre-delivery entry, or None."""
+def pre_sent_get(agent_id: str, msg_id: str) -> dict | None:
+    """Return a shallow copy of a pre-sent entry, or None."""
     _ensure_index_loaded(agent_id)
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         current = bucket.get(msg_id)
         if current is None:
             return None
         return dict(current)
 
 
-def predelivery_promote_to_sent(
+def pre_sent_promote_to_sent(
     agent_id: str,
     msg_id: str,
     seq: int,
     sent_line: dict,
 ) -> None:
-    """Atomically transition a pre-delivery entry to sent (DB-backed).
+    """Atomically transition a pre-sent entry to sent (DB-backed).
 
     Under one flock:
-      1. append `{"id": msg_id, "_deleted": True}` — evicts the _pre line
-         from the reader's queued partition
+      1. append `{"id": msg_id, "_deleted": True}` — evicts the _pre_sent
+         line from the reader's queued partition
       2. append `sent_line` — the regular delivered-partition entry (must
-         carry a seq and not be _queued/_pre)
+         carry a seq and not be _queued/_pre_sent)
 
     Also removes msg_id from the in-memory index.
 
@@ -686,25 +695,25 @@ def predelivery_promote_to_sent(
 
     Raises:
         ValueError: if `sent_line` has no `id` or its id doesn't match
-            `msg_id`, or if it carries _queued / _pre markers.
+            `msg_id`, or if it carries _queued / _pre_sent markers.
     """
     if sent_line.get("id") != msg_id:
         raise ValueError(
-            f"predelivery_promote_to_sent: sent_line id "
+            f"pre_sent_promote_to_sent: sent_line id "
             f"{sent_line.get('id')!r} does not match msg_id {msg_id!r}"
         )
-    if sent_line.get("_queued") or sent_line.get("_pre"):
+    if sent_line.get("_queued") or sent_line.get("_pre_sent") or sent_line.get("_pre"):
         raise ValueError(
-            "predelivery_promote_to_sent: sent_line must not carry "
-            "_queued or _pre markers"
+            "pre_sent_promote_to_sent: sent_line must not carry "
+            "_queued or _pre_sent markers"
         )
     # seq is informational here — the caller embedded it into sent_line
     # already; we don't double-write.
     _ = seq
 
     _ensure_index_loaded(agent_id)
-    with _predelivery_lock:
-        bucket = _predelivery_index.get(agent_id, {})
+    with _pre_sent_lock:
+        bucket = _pre_sent_index.get(agent_id, {})
         bucket.pop(msg_id, None)
 
     os.makedirs(DISPLAY_DIR, exist_ok=True)
@@ -723,15 +732,16 @@ def rebuild_agent(agent_id: str):
     accumulating and ensures the file reflects the current DB state.
 
     Read-before-truncate: before truncating, reads the current file and
-    preserves any pre-delivery (`_pre: true`) entries that are not
-    tombstoned — these have no DB row by design, so rebuilding solely
-    from the DB would drop them. After the DB-driven flush completes,
-    the preserved entries are appended back and the in-memory pre-
-    delivery index is rebuilt for this agent.
+    preserves any pre-sent (`_pre_sent: true`, or legacy `_pre: true`)
+    entries that are not tombstoned — these have no DB row by design, so
+    rebuilding solely from the DB would drop them. After the DB-driven
+    flush completes, the preserved entries are appended back and the
+    in-memory pre-sent index is rebuilt for this agent.
     """
     path = _display_path(agent_id)
 
-    # 1. Read-before-truncate: snapshot surviving _pre entries.
+    # 1. Read-before-truncate: snapshot surviving _pre_sent entries
+    #    (the scan normalises legacy _pre lines to _pre_sent).
     preserved_pre: dict[str, dict] = _scan_file_into_index(agent_id)
 
     db = SessionLocal()
@@ -758,7 +768,7 @@ def rebuild_agent(agent_id: str):
 
     flush_agent(agent_id)
 
-    # 2. Re-append preserved _pre entries and rebuild the in-memory index.
+    # 2. Re-append preserved _pre_sent entries and rebuild the in-memory index.
     if preserved_pre:
         os.makedirs(DISPLAY_DIR, exist_ok=True)
         pre_lines = [
@@ -769,13 +779,13 @@ def rebuild_agent(agent_id: str):
             _write_locked(path, pre_lines)
         except OSError:
             logger.exception(
-                "rebuild_agent: failed to re-append _pre entries for agent %s",
+                "rebuild_agent: failed to re-append _pre_sent entries for agent %s",
                 agent_id[:8],
             )
 
-    with _predelivery_lock:
-        _predelivery_index[agent_id] = dict(preserved_pre)
-        _predelivery_index_ready.add(agent_id)
+    with _pre_sent_lock:
+        _pre_sent_index[agent_id] = dict(preserved_pre)
+        _pre_sent_index_ready.add(agent_id)
 
 
 def delete_agent(agent_id: str):
@@ -793,7 +803,7 @@ def startup_rebuild_all():
     """On server startup, rebuild display files for all active agents.
 
     Query agents WHERE status NOT IN ('STOPPED', 'ERROR'), rebuild each.
-    After rebuild, ensure every active agent's pre-delivery index is
+    After rebuild, ensure every active agent's pre-sent index is
     initialised (read-only scan is cheap for any agent the rebuild step
     already loaded).
     """
@@ -819,14 +829,14 @@ def startup_rebuild_all():
             logger.exception("Failed to rebuild display file for agent %s", aid[:8])
 
     # Safety net: for agents whose rebuild failed or was skipped, still
-    # load the pre-delivery index so the reader endpoint serves a correct
+    # load the pre-sent index so the reader endpoint serves a correct
     # queued partition on first request.
     for (aid,) in agents:
         try:
             _ensure_index_loaded(aid)
         except Exception:
             logger.exception(
-                "Failed to load predelivery index for agent %s", aid[:8]
+                "Failed to load pre_sent index for agent %s", aid[:8]
             )
 
     logger.info("Display file rebuild complete")

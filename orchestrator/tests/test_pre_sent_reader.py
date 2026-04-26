@@ -1,7 +1,7 @@
-"""Reader-side tests for the Phase 1 predelivery flow.
+"""Reader-side tests for the Phase 1 pre_sent flow.
 
 Verifies GET /api/agents/{id}/display sources queued entries from the
-in-memory _predelivery_index on initial load, returns an empty queued
+in-memory _pre_sent_index on initial load, returns an empty queued
 list on incremental polls with `queued_authoritative: false`, and
 still honors legacy `_queued` lines (without `_pre`) for backwards
 compat during the Phase 1→2 transition.
@@ -16,10 +16,10 @@ import pytest
 from display_writer import (
     DISPLAY_DIR,
     _display_path,
-    _predelivery_index,
-    _predelivery_index_ready,
-    _predelivery_lock,
-    predelivery_create,
+    _pre_sent_index,
+    _pre_sent_index_ready,
+    _pre_sent_lock,
+    pre_sent_create,
 )
 from models import Agent, AgentMode, AgentStatus, Project
 
@@ -71,19 +71,19 @@ def reader_agent(db_engine):
         os.unlink(_display_path(aid))
     except FileNotFoundError:
         pass
-    with _predelivery_lock:
-        _predelivery_index.pop(aid, None)
-        _predelivery_index_ready.discard(aid)
+    with _pre_sent_lock:
+        _pre_sent_index.pop(aid, None)
+        _pre_sent_index_ready.discard(aid)
 
 
 @pytest.mark.anyio
 async def test_initial_load_returns_pre_entries(client, reader_agent):
-    """predelivery_create 3 entries → initial GET returns them in data.queued."""
+    """pre_sent_create 3 entries → initial GET returns them in data.queued."""
     aid = reader_agent
     ids = [
-        predelivery_create(aid, _mk_entry(content="a")),
-        predelivery_create(aid, _mk_entry(content="b")),
-        predelivery_create(aid, _mk_entry(content="c")),
+        pre_sent_create(aid, _mk_entry(content="a")),
+        pre_sent_create(aid, _mk_entry(content="b")),
+        pre_sent_create(aid, _mk_entry(content="c")),
     ]
 
     resp = await client.get(f"/api/agents/{aid}/display?tail_bytes=50000")
@@ -93,9 +93,9 @@ async def test_initial_load_returns_pre_entries(client, reader_agent):
     assert data["queued_authoritative"] is True
     returned_ids = {e["id"] for e in data["queued"]}
     assert returned_ids == set(ids)
-    # Each entry carries the _pre marker (aliased in the JSON response).
+    # Each entry carries the _pre_sent marker (aliased in the JSON response).
     for e in data["queued"]:
-        assert e.get("_pre") is True
+        assert e.get("_pre_sent") is True
         assert e["role"] == "USER"
         assert e["content"] in {"a", "b", "c"}
 
@@ -106,7 +106,7 @@ async def test_incremental_poll_returns_null_queued(client, reader_agent):
     queued_authoritative=false — frontend must leave queued state alone.
     """
     aid = reader_agent
-    predelivery_create(aid, _mk_entry(content="only"))
+    pre_sent_create(aid, _mk_entry(content="only"))
 
     # Initial load — capture next_offset
     resp0 = await client.get(f"/api/agents/{aid}/display?tail_bytes=50000")
@@ -158,5 +158,6 @@ async def test_file_without_pre_index_still_reads_legacy(client, reader_agent):
     # Find the legacy entry
     entry = next(e for e in data["queued"] if e["id"] == legacy_id)
     assert entry["content"] == "legacy queued"
-    # Legacy lines have no _pre marker.
+    # Legacy lines have no _pre / _pre_sent marker.
     assert entry.get("_pre") is None
+    assert entry.get("_pre_sent") is None
