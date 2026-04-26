@@ -3,7 +3,7 @@ import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject } from "../lib/api";
+import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
 import FluentEmoji from "../components/FluentEmoji";
@@ -181,7 +181,7 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   // Multi-select state
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(new Set());
-  const [bulkArchiving, setBulkArchiving] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const toast = useToast();
 
   const enterSelectMode = useCallback((preSelectName) => {
@@ -358,26 +358,52 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
     setSelected(new Set());
   }, []);
 
-  const handleBulkArchive = useCallback(async () => {
-    if (selected.size === 0 || bulkArchiving) return;
-    if (!confirm(`Archive ${selected.size} project${selected.size > 1 ? "s" : ""}? They'll be moved to Trash.`)) return;
-    setBulkArchiving(true);
-    let ok = 0, failed = 0;
+  // Partition selected names by their current active/archived state, so
+  // bulk actions can light up the right buttons.
+  const { selectedActive, selectedArchived } = useMemo(() => {
+    const active = [];
+    const archived = [];
+    const byName = Object.fromEntries(folders.map((f) => [f.name, f]));
     for (const name of selected) {
-      try {
-        await archiveProject(name);
-        ok++;
-      } catch {
-        failed++;
-      }
+      const f = byName[name];
+      if (!f) continue;
+      if (f.active) active.push(name);
+      else archived.push(name);
     }
-    setBulkArchiving(false);
-    if (failed > 0) toast.error(`Archived ${ok}, failed ${failed}`);
-    else toast.success(`Archived ${ok} project${ok !== 1 ? "s" : ""}`);
+    return { selectedActive: active, selectedArchived: archived };
+  }, [selected, folders]);
+
+  const runBulk = useCallback(async (names, fn, verb) => {
+    if (names.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    let ok = 0, failed = 0;
+    for (const name of names) {
+      try { await fn(name); ok++; } catch { failed++; }
+    }
+    setBulkBusy(false);
+    if (failed > 0) toast.error(`${verb} ${ok}, failed ${failed}`);
+    else toast.success(`${verb} ${ok} project${ok !== 1 ? "s" : ""}`);
     exitSelectMode();
     load();
     window.dispatchEvent(new CustomEvent("projects-data-changed"));
-  }, [selected, bulkArchiving, toast, exitSelectMode, load]);
+  }, [bulkBusy, toast, exitSelectMode, load]);
+
+  const handleBulkArchive = useCallback(() => {
+    if (selectedActive.length === 0) return;
+    if (!confirm(`Archive ${selectedActive.length} project${selectedActive.length > 1 ? "s" : ""}?`)) return;
+    runBulk(selectedActive, archiveProject, "Archived");
+  }, [selectedActive, runBulk]);
+
+  const handleBulkActivate = useCallback(() => {
+    if (selectedArchived.length === 0) return;
+    runBulk(selectedArchived, (name) => createProject({ name }), "Activated");
+  }, [selectedArchived, runBulk]);
+
+  const handleBulkDelete = useCallback(() => {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} project${selected.size > 1 ? "s" : ""}? Files will be moved to Trash.`)) return;
+    runBulk([...selected], deleteProject, "Deleted");
+  }, [selected, runBulk]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -587,14 +613,40 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
           <div className="max-w-xl mx-auto bg-surface border border-divider rounded-xl shadow-lg p-3 flex items-center justify-center gap-3">
             <button
               type="button"
+              onClick={handleBulkActivate}
+              disabled={bulkBusy || selectedArchived.length === 0 || selectedActive.length > 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-cyan-600 text-white text-sm font-medium hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              {selectedArchived.length > 0 && selectedActive.length === 0
+                ? `Activate ${selectedArchived.length}`
+                : "Activate"}
+            </button>
+            <button
+              type="button"
               onClick={handleBulkArchive}
-              disabled={bulkArchiving}
-              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 disabled:opacity-50 transition-colors"
+              disabled={bulkBusy || selectedActive.length === 0 || selectedArchived.length > 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-zinc-600 text-white text-sm font-medium hover:bg-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 100-4h14a2 2 0 100 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+              {selectedActive.length > 0 && selectedArchived.length === 0
+                ? `Archive ${selectedActive.length}`
+                : "Archive"}
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={bulkBusy}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              {bulkArchiving ? "Archiving..." : `Archive ${selected.size}`}
+              {bulkBusy ? "..." : `Delete ${selected.size}`}
             </button>
           </div>
         </div>
