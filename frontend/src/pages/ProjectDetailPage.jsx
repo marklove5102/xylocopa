@@ -1399,21 +1399,21 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         ) : (
           <div className="space-y-3">
             {selecting && (
-              <div className="flex items-center justify-between px-1 -mt-1 mb-1">
+              <div className="grid grid-cols-3 items-center px-1 -mt-1 mb-1">
                 <button
                   type="button"
                   onClick={allSelected ? deselectAll : selectAll}
-                  className="text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                  className="justify-self-start text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
                 >
                   {allSelected ? "Deselect All" : "Select All"}
                 </button>
-                <span className="text-sm text-label">
+                <span className="justify-self-center text-sm text-label">
                   {selected.size > 0 ? `${selected.size} selected` : "Select agents"}
                 </span>
                 <button
                   type="button"
                   onClick={exitSelectMode}
-                  className="text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                  className="justify-self-end text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
                 >
                   Done
                 </button>
