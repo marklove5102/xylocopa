@@ -3952,7 +3952,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     onPointerLeave={(e) => { if (e.pointerType === "mouse") idScheduleHoverClose(); }}
                   >
                     <div className="relative">
-                      <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-xl shadow-black/40 flex items-center gap-2 whitespace-nowrap">
+                      <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-[0_2px_8px_rgba(0,0,0,0.3),0_-2px_8px_rgba(0,0,0,0.2)] flex items-center gap-2 whitespace-nowrap">
                         <span className="text-[11px] text-dim">xylo id:</span>
                         <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                         <button
