@@ -3882,17 +3882,29 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 <button
                   ref={idPillRef}
                   type="button"
-                  onPointerDown={() => {
+                  onPointerEnter={(e) => {
+                    if (e.pointerType !== "mouse") return;
+                    const rect = idPillRef.current?.getBoundingClientRect();
+                    if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
+                    setShowIdPopover(true);
+                  }}
+                  onPointerLeave={(e) => {
+                    if (e.pointerType !== "mouse") return;
+                    setShowIdPopover(false);
+                  }}
+                  onPointerDown={(e) => {
+                    if (e.pointerType === "mouse") return;
                     idLongPressFiredRef.current = false;
                     idPressTimerRef.current = setTimeout(() => {
                       idPressTimerRef.current = null;
                       idLongPressFiredRef.current = true;
-                      navigator.clipboard.writeText(agent.id).then(() => {
-                        showToast("Copied " + agent.id);
-                      }).catch(() => {});
+                      const rect = idPillRef.current?.getBoundingClientRect();
+                      if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
+                      setShowIdPopover(true);
                     }, LONG_PRESS_DELAY);
                   }}
-                  onPointerUp={() => {
+                  onPointerUp={(e) => {
+                    if (e.pointerType === "mouse") return;
                     if (idPressTimerRef.current) {
                       clearTimeout(idPressTimerRef.current);
                       idPressTimerRef.current = null;
@@ -3906,34 +3918,20 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
+                    // Swallow the click that follows a long-press
                     if (idLongPressFiredRef.current) {
                       idLongPressFiredRef.current = false;
-                      return;
                     }
-                    // Defer popover toggle so a double-click can preempt it
-                    if (idClickTimerRef.current) {
-                      clearTimeout(idClickTimerRef.current);
-                    }
-                    idClickTimerRef.current = setTimeout(() => {
-                      idClickTimerRef.current = null;
-                      const rect = idPillRef.current?.getBoundingClientRect();
-                      if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
-                      setShowIdPopover(v => !v);
-                    }, DOUBLE_TAP_WINDOW);
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    if (idClickTimerRef.current) {
-                      clearTimeout(idClickTimerRef.current);
-                      idClickTimerRef.current = null;
-                    }
                     setShowIdPopover(false);
                     navigator.clipboard.writeText(agent.id).then(() => {
                       showToast("Copied " + agent.id);
                     }).catch(() => {});
                   }}
                   onContextMenu={(e) => e.preventDefault()}
-                  title="Click: show id · Double-click / long-press: copy"
+                  title="Hover / long-press: show id · Double-click: copy"
                   style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
                   className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
