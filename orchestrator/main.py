@@ -399,10 +399,29 @@ async def lifespan(app: FastAPI):
     from view_tracking import run_tick_loop as _view_tick
     view_track_task = asyncio.create_task(_view_tick())
 
+    # Daily heartbeat scheduled at local 00:00. Bypasses the 20h gate so a daily
+    # event fires even on long-running orchestrators that never restart.
+    async def _daily_heartbeat_loop():
+        import telemetry as _telemetry
+        from datetime import datetime, timedelta
+        while True:
+            now_local = datetime.now()
+            next_midnight = (now_local + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            sleep_s = max(1.0, (next_midnight - now_local).total_seconds())
+            await asyncio.sleep(sleep_s)
+            try:
+                _telemetry.record_heartbeat(force=True)
+            except Exception:
+                logger.debug("Scheduled heartbeat failed (non-fatal)", exc_info=True)
+
+    daily_heartbeat_task = asyncio.create_task(_daily_heartbeat_loop())
+
     yield
 
     # Shutdown
-    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task, view_track_task):
+    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task, view_track_task, daily_heartbeat_task):
         if task:
             task.cancel()
             try:

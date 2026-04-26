@@ -195,8 +195,13 @@ def _send(event: str, install_id: str) -> None:
 
 # ---- Public API ----
 
-def record_heartbeat() -> None:
-    """Send daily_heartbeat if last was >20h ago. Creates install_id on first call."""
+def record_heartbeat(force: bool = False) -> None:
+    """Send daily_heartbeat. Creates install_id on first call.
+
+    Without `force`, gated to >20h since last send (used by startup path).
+    With `force=True`, bypasses the gate (used by the scheduled local-midnight
+    task in main.py lifespan, which guarantees one event per local day).
+    """
     if not _is_enabled():
         return
     try:
@@ -205,13 +210,13 @@ def record_heartbeat() -> None:
             return
 
         now = _now_ts()
-        try:
-            last = float(LAST_HEARTBEAT_FILE.read_text().strip())
-        except (FileNotFoundError, ValueError):
-            last = 0.0
-
-        if now - last < HEARTBEAT_MIN_INTERVAL_SECONDS:
-            return
+        if not force:
+            try:
+                last = float(LAST_HEARTBEAT_FILE.read_text().strip())
+            except (FileNotFoundError, ValueError):
+                last = 0.0
+            if now - last < HEARTBEAT_MIN_INTERVAL_SECONDS:
+                return
 
         _ensure_dirs()
         LAST_HEARTBEAT_FILE.write_text(str(now))
