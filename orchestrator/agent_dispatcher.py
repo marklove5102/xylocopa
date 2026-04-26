@@ -2655,6 +2655,7 @@ Here are the day's conversations (with timestamps):
             predelivery_list,
             predelivery_tombstone,
         )
+        from websocket import emit_predelivery_tombstoned
 
         for e in predelivery_list(agent_id):
             try:
@@ -2671,6 +2672,12 @@ Here are the day's conversations (with timestamps):
                             e.get("id", "?")[:8],
                         )
                 predelivery_tombstone(agent_id, e["id"])
+                # Push tombstone so the chat page removes the entry without
+                # waiting for a refresh; mirrors the per-entry cancel path
+                # in routers/agents.py.
+                asyncio.ensure_future(
+                    emit_predelivery_tombstoned(agent_id, e["id"])
+                )
             except Exception:
                 logger.exception(
                     "_fail_all_predelivery: failed to tombstone %s for agent %s "
