@@ -97,6 +97,12 @@ svg text { font-family: inherit; }
   .shadow-card {
     box-shadow: 0 1px 3px var(--color-shadow);
   }
+  /* Soft macOS-style popover shadow: big blur, low opacity, faint
+     opposite-side halo so the surface reads as lit from horizontal light
+     rather than a hard drop. */
+  .shadow-popover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.14), 0 -1px 6px rgba(0,0,0,0.06);
+  }
 
   /* Glass bar */
   .glass-bar {

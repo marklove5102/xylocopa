@@ -122,7 +122,7 @@ export default function WorktreePill({ name, padY = "py-px", onCopy }) {
           onPointerLeave={(e) => { if (e.pointerType === "mouse") scheduleHoverClose(); }}
         >
           <div className="relative">
-            <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-[0_2px_8px_rgba(0,0,0,0.3),0_-2px_8px_rgba(0,0,0,0.2)] flex items-center gap-2 whitespace-nowrap">
+            <div className="px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-popover flex items-center gap-2 whitespace-nowrap">
               <span className="text-[11px] text-dim">worktree:</span>
               <span className="text-[11px] font-mono text-body select-all">{display}</span>
               {name && (
