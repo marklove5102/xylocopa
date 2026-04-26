@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Component } from "react";
+import { createPortal } from "react-dom";
 import { Bell, BellOff, Hourglass } from "lucide-react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
@@ -2463,6 +2464,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
   const [headerExpanded, setHeaderExpanded] = useState(false);
   const [showIdPopover, setShowIdPopover] = useState(false);
+  const [idPopoverPos, setIdPopoverPos] = useState(null);
+  const idPillRef = useRef(null);
   const idPressTimerRef = useRef(null);
   const idLongPressFiredRef = useRef(false);
   const idClickTimerRef = useRef(null);
@@ -3875,8 +3878,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   Task
                 </button>
               )}
-              <span className="shrink-0 relative inline-flex items-center">
+              <span className="shrink-0 inline-flex items-center">
                 <button
+                  ref={idPillRef}
                   type="button"
                   onPointerDown={() => {
                     idLongPressFiredRef.current = false;
@@ -3912,6 +3916,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     }
                     idClickTimerRef.current = setTimeout(() => {
                       idClickTimerRef.current = null;
+                      const rect = idPillRef.current?.getBoundingClientRect();
+                      if (rect) setIdPopoverPos({ top: rect.bottom + 4, left: rect.left });
                       setShowIdPopover(v => !v);
                     }, DOUBLE_TAP_WINDOW);
                   }}
@@ -3933,13 +3939,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 >
                   {agent.id.slice(0, 4)}
                 </button>
-                {showIdPopover && (
+                {showIdPopover && idPopoverPos && createPortal(
                   <>
                     <div
-                      className="fixed inset-0 z-10"
+                      className="fixed inset-0 z-[60]"
                       onClick={() => setShowIdPopover(false)}
                     />
-                    <div className="absolute z-20 left-0 top-full mt-1 px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap">
+                    <div
+                      className="fixed z-[61] px-2 py-1.5 rounded-lg bg-surface border border-divider shadow-lg flex items-center gap-2 whitespace-nowrap"
+                      style={{ top: idPopoverPos.top, left: idPopoverPos.left }}
+                    >
                       <span className="text-[11px] font-mono text-body select-all">{agent.id}</span>
                       <button
                         type="button"
@@ -3955,7 +3964,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                         Copy
                       </button>
                     </div>
-                  </>
+                  </>,
+                  document.body
                 )}
               </span>
             </div>
