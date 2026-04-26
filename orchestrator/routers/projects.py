@@ -576,7 +576,6 @@ Agent: {agent_name} | Task: {task_title}
 
     # Store as AgentInsightSuggestion rows
     own_db = SessionLocal()
-    _agent_status = None
     try:
         for content in insight_items:
             own_db.add(AgentInsightSuggestion(
@@ -587,7 +586,6 @@ Agent: {agent_name} | Task: {task_title}
         if agent:
             agent.has_pending_suggestions = True
             agent.insight_status = None  # Clear — success
-            _agent_status = agent.status.value if agent.status else "STOPPED"
             # Save combined insights as task agent_summary (replaces the
             # quick last_message_preview saved at stop time)
             if agent.task_id:
@@ -601,21 +599,12 @@ Agent: {agent_name} | Task: {task_title}
     finally:
         own_db.close()
 
-    # Emit WS events (from background thread → use stored main event loop)
-    from websocket import emit_agent_update, emit_progress_suggestions_ready
+    # Emit WS event (from background thread → use stored main event loop)
+    from websocket import emit_progress_suggestions_ready
     loop = _main_event_loop
     if loop and loop.is_running():
         asyncio.run_coroutine_threadsafe(
             emit_progress_suggestions_ready(agent_id, len(insight_items), project_name),
-            loop,
-        )
-        # Push insight_status="" (cleared) so the agent list / chat header
-        # drop the "generating" indicator without waiting for a poll.
-        # The failure paths already call _set_insight_status which emits;
-        # mirror that for the success path.
-        asyncio.run_coroutine_threadsafe(
-            emit_agent_update(agent_id, _agent_status or "STOPPED",
-                              project_name, insight_status=""),
             loop,
         )
     else:
