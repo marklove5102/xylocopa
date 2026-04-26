@@ -24,6 +24,9 @@ import {
   fetchTaskCounts,
   searchMessages,
   searchProjectFiles,
+  stopAgent,
+  deleteAgent,
+  markAgentRead,
 } from "../lib/api";
 import BotIcon from "../components/BotIcon";
 import ProjectRing from "../components/ProjectRing";
@@ -448,6 +451,28 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   const [refreshing, setRefreshing] = useState(false);
   const [fileModal, setFileModal] = useState(null); // "CLAUDE.md" | "PROGRESS.md" | null
+
+  // Multi-select state for the agent list (mirrors AgentsPage)
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const enterSelectMode = useCallback((preSelectId) => {
+    setSelecting(true);
+    setSelected(preSelectId ? new Set([preSelectId]) : new Set());
+  }, []);
+  const exitSelectMode = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, []);
+  const toggleOne = useCallback((id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const [showBrowser, setShowBrowser] = useState(false);
   const [fileExists, setFileExists] = useState({ "CLAUDE.md": null, "PROGRESS.md": null });
   const [refreshingClaudeMd, setRefreshingClaudeMd] = useState(false);
@@ -883,6 +908,76 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     );
   }, [tabFiltered, search]);
 
+  // Selection partition for the bulk action bar
+  const stoppableSelected = useMemo(
+    () => filtered.filter((a) => selected.has(a.id) && a.status !== "STOPPED"),
+    [filtered, selected],
+  );
+  const unreadSelected = useMemo(
+    () => filtered.filter((a) => selected.has(a.id) && a.unread_count > 0),
+    [filtered, selected],
+  );
+  const deletableSelected = useMemo(
+    () => filtered.filter((a) => selected.has(a.id) && (a.status === "STOPPED" || a.status === "ERROR")),
+    [filtered, selected],
+  );
+  const allSelected = filtered.length > 0 && selected.size === filtered.length;
+  const selectAll = useCallback(() => setSelected(new Set(filtered.map((a) => a.id))), [filtered]);
+  const deselectAll = useCallback(() => setSelected(new Set()), []);
+
+  const reloadAgents = useCallback(async () => {
+    try {
+      const data = await fetchProjectAgents(name);
+      setAgents(Array.isArray(data) ? data : []);
+    } catch { /* swallow — caller toasts */ }
+  }, [name]);
+
+  const handleBulkMarkRead = useCallback(async () => {
+    if (unreadSelected.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    let ok = 0, failed = 0;
+    for (const a of unreadSelected) {
+      try { await markAgentRead(a.id); ok++; } catch { failed++; }
+    }
+    setBulkBusy(false);
+    if (failed > 0) toast.error(`Marked ${ok} read, failed ${failed}`);
+    else toast.success(`Marked ${ok} agent${ok !== 1 ? "s" : ""} as read`);
+    exitSelectMode();
+    reloadAgents();
+    window.dispatchEvent(new CustomEvent("agents-data-changed"));
+  }, [unreadSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+
+  const handleBulkStop = useCallback(async () => {
+    if (stoppableSelected.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    let ok = 0, failed = 0;
+    for (const a of stoppableSelected) {
+      try { await stopAgent(a.id); ok++; } catch { failed++; }
+    }
+    setBulkBusy(false);
+    if (failed > 0) toast.error(`Stopped ${ok}, failed ${failed}`);
+    else toast.success(`Stopped ${ok} agent${ok !== 1 ? "s" : ""}`);
+    exitSelectMode();
+    reloadAgents();
+    window.dispatchEvent(new CustomEvent("agents-data-changed"));
+  }, [stoppableSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (deletableSelected.length === 0 || bulkBusy) return;
+    if (!confirm(`Permanently delete ${deletableSelected.length} agent${deletableSelected.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setBulkBusy(true);
+    let ok = 0, failed = 0;
+    for (const a of deletableSelected) {
+      try { await deleteAgent(a.id); ok++; } catch { failed++; }
+    }
+    setBulkBusy(false);
+    if (failed > 0) toast.error(`Deleted ${ok}, failed ${failed}`);
+    else toast.success(`Deleted ${ok} agent${ok !== 1 ? "s" : ""}`);
+    exitSelectMode();
+    reloadAgents();
+    window.dispatchEvent(new CustomEvent("agents-data-changed"));
+  }, [deletableSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+
   // Tab counts
   const tabCounts = {
     starred: (sessions || []).filter((s) => s.starred).length,
@@ -1303,12 +1398,37 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           </div>
         ) : (
           <div className="space-y-3">
+            {selecting && (
+              <div className="flex items-center justify-between px-1 -mt-1 mb-1">
+                <button
+                  type="button"
+                  onClick={allSelected ? deselectAll : selectAll}
+                  className="text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                >
+                  {allSelected ? "Deselect All" : "Select All"}
+                </button>
+                <span className="text-sm text-label">
+                  {selected.size > 0 ? `${selected.size} selected` : "Select agents"}
+                </span>
+                <button
+                  type="button"
+                  onClick={exitSelectMode}
+                  className="text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                >
+                  Done
+                </button>
+              </div>
+            )}
             {filtered.map((agent) => (
               <AgentRow
                 key={agent.id}
                 agent={agent}
                 hideProjectTag
                 onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
+                selecting={selecting}
+                selected={selected.has(agent.id)}
+                onToggle={toggleOne}
+                onEnterSelect={enterSelectMode}
               />
             ))}
           </div>
@@ -1588,6 +1708,46 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           onClear={handleEmojiClear}
           onClose={closeEmojiPicker}
         />
+      )}
+
+      {selecting && selected.size > 0 && (
+        <div className="fixed bottom-20 left-0 right-0 z-20 px-4 pb-2 animate-bar-slide-up">
+          <div className="max-w-xl mx-auto bg-surface border border-divider rounded-xl shadow-lg p-3 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleBulkMarkRead}
+              disabled={bulkBusy || unreadSelected.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-cyan-600 text-white text-sm font-medium hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 18h10a2 2 0 002-2V8H3v8a2 2 0 002 2zM17 8h2a2 2 0 010 4h-2M8 2v3M12 2v3" />
+              </svg>
+              {unreadSelected.length === 0 ? "Read" : `Read ${unreadSelected.length}`}
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkStop}
+              disabled={bulkBusy || stoppableSelected.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+              {stoppableSelected.length === 0 ? "Stop" : `Stop ${stoppableSelected.length}`}
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={bulkBusy || deletableSelected.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-[40px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              {deletableSelected.length === 0 ? "Delete" : `Delete ${deletableSelected.length}`}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

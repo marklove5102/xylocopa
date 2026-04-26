@@ -265,10 +265,11 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 ## Gestures & Shortcuts
 
 - **Short-press the + button** to quickly add a task. **Long-press** it to choose between adding a project, agent, or task.
-- **Long-press a card** (Inbox task, Agent row, or Project tile) to enter multi-select mode — the pressed card is pre-selected. Tap others to add/remove, then use the bottom bar to bulk Start / Stop / Archive / Delete. Tap **Done** in the header to exit.
+- **Long-press a card** (Inbox task, Agent row, Project tile, or row inside a Project / Trash list) to enter multi-select mode — the pressed card is pre-selected. Tap others to add/remove, then use the bottom bar to bulk-act. Tap **Done** in the header to exit.
 - **Inbox**: AI batch-process / Start / Delete the selection.
-- **Agents**: mark Read / Stop / Delete the selection — including stopping or deleting agents in bulk (no per-row delete button; long-press is the entry point).
+- **Agents** (and inside a Project's agent tab): mark Read / Stop / Delete the selection — including stopping or deleting agents in bulk (no per-row delete button; long-press is the entry point).
 - **Projects**: Activate / Archive / Delete; the Activate and Archive buttons light up only when the selection is uniformly archived or active, otherwise only Delete is available.
+- **Trash**: bulk Restore / permanently Delete deleted projects.
 - **Double-tap an agent's session ID** to quickly copy it to the clipboard.
 - **Double-tap a message** in the chat view to quickly copy its content.
 - **Double-tap a tab** in the bottom nav to scroll to the first unread / pending item.
