@@ -223,6 +223,13 @@ async def lifespan(app: FastAPI):
     logger.info("Xylocopa starting up...")
     _main_event_loop = asyncio.get_event_loop()
 
+    # Anonymous daily heartbeat (opt-out). See orchestrator/telemetry.py.
+    try:
+        import telemetry
+        telemetry.record_heartbeat()
+    except Exception:
+        logger.debug("Telemetry heartbeat failed (non-fatal)", exc_info=True)
+
     _check_frontend_dist_staleness()
 
     # One-time migration: rename legacy ~/.agenthive → ~/.xylocopa if needed
