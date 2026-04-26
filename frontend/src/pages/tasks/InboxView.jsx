@@ -157,12 +157,12 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
       <button
         type="button"
         onClick={() => setShowDeferred(v => !v)}
-        className="flex items-center gap-1.5 mx-auto text-sm text-faint hover:text-dim transition-colors"
+        className="grid grid-cols-3 items-center w-full text-sm text-faint hover:text-dim transition-colors"
       >
-        <svg className={`w-3.5 h-3.5 transition-transform ${showDeferred ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <svg className={`w-3.5 h-3.5 justify-self-end transition-transform ${showDeferred ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        Deferred ({deferredTasks.length})
+        <span className="justify-self-center">Deferred ({deferredTasks.length})</span>
       </button>
       {showDeferred && (
         <div className="space-y-3 mt-3">
