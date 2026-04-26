@@ -2792,15 +2792,6 @@ Here are the day's conversations (with timestamps):
             action = _ACTION_TEXT.get(task.status, "Reminder")
             from notify import notify
             notify("notify_at", "", action, task.title or "Untitled task", url=f"/tasks/{task.id}")
-            # Push task_update so the bell indicator clears in connected
-            # clients without waiting for the 5s poll. The TaskDetailPage
-            # and InboxCard render notify_at when set; the frontend reloads
-            # tasks on task_update so the cleared field is picked up.
-            from websocket import emit_task_update
-            self._emit(emit_task_update(
-                task.id, task.status.value, task.project_name or "",
-                title=task.title,
-            ))
 
     def _dispatch_pending_tasks(self, db: Session):
         """Pick up PENDING v2 tasks and create tmux agents for them."""
