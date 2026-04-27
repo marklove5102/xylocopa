@@ -1061,14 +1061,37 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
                     ctx.agent_id, _compact_activity_id,
                 ))
 
-        # If turns are missing from DB, reset pointer so sync loop reimports them.
-        # Otherwise, set pointer to current state.
+        # If turns are missing from DB, decide whether this is real drift
+        # (missing turn at an index BEFORE our pointer — sync genuinely
+        # dropped it) or a benign timing gap (missing turn at an index
+        # AFTER our pointer — incremental sync hasn't run yet for it).
+        # Only real drift triggers a partial pointer rewind; benign gaps
+        # are left for the next incremental sync to handle.
         _old_count = ctx.last_turn_count
-        if missing_in_db:
-            ctx.last_turn_count = 0
+        _missing_set = set(missing_in_db)
+        _earliest_missing_idx = None
+        if _missing_set:
+            for _i, _t in enumerate(turns):
+                if len(_t) > 3 and _t[3] in _missing_set:
+                    _earliest_missing_idx = _i
+                    break
+
+        if _earliest_missing_idx is not None and _earliest_missing_idx < ctx.last_turn_count:
+            # Real drift — rewind pointer to the missing turn so
+            # incremental sync re-imports from there. UUID dedup in
+            # sync_import_new_turns skips rows that did successfully
+            # commit between earliest_missing_idx and old pointer, so
+            # this only re-creates the genuinely-missing rows.
+            ctx.last_turn_count = _earliest_missing_idx
             ctx.last_offset = 0
             ctx.last_content_hash = ""
+            logger.warning(
+                "Agent %s: real drift, rewinding pointer %d → %d",
+                ctx.agent_id[:8], _old_count, _earliest_missing_idx,
+            )
         else:
+            # No real drift (or missing turns are post-pointer, which
+            # incremental sync will handle). Advance to current.
             ctx.last_turn_count = len(turns)
             ctx.last_offset = current_size
             ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
