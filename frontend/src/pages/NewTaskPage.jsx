@@ -620,12 +620,12 @@ export default function NewTaskPage({ embedded = false }) {
                 </div>
               </div>
               {/* Controls grid — matches project page */}
-              <div className="grid grid-cols-[1fr_max-content] gap-y-2 gap-x-2 items-center">
+              <div className="grid grid-cols-[max-content_1fr] gap-y-2 gap-x-2 items-center">
                 <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                   <ModelSelector value={model} onChange={setModel} />
                   <EffortSelector value={effort} onChange={setEffort} />
                 </div>
-                <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap justify-self-end">
                   <div
                     role="switch"
                     aria-checked={skipPermissions}
@@ -636,7 +636,7 @@ export default function NewTaskPage({ embedded = false }) {
                   </div>
                   <span className="text-sm text-label">Auto</span>
                 </label>
-                <div className="col-span-2 flex items-center gap-1.5 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
                   <button
                     type="button"
                     onClick={async () => {
