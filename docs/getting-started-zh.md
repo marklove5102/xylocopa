@@ -219,6 +219,14 @@ Xylocopa 假设 agent 总有跑偏的时候。标准恢复流程是 **Try → Su
 
 ---
 
+## 用第三方 / 本地模型？*(可选)*
+
+Claude Code 本身就支持 Amazon Bedrock、Google Vertex AI，以及 LiteLLM 这类 LLM 网关（可以接本地的 Llama 等模型）。配置方式跟标准 Claude Code 一样 -- 在 shell 或 `.env` 里设置对应环境变量即可，Xylocopa 把 `claude` 当子进程拉起来，这些变量会原样继承。一份实操教程（LiteLLM + 本地模型 + Claude Code）见 [unsloth.ai/docs/basics/claude-code](https://unsloth.ai/docs/basics/claude-code)。
+
+> **关于 UI 范围的提醒：** Xylocopa 的模型下拉菜单写死了 Anthropic 的 `claude-*` 模型 ID（Opus / Sonnet / Haiku）。Bedrock / Vertex 通常能直接用，因为它们沿用了相同的模型名。但纯非 Anthropic 后端（LiteLLM → Llama 之类），你只能通过 `.env` 里的 `CC_MODEL` 默认值来跑，UI 上的 per-agent 模型切换没接通。要把自定义模型接到 UI 是个小改动（`frontend/src/lib/constants.js` + `orchestrator/config.py` 里的 `VALID_MODELS`），但不在 Xylocopa 维护范围内。
+
+---
+
 ## 接下来看什么
 
 - [README · The Loop](../README.md#the-loop) -- 完整的功能导览

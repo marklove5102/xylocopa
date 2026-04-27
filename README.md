@@ -189,6 +189,12 @@ Project code, git history, and Claude Code session JSONL files in `~/.claude/pro
 - **Claude subscription**: Claude Max or Pro (uses your existing subscription, no separate API billing)
 - **OpenAI API key** _(optional, for voice input)_
 
+#### Third-party / Local Models *(optional)*
+
+Claude Code itself supports Amazon Bedrock, Google Vertex AI, and LLM gateways like LiteLLM (which can front local models such as Llama). Configure it the standard way — set the relevant environment variables in your shell or in `.env`. Xylocopa launches `claude` as a subprocess and inherits them transparently. A practical walkthrough (LiteLLM + local models with Claude Code) is at [unsloth.ai/docs/basics/claude-code](https://unsloth.ai/docs/basics/claude-code).
+
+> **Heads-up on UI scope:** Xylocopa's model dropdown is hardcoded to Anthropic's `claude-*` model IDs (Opus / Sonnet / Haiku). Bedrock / Vertex generally just work because they reuse the same model names. For non-Anthropic backends (LiteLLM → Llama, etc.), you can still run them via the `CC_MODEL` default in `.env`, but per-agent model switching from the UI isn't wired up. Exposing a custom-model field is a small tweak (`frontend/src/lib/constants.js` + `VALID_MODELS` in `orchestrator/config.py`), but it's outside Xylocopa's maintained scope.
+
 #### Installation
 
 Fastest path (clones + runs the interactive installer):
