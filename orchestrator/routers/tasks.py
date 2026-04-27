@@ -151,6 +151,9 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
     db.add(agent)
     db.flush()
 
+    from display_writer import write_retry_marker_for_agent
+    write_retry_marker_for_agent(db, agent)
+
     # Prepare prompt with insights via _prepare_dispatch
     launch_prompt = None
     if prompt and ad:

@@ -827,6 +827,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     db.add(agent)
     db.flush()
 
+    from display_writer import write_retry_marker_for_agent
+    write_retry_marker_for_agent(db, agent)
+
     # Link task → agent if task_id provided
     _task_linked = False
     if task_id:

@@ -674,6 +674,98 @@ def pre_sent_get(agent_id: str, msg_id: str) -> dict | None:
         return dict(current)
 
 
+_RETRY_MARKER_ID = "__retry__"
+
+
+def write_retry_marker(
+    agent_id: str,
+    attempts: list[dict],
+    current_idx: int,
+) -> None:
+    """Write a seq=0 retry_marker entry to the agent's display file.
+
+    Renders as the first item in the chat history — the orange "Attempts"
+    card showing #1 #2 ... pills. Idempotent: if the file already starts
+    with a retry_marker line, skip.
+
+    `attempts`: ordered list of {"agent_id": str, "created_at": str ISO,
+                                  "status": str|None}
+    `current_idx`: 0-based position of THIS agent in `attempts`.
+
+    No-op when `current_idx < 1` (attempt #1 has no prior attempts to show).
+
+    seq=0 reserves the slot before any real message (which start at seq=1
+    via _promote_pre_sent_to_sent / flush_agent's MAX(seq)+1 allocation).
+    """
+    if not attempts or current_idx < 1:
+        return
+
+    path = _display_path(agent_id)
+
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+            if first_line:
+                obj = json.loads(first_line)
+                if obj.get("kind") == "retry_marker":
+                    return
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    entry = {
+        "id": _RETRY_MARKER_ID,
+        "seq": 0,
+        "role": "SYSTEM",
+        "kind": "retry_marker",
+        "content": "",
+        "source": "system",
+        "status": "COMPLETED",
+        "metadata": {
+            "attempts": attempts,
+            "current_idx": current_idx,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "delivered_at": None,
+        "scheduled_at": None,
+        "tool_use_id": None,
+    }
+
+    os.makedirs(DISPLAY_DIR, exist_ok=True)
+    _write_locked(path, [json.dumps(entry, separators=(",", ":"))])
+
+
+def write_retry_marker_for_agent(db, agent) -> None:
+    """Convenience wrapper: query task siblings and write marker if applicable.
+
+    Call right after `db.add(agent); db.flush()` for any agent that may be
+    a retry (i.e. has task_id set). No-op for attempt #1 or non-task agents.
+    """
+    if not agent.task_id:
+        return
+    rows = (
+        db.query(Agent)
+        .filter(Agent.task_id == agent.task_id)
+        .order_by(Agent.created_at.asc())
+        .all()
+    )
+    if len(rows) <= 1:
+        return
+    current_idx = next((i for i, a in enumerate(rows) if a.id == agent.id), -1)
+    if current_idx < 1:
+        return
+    attempts = [
+        {
+            "agent_id": a.id,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "status": a.status.value if a.status else None,
+        }
+        for a in rows
+    ]
+    write_retry_marker(agent.id, attempts, current_idx)
+
+
 def pre_sent_promote_to_sent(
     agent_id: str,
     msg_id: str,
