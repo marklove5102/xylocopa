@@ -46,7 +46,7 @@ Watch everything in real time, from desk or phone.
 - **Split screen**: 2/3/4 panes side by side, each navigating independently.
 - **Attention button**: draggable FAB with a cyan unread badge. Tap for the oldest unread (FIFO), long-press for split screen.
 - **Rich chat**: markdown, inline media, interactive cards for tool approvals and plan review.
-- **Compact chat header**: status dot next to the title, tinted Stop / Resume / OK pills on row 1; project / worktree icon-pill / Auto / branch / Task / 4-char id pill collapsed into one tag row underneath. Hover or long-press the id pill for a `xylo id:` popover, double-click to copy; same interaction on the worktree pill.
+- **Compact chat header**: status dot next to the title, tinted Stop / Resume / OK pills on row 1; project / worktree icon-pill / Auto / Task / 4-char id pill collapsed into one tag row underneath. Hover or long-press the id pill for a `xylo id:` popover, double-click to copy; same interaction on the worktree pill.
 
   ![Chat header](docs/getting-started/12-chat-header.png)
 - **Dual-directional CLI sync**: CLI sessions show up in the web app; web sessions are resumable from the CLI via `tmux attach -t xy-<id>` (legacy `ah-` still recognized).

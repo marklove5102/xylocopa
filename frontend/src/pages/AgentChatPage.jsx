@@ -3717,11 +3717,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   Auto
                 </span>
               )}
-              {agent.branch && (
-                <span className="shrink-0 text-[10px] text-violet-400 font-mono truncate max-w-[120px]">
-                  {agent.branch}
-                </span>
-              )}
               {agent.task_id && (
                 <button
                   type="button"

@@ -130,7 +130,7 @@ If you dispatched, you're now in the agent's chat view.
 The header is two rows:
 
 - **Row 1** — status dot next to the title; on the right, tinted action pills (red **Stop** / cyan **Resume** / green **OK**) and an icon toolbar (refresh, files, notifications, schedule, star).
-- **Row 2** — a single tag strip: project • **worktree pill** (icon only — hover or long-press for a `worktree: <name>` popover, double-click copies) • **Auto** chip (when Auto mode is on) • branch (violet text) • **Task chip** (orange, opens the task card) • **ID pill** (4-char monospace — same hover/long-press = popover, double-click = copy).
+- **Row 2** — a single tag strip: project • **worktree pill** (icon only — hover or long-press for a `worktree: <name>` popover, double-click copies) • **Auto** chip (when Auto mode is on) • **Task chip** (orange, opens the task card) • **ID pill** (4-char monospace — same hover/long-press = popover, double-click = copy).
 
 From here you can:
 
