@@ -122,8 +122,15 @@ async def hook_agent_session_end(request: Request):
     import slash_commands as _sc
     _sc.mark_loop_completed(agent_id)
 
-    # Trigger final sync via the sync loop
-    asyncio.create_task(ad.trigger_sync(agent_id))
+    # Drain old session's pending JSONL turns into DB before rotation.
+    # Without this, any turn produced in the hook-silent window since the
+    # last sync (e.g. final assistant turn before /clear) would never be
+    # imported — the new session writes a fresh JSONL file and the old
+    # one is no longer watched. Mirrors the PreCompact drain pattern.
+    if ctx:
+        from config import JSONL_FLUSH_DELAY
+        await asyncio.sleep(JSONL_FLUSH_DELAY)
+        await ad._drain_session_sync(agent_id)
 
     logger.info("hook_agent_session_end: agent=%s", agent_id[:8])
     return {}

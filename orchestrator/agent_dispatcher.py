@@ -3773,6 +3773,15 @@ Here are the day's conversations (with timestamps):
                 agent.model = detected_model
             self._add_system_message(db, agent_id, "CLI session continued (new context)")
             agent.last_message_at = _utcnow()
+            # Reset persisted sync pointer — the new JSONL is a different
+            # file with a fresh byte stream and turn list. Without this,
+            # start_session_sync would load the old session's offset
+            # (e.g. 5MB) and apply it to the new file (~100 bytes),
+            # making sync_import_new_turns mis-classify the smaller size
+            # as a compact event.
+            agent.sync_last_offset = 0
+            agent.sync_last_turn_count = 0
+            agent.sync_last_content_hash = ""
             try:
                 db.commit()
             except IntegrityError:
