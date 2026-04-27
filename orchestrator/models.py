@@ -149,6 +149,13 @@ class Agent(Base):
     has_pending_suggestions: Mapped[bool] = mapped_column(Boolean, default=False)
     insight_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # JSONL sync pointer — persisted so restart resumes where the last
+    # sync stopped, instead of re-traversing the entire file (which
+    # would re-fire all historical signals: stop_hook, push notify,
+    # interactive-card dismissal, etc).
+    sync_last_offset: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sync_last_turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sync_last_content_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
 
     @property
     def is_generating(self) -> bool:

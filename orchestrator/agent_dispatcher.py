@@ -3927,20 +3927,24 @@ Here are the day's conversations (with timestamps):
             jsonl_path=jsonl_path,
         )
 
-        # Initialize sync pointer
-        initial_turns = _parse_session_turns(jsonl_path)
-        ctx.last_turn_count = len(initial_turns)
+        # Restore sync pointer from DB so restart resumes where we left
+        # off, instead of re-traversing the full JSONL (which would
+        # re-fire historical signals: stop_hook, push notify, etc).
+        _db_pointer = SessionLocal()
         try:
-            ctx.last_offset = os.path.getsize(jsonl_path)
-        except OSError:
-            ctx.last_offset = 0
-        ctx.last_content_hash = (
-            _content_hash(initial_turns[-1][1]) if initial_turns else ""
-        )
+            _agent_for_pointer = _db_pointer.get(Agent, agent_id)
+            if _agent_for_pointer:
+                ctx.last_offset = _agent_for_pointer.sync_last_offset or 0
+                ctx.last_turn_count = _agent_for_pointer.sync_last_turn_count or 0
+                ctx.last_content_hash = _agent_for_pointer.sync_last_content_hash or ""
+        finally:
+            _db_pointer.close()
 
         self._sync_contexts[agent_id] = ctx
 
-        # Initial full scan (reconcile DB with JSONL, reset pointer)
+        # Initial full scan (reconcile DB with JSONL, may adjust pointer
+        # if drift detected). When pointer was restored from DB and JSONL
+        # hasn't drifted, the scan is a fast no-op audit.
         await sync_full_scan(self, ctx, reason="startup")
 
         # Background loop — handles streaming preview, session rotation, tmux health

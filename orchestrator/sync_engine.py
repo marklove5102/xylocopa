@@ -566,12 +566,6 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _saw_stop_hook = False
         _saw_rate_limit = False
         _saw_user_turn = False  # any new user turn → agent is now EXECUTING
-        # Pointer-reset detection: when last_turn_count == 0 we're processing
-        # the entire JSONL history, not a real signal stream. Skip status
-        # inference on this scan and trust DB (per Rule 4 — restart trusts
-        # last-known DB state). Subsequent incremental syncs (pointer > 0)
-        # own the transitions.
-        _is_initial_scan = ctx.last_turn_count == 0
         # Accumulate message_ids updated (sent→delivered) this cycle so we
         # can call update_last AFTER db.commit(). Writing inline would
         # violate the display_writer "commit → then flush" contract (the
@@ -663,6 +657,20 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         ctx.last_offset = current_size
         ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
 
+        # Persist pointer to DB so restart resumes from this exact spot.
+        # Without this, ctx is rebuilt with all-zero pointer and the next
+        # sync re-traverses the entire JSONL — re-firing every historical
+        # signal (push notify, status inference, dispatch, etc).
+        _agent_pointer = db.get(Agent, ctx.agent_id)
+        if _agent_pointer:
+            _agent_pointer.sync_last_offset = ctx.last_offset
+            _agent_pointer.sync_last_turn_count = ctx.last_turn_count
+            _agent_pointer.sync_last_content_hash = ctx.last_content_hash
+            try:
+                db.commit()
+            except (DatabaseError, IntegrityError):
+                db.rollback()  # pointer write is non-critical; will retry next cycle
+
         # Sent rows already carry display_seq from the promote-to-sent
         # step. update_last appends a _replace line reflecting the new
         # status (delivered/completed), so the display file transitions
@@ -678,39 +686,24 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _flush_display(ctx.agent_id)
 
         # Status inference from JSONL signals — sync_engine is the truth
-        # writer for EXECUTING/IDLE under the state-machine refactor.
-        # SKIPPED on the initial / pointer-reset scan: _saw_* would
-        # accumulate from the entire JSONL history (not a real signal
-        # stream), and any historical stop_hook_summary would erroneously
-        # flip a live EXECUTING agent to IDLE. Trust DB on initial; only
-        # incremental sync owns transitions.
-        if not _is_initial_scan:
-            _inferred_status = _infer_status_from_signals(
-                db, ctx,
-                saw_user_turn=_saw_user_turn,
-                saw_stop_hook=_saw_stop_hook,
-                saw_rate_limit=_saw_rate_limit,
-                saw_interrupt=_saw_interrupt,
-            )
-            if _inferred_status:
-                from websocket import emit_agent_update as _emit_agent_update
-                _agent_for_emit = db.get(Agent, ctx.agent_id)
-                ad._emit(_emit_agent_update(
-                    ctx.agent_id, _inferred_status,
-                    _agent_for_emit.project if _agent_for_emit else "",
-                ))
-
-        # On initial / pointer-reset scan, the rate_limit / interrupt /
-        # stop_hook branches below would re-fire side effects (push
-        # notifications, in-memory _generating discard, queued-message
-        # dispatch, interactive-card dismissal) for historical signals.
-        # Skip them — these signals were already processed when they
-        # were live. Trust DB on initial.
-        if _is_initial_scan:
-            ctx.last_turn_count = len(turns)
-            ctx.last_offset = current_size
-            ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
-            return "new_turns" if _actually_inserted else "no_change"
+        # writer for EXECUTING/IDLE. The pointer-reset corner case (where
+        # _saw_* would accumulate historical signals) is structurally
+        # eliminated by persisting ctx.last_turn_count / last_offset /
+        # last_content_hash to DB across restarts.
+        _inferred_status = _infer_status_from_signals(
+            db, ctx,
+            saw_user_turn=_saw_user_turn,
+            saw_stop_hook=_saw_stop_hook,
+            saw_rate_limit=_saw_rate_limit,
+            saw_interrupt=_saw_interrupt,
+        )
+        if _inferred_status:
+            from websocket import emit_agent_update as _emit_agent_update
+            _agent_for_emit = db.get(Agent, ctx.agent_id)
+            ad._emit(_emit_agent_update(
+                ctx.agent_id, _inferred_status,
+                _agent_for_emit.project if _agent_for_emit else "",
+            ))
 
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.
@@ -1072,6 +1065,16 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
             ctx.last_turn_count = len(turns)
             ctx.last_offset = current_size
             ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
+        # Persist to DB so restart resumes from this pointer.
+        _agent_for_pointer = db.get(Agent, ctx.agent_id)
+        if _agent_for_pointer:
+            _agent_for_pointer.sync_last_offset = ctx.last_offset
+            _agent_for_pointer.sync_last_turn_count = ctx.last_turn_count
+            _agent_for_pointer.sync_last_content_hash = ctx.last_content_hash
+            try:
+                db.commit()
+            except (DatabaseError, IntegrityError):
+                db.rollback()
         logger.debug("Agent %s: pointer reset to %d (was %d)",
                      ctx.agent_id[:8], ctx.last_turn_count, _old_count)
 

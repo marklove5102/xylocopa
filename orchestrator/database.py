@@ -246,6 +246,24 @@ def init_db():
             conn.execute(text("ALTER TABLE agents DROP COLUMN plan"))
             conn.commit()
 
+        # Add sync pointer columns to agents (persistent JSONL position).
+        agent_cols = _table_columns(conn, "agents")
+        if "sync_last_offset" not in agent_cols:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN sync_last_offset INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+        if "sync_last_turn_count" not in agent_cols:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN sync_last_turn_count INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+        if "sync_last_content_hash" not in agent_cols:
+            conn.execute(text(
+                "ALTER TABLE agents ADD COLUMN sync_last_content_hash VARCHAR(64) NOT NULL DEFAULT ''"
+            ))
+            conn.commit()
+
         # One-shot data migration: rename legacy MessageStatus.QUEUED to SENT.
         # The QUEUED enum was renamed to SENT to match its actual semantic of
         # "sent via tmux send-keys, awaiting JSONL delivery confirmation".
