@@ -912,16 +912,26 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
             from display_writer import rebuild_agent as _rebuild_display
             _rebuild_display(ctx.agent_id)
 
-            # Frontend WS event: compact_msg now shows the double tick.
-            # rebuild_agent already refreshed the display file; this is just
-            # the push signal so clients don't wait for the next poll.
+            # Frontend WS signals: display file is already refreshed by
+            # rebuild_agent; these are just signals so clients refetch
+            # without waiting for the next poll.
             if _compact_finalized_msg_id:
                 _compact_msg_re = db.get(Message, _compact_finalized_msg_id)
                 if _compact_msg_re and _compact_msg_re.completed_at:
-                    from websocket import emit_message_update
-                    asyncio.ensure_future(emit_message_update(
+                    from websocket import emit_message_executed
+                    asyncio.ensure_future(emit_message_executed(
                         ctx.agent_id, _compact_finalized_msg_id,
                     ))
+            # The compact tool_activity row's status flipped to COMPLETED
+            # in _end_compact_activity but its display _replace line was
+            # never written (rebuild_agent re-emits from DB so the row IS
+            # now in the file with the new status). Signal the change so
+            # frontend refetches and shows the ended Compact bubble.
+            if _compact_activity_id:
+                from websocket import emit_message_update
+                asyncio.ensure_future(emit_message_update(
+                    ctx.agent_id, _compact_activity_id,
+                ))
 
         # If turns are missing from DB, reset pointer so sync loop reimports them.
         # Otherwise, set pointer to current state.
