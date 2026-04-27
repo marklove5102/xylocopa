@@ -566,6 +566,12 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _saw_stop_hook = False
         _saw_rate_limit = False
         _saw_user_turn = False  # any new user turn → agent is now EXECUTING
+        # Pointer-reset detection: when last_turn_count == 0 we're processing
+        # the entire JSONL history, not a real signal stream. Skip status
+        # inference on this scan and trust DB (per Rule 4 — restart trusts
+        # last-known DB state). Subsequent incremental syncs (pointer > 0)
+        # own the transitions.
+        _is_initial_scan = ctx.last_turn_count == 0
         # Accumulate message_ids updated (sent→delivered) this cycle so we
         # can call update_last AFTER db.commit(). Writing inline would
         # violate the display_writer "commit → then flush" contract (the
@@ -673,22 +679,26 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
 
         # Status inference from JSONL signals — sync_engine is the truth
         # writer for EXECUTING/IDLE under the state-machine refactor.
-        # Idempotent: if legacy hook→_start_generating already wrote the
-        # same value, this is a no-op (helper returns None).
-        _inferred_status = _infer_status_from_signals(
-            db, ctx,
-            saw_user_turn=_saw_user_turn,
-            saw_stop_hook=_saw_stop_hook,
-            saw_rate_limit=_saw_rate_limit,
-            saw_interrupt=_saw_interrupt,
-        )
-        if _inferred_status:
-            from websocket import emit_agent_update as _emit_agent_update
-            _agent_for_emit = db.get(Agent, ctx.agent_id)
-            ad._emit(_emit_agent_update(
-                ctx.agent_id, _inferred_status,
-                _agent_for_emit.project if _agent_for_emit else "",
-            ))
+        # SKIPPED on the initial / pointer-reset scan: _saw_* would
+        # accumulate from the entire JSONL history (not a real signal
+        # stream), and any historical stop_hook_summary would erroneously
+        # flip a live EXECUTING agent to IDLE. Trust DB on initial; only
+        # incremental sync owns transitions.
+        if not _is_initial_scan:
+            _inferred_status = _infer_status_from_signals(
+                db, ctx,
+                saw_user_turn=_saw_user_turn,
+                saw_stop_hook=_saw_stop_hook,
+                saw_rate_limit=_saw_rate_limit,
+                saw_interrupt=_saw_interrupt,
+            )
+            if _inferred_status:
+                from websocket import emit_agent_update as _emit_agent_update
+                _agent_for_emit = db.get(Agent, ctx.agent_id)
+                ad._emit(_emit_agent_update(
+                    ctx.agent_id, _inferred_status,
+                    _agent_for_emit.project if _agent_for_emit else "",
+                ))
 
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.
