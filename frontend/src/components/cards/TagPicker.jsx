@@ -71,7 +71,7 @@ export default function TagPicker({ options, value, onSelect, className, childre
 
   return (
     <>
-      <span ref={ref} className={className} onClick={handleOpen}>
+      <span ref={ref} className={className} onClick={handleOpen} data-no-longpress>
         {children}
       </span>
       {open && pos && createPortal(

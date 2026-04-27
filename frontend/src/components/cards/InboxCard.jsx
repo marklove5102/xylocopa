@@ -342,7 +342,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   // and only when the press starts on a non-interactive area). Tap on inner
   // interactive elements should not trigger the parent's click logic either.
   const isInteractiveTarget = (e) =>
-    !!e?.target?.closest?.("button, input, textarea, [contenteditable='true']");
+    !!e?.target?.closest?.("button, input, textarea, [contenteditable='true'], [data-no-longpress]");
   const longPressHandlers = useLongPress((e) => {
     if (selecting) return;
     if (isInteractiveTarget(e)) return;
