@@ -700,6 +700,18 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     _agent_for_emit.project if _agent_for_emit else "",
                 ))
 
+        # On initial / pointer-reset scan, the rate_limit / interrupt /
+        # stop_hook branches below would re-fire side effects (push
+        # notifications, in-memory _generating discard, queued-message
+        # dispatch, interactive-card dismissal) for historical signals.
+        # Skip them — these signals were already processed when they
+        # were live. Trust DB on initial.
+        if _is_initial_scan:
+            ctx.last_turn_count = len(turns)
+            ctx.last_offset = current_size
+            ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
+            return "new_turns" if _actually_inserted else "no_change"
+
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.
         if _saw_rate_limit:
