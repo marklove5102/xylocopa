@@ -2565,7 +2565,7 @@ Here are the day's conversations (with timestamps):
             _serialize_message,
             pre_sent_promote_to_sent,
         )
-        from websocket import emit_message_sent
+        from websocket import emit_message_sent, emit_pre_sent_tombstoned
 
         msg_id = entry["id"]
 
@@ -2619,6 +2619,7 @@ Here are the day's conversations (with timestamps):
         sent_line["status"] = "sent"
 
         pre_sent_promote_to_sent(agent.id, msg_id, next_seq, sent_line)
+        asyncio.ensure_future(emit_pre_sent_tombstoned(agent.id, msg_id))
         asyncio.ensure_future(emit_message_sent(agent.id, msg_id))
         logger.info(
             "dispatch_pending: promoted %s → sent (seq=%d) for agent %s",
