@@ -2358,13 +2358,16 @@ async def get_agent_display_sent(
         seen[entry.id] = entry
 
     # Sent-only partition: drop tombstones, drop pre-sent (_queued), keep
-    # entries with a seq.
+    # entries with a seq. Sort by seq — file insertion order is not
+    # guaranteed to match seq order (e.g. retry_marker seq=0 appended to
+    # the end of an existing file by backfill).
     displayed: list[DisplayEntry] = []
     for entry in seen.values():
         if entry.deleted or entry.queued:
             continue
         if entry.seq is not None:
             displayed.append(entry)
+    displayed.sort(key=lambda e: e.seq)
 
     return SentDisplayResponse(
         messages=displayed,
