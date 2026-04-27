@@ -1104,16 +1104,12 @@ async def _launch_tmux_background(
                 )
                 return
             agent.session_id = session_id
-            # Only transition STARTING → IDLE; if UserPromptSubmit already
-            # set EXECUTING via _start_generating, don't overwrite it.
-            if agent.status != AgentStatus.EXECUTING:
-                agent.status = AgentStatus.IDLE
-            # Under the Phase 2 pre_sent model, the initial task message
-            # is either already COMPLETED (task launch path writes that
-            # directly) or lives as a _pre entry in the display file
-            # (web-originated). No PENDING DB rows exist at this point —
-            # the sync engine's ContentMatcher handles delivered_at via
-            # UserPromptSubmit. No init-msg patch needed here.
+            # Status stays STARTING — sync_engine flips it to EXECUTING
+            # when it sees the first user turn in JSONL. Writing IDLE
+            # here caused the startup flicker (STARTING → IDLE → EXECUTING)
+            # because the IDLE write raced the inference path's EXECUTING
+            # write. Under the state-machine refactor, the launch task is
+            # NOT a status writer — sync_engine is.
             try:
                 db.commit()
             except IntegrityError:
@@ -1123,8 +1119,6 @@ async def _launch_tmux_background(
                     "Session %s UNIQUE constraint violation" % session_id[:12]
                 )
                 return
-
-            ad._emit(emit_agent_update(agent_id, "IDLE", agent.project))
         finally:
             db.close()
 
@@ -2224,8 +2218,9 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             )
         raise
 
-    if not resumed_sync and agent.status not in (AgentStatus.IDLE, AgentStatus.IDLE):
-        agent.status = AgentStatus.IDLE
+    # If neither resume path worked (no session, no jsonl), leave status
+    # as STARTING. Router-owned STARTING / IDLE / ERROR transitions are
+    # explicit per Rule 2; no silent fallback IDLE write.
 
     msg = Message(
         agent_id=agent.id,
