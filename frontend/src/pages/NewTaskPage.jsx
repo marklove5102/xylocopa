@@ -636,7 +636,7 @@ export default function NewTaskPage({ embedded = false }) {
                   </div>
                   <span className="text-sm text-label">Auto</span>
                 </label>
-                <div className="flex items-center gap-1.5 min-w-0">
+                <div className="col-span-2 flex items-center gap-1.5 min-w-0">
                   <button
                     type="button"
                     onClick={async () => {
