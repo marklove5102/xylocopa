@@ -370,7 +370,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
           className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${
             expanded && !selecting ? "pt-5 pb-3" : cardPadding(expanded, selecting)
           }`}
-          {...longPressHandlers}
+          {...(isExpanded ? {} : longPressHandlers)}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
@@ -397,7 +397,6 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
               {isExpanded ? (
                 <div
                   ref={titleRef}
-                  data-no-longpress
                   contentEditable={titleEditing}
                   suppressContentEditableWarning
                   onClick={startTitleEditing}
@@ -421,7 +420,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
 
             {/* Description — flexible middle, grows to fill space */}
             {isExpanded ? (
-              <div data-no-longpress className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
+              <div className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
                 <div
                   ref={editRef}
                   contentEditable={editing}
