@@ -3793,7 +3793,7 @@ Here are the day's conversations (with timestamps):
                     agent_id, new_sid[:12],
                 )
                 return False
-            self._emit(emit_agent_update(agent_id, "IDLE", agent.project))
+            agent_project = agent.project
             logger.info(
                 "Rotated agent %s session in-place: %s → %s",
                 agent_id, (old_sid or "")[:12], new_sid[:12],
@@ -3801,9 +3801,13 @@ Here are the day's conversations (with timestamps):
         finally:
             db.close()
 
-        # Rebuild display file for the rotated session
+        # Rebuild display file for the rotated session BEFORE emitting
+        # the WS signal — frontend's refetch must see the new file, not
+        # the pre-rotation state.
         from display_writer import rebuild_agent as _rebuild_display
         _rebuild_display(agent_id)
+
+        self._emit(emit_agent_update(agent_id, "IDLE", agent_project))
 
         # Cancel old sync task and start a fresh one.  The new sync
         # loop does initial reconciliation which deduplicates turns
