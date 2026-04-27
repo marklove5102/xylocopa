@@ -93,9 +93,6 @@ export const POLL_ACTIVE_INTERVAL = 3000;
 /** Polling interval when agent is idle. */
 export const POLL_IDLE_INTERVAL = 10000;
 
-/** Auto-clear streaming content after this much inactivity. */
-export const STREAM_TIMEOUT = 6000;
-
 /** Duration to show "Copied" toast. */
 export const COPY_TOAST_DURATION = 1500;
 

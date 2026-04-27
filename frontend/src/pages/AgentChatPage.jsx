@@ -62,7 +62,7 @@ import FileAttachments from "../components/FilePreview";
 import ImageLightbox from "../components/ImageLightbox";
 import {
   AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName,
-  POLL_ACTIVE_INTERVAL, POLL_IDLE_INTERVAL, STREAM_TIMEOUT,
+  POLL_ACTIVE_INTERVAL, POLL_IDLE_INTERVAL,
   COPY_TOAST_DURATION, ERROR_TOAST_DURATION, TOAST_DURATION,
   ESCAPE_COOLDOWN, LONG_PRESS_DELAY, DOUBLE_TAP_WINDOW,
   SCROLL_SAVE_DEBOUNCE, JSONL_FLUSH_DELAY_MS, SYNC_SETTLE_DELAY,
@@ -1804,30 +1804,6 @@ function SyncPrompt({ agentId, onSync }) {
 
 // --- Streaming Bubble (live output while agent is executing) ---
 
-function StreamingBubble({ content, project, activeTool }) {
-  return (
-    <div className="flex justify-start my-2">
-      <div className="max-w-[min(85%,30rem)] min-w-0">
-        <div className="rounded-2xl px-4 py-2.5 bg-surface shadow-card text-body rounded-bl-md overflow-hidden">
-          <div className="text-sm break-words chat-bubble-content">
-            <SafeMarkdown fallback={content}>
-              {renderMarkdown(content, project)}
-            </SafeMarkdown>
-          </div>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            {activeTool ? (
-              <span className="text-xs text-dim"><code className="text-[11px] px-1 py-0.5 rounded bg-elevated text-cyan-300 font-mono">{activeTool.name}</code> running...</span>
-            ) : (
-              <span className="text-xs text-dim">Streaming...</span>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // --- Send Later Time Picker ---
 
 import SendLaterPicker from "../components/SendLaterPicker";
@@ -2444,11 +2420,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [muted, setMuted] = useState(() => isAgentMuted(id));
   const [deferredTo, setDeferredTo] = useState(null);
   const [showDeferPicker, setShowDeferPicker] = useState(false);
-  const [streamingContent, setStreamingContent] = useState(null);
   const [activeTool, setActiveTool] = useState(null);
   const [toolStartTime, setToolStartTime] = useState(null);
   // Permission cards are now persisted in DB as interactive messages (no WS-only state needed)
-  const streamTimeoutRef = useRef(null);
   const generationIdRef = useRef(null); // tracks current backend generation_id
   // Debug: ring buffer of recent WS events for frontend-state reporter
   const wsEventLog = useRef([]);
@@ -3190,7 +3164,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     if (!userScrolledUp.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [loading, messages, streamingContent, scrollKey, scrollCountKey]);
+  }, [loading, messages, scrollKey, scrollCountKey]);
 
   // Keep saved message count in sync for future visits
   useEffect(() => {
@@ -3227,27 +3201,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   useWsEvent((event) => {
     if (event.data?.agent_id !== id) return;
 
-    if (event.type === "agent_stream") {
-      console.log('[ws] agent_stream', event.data.agent_id?.slice(0,8), 'len=', event.data.content?.length);
-      pushWsEvent('agent_stream', { len: event.data.content?.length, gid: event.data.generation_id });
-      const gid = event.data.generation_id;
-      if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
-      if (gid != null) generationIdRef.current = gid;
-      setStreamingContent(event.data.content);
-      clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = setTimeout(() => {
-        setStreamingContent(null);
-      }, STREAM_TIMEOUT);
-      return;
-    }
-
     if (event.type === "agent_stream_end") {
       console.log('[ws] agent_stream_end', event.data);
       pushWsEvent('agent_stream_end', event.data);
       const gid = event.data.generation_id;
       if (gid != null && generationIdRef.current != null && gid < generationIdRef.current) return;
-      clearTimeout(streamTimeoutRef.current);
-      setStreamingContent(null);
       setActiveTool(null);
       setToolStartTime(null);
       return;
@@ -3282,8 +3240,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         refreshMessagesRef.current({ syncHint: true });
         return;
       }
-      clearTimeout(streamTimeoutRef.current);
-      setStreamingContent(null);
       setActiveTool(null);
       setToolStartTime(null);
       refreshMessagesRef.current({ syncHint: event.data?.message_id === "sync" });
@@ -3401,8 +3357,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         setAgent((prev) => prev ? { ...prev, ...patch } : prev);
       }
       if (status !== "EXECUTING" && status !== "IDLE") {
-        clearTimeout(streamTimeoutRef.current);
-        setStreamingContent(null);
         setActiveTool(null);
         setToolStartTime(null);
         generationIdRef.current = null;
@@ -3418,13 +3372,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       showToast("Insights ready for review");
     }
   }, [id]);
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      clearTimeout(streamTimeoutRef.current);
-    };
-  }, []);
 
   // Debug: POST rendered message state + DOM elements to backend every 1s
   // Enable via localStorage: localStorage.setItem("ah:debug-frontend-state", "1")
@@ -4291,22 +4238,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               });
             })()}
 
-            {/* Streaming output or typing indicator while executing/idle */}
-            {(() => {
-              // Guard: don't show streaming bubble if content matches
-              // the last saved AGENT message (prevents duplicate bubbles
-              // when the sync loop re-emits already-committed content).
-              if (streamingContent) {
-                const lastAgent = [...messages].reverse().find((m) => m.role === "AGENT");
-                const isDuplicate = lastAgent && (
-                  lastAgent.content === streamingContent
-                  || lastAgent.content.startsWith(streamingContent.slice(0, 200))
-                );
-                if (!isDuplicate) return <div data-msg-id="streaming" data-msg-type="streaming_bubble"><StreamingBubble content={streamingContent} project={agent.project} activeTool={activeTool} /></div>;
-              }
-              // Tool activity log — shows completed + in-progress tool calls
-              return isExecuting ? <div data-msg-id="typing" data-msg-type="typing_indicator"><TypingIndicator /></div> : null;
-            })()}
+            {/* Typing indicator while executing */}
+            {isExecuting ? <div data-msg-id="typing" data-msg-type="typing_indicator"><TypingIndicator /></div> : null}
 
             {/* Queued/pending/scheduled messages always at the bottom */}
             {(() => {
