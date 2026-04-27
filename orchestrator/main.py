@@ -399,20 +399,14 @@ async def lifespan(app: FastAPI):
     from view_tracking import run_tick_loop as _view_tick
     view_track_task = asyncio.create_task(_view_tick())
 
-    # Daily heartbeat scheduled at local 00:00. Bypasses the 20h gate so a daily
-    # event fires even on long-running orchestrators that never restart.
+    # Daily heartbeat for long-running orchestrators that never restart.
+    # The Worker dedupes per-day for Discord, so exact alignment isn't needed.
     async def _daily_heartbeat_loop():
         import telemetry as _telemetry
-        from datetime import datetime, timedelta
         while True:
-            now_local = datetime.now()
-            next_midnight = (now_local + timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            sleep_s = max(1.0, (next_midnight - now_local).total_seconds())
-            await asyncio.sleep(sleep_s)
+            await asyncio.sleep(86400)
             try:
-                _telemetry.record_heartbeat(force=True)
+                _telemetry.record_heartbeat()
             except Exception:
                 logger.debug("Scheduled heartbeat failed (non-fatal)", exc_info=True)
 

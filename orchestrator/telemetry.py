@@ -1,7 +1,8 @@
 """Xylocopa telemetry — privacy-first, anonymous, opt-out.
 
-Sends ONE event type only: `daily_heartbeat`, gated to >20h interval.
-This is the minimum signal needed to know whether anyone is using the project.
+Sends ONE event type only: `daily_heartbeat`. The Worker dedupes by day for
+Discord, so the client just fires unconditionally — every restart and every
+24h tick produces one POST.
 
 Payload (anonymous — exactly these 5 fields, nothing else):
     { "event", "install_id" (UUID v4), "version", "platform" (sys.platform),
@@ -35,12 +36,10 @@ logger = logging.getLogger("xylocopa.telemetry")
 
 TELEMETRY_DIR = Path(os.path.expanduser("~/.xylocopa"))
 INSTALL_ID_FILE = TELEMETRY_DIR / "install_id"
-LAST_HEARTBEAT_FILE = TELEMETRY_DIR / "last_heartbeat"
 CONFIG_FILE = TELEMETRY_DIR / "config.yaml"
 
 # ---- Constants ----
 
-HEARTBEAT_MIN_INTERVAL_SECONDS = 20 * 3600
 REQUEST_TIMEOUT_SECONDS = 2.0
 ENV_ENABLED = "XYLOCOPA_TELEMETRY"
 ENV_ENDPOINT = "XYLOCOPA_TELEMETRY_ENDPOINT"
@@ -128,10 +127,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _now_ts() -> float:
-    return datetime.now(timezone.utc).timestamp()
-
-
 def _ensure_install_id() -> Optional[str]:
     """Get or create the local install_id. Prints first-run notice on creation.
     Returns None if telemetry is disabled (no file is created in that case)."""
@@ -195,12 +190,12 @@ def _send(event: str, install_id: str) -> None:
 
 # ---- Public API ----
 
-def record_heartbeat(force: bool = False) -> None:
+def record_heartbeat() -> None:
     """Send daily_heartbeat. Creates install_id on first call.
 
-    Without `force`, gated to >20h since last send (used by startup path).
-    With `force=True`, bypasses the gate (used by the scheduled local-midnight
-    task in main.py lifespan, which guarantees one event per local day).
+    No client-side gating: the Worker dedupes per-day for Discord, and D1
+    keeps the full event stream. Caller is responsible for cadence (startup
+    + a 24h loop in main.py lifespan).
     """
     if not _is_enabled():
         return
@@ -208,18 +203,6 @@ def record_heartbeat(force: bool = False) -> None:
         install_id = _ensure_install_id()
         if not install_id:
             return
-
-        now = _now_ts()
-        if not force:
-            try:
-                last = float(LAST_HEARTBEAT_FILE.read_text().strip())
-            except (FileNotFoundError, ValueError):
-                last = 0.0
-            if now - last < HEARTBEAT_MIN_INTERVAL_SECONDS:
-                return
-
-        _ensure_dirs()
-        LAST_HEARTBEAT_FILE.write_text(str(now))
         _send("daily_heartbeat", install_id)
     except Exception:
         logger.debug("record_heartbeat failed", exc_info=True)

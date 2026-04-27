@@ -18,7 +18,6 @@ def tele(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_t, "TELEMETRY_DIR", tmp_path)
     monkeypatch.setattr(_t, "INSTALL_ID_FILE", tmp_path / "install_id")
-    monkeypatch.setattr(_t, "LAST_HEARTBEAT_FILE", tmp_path / "last_heartbeat")
     monkeypatch.setattr(_t, "CONFIG_FILE", tmp_path / "config.yaml")
 
     monkeypatch.delenv("XYLOCOPA_TELEMETRY", raising=False)
@@ -56,29 +55,18 @@ def test_first_heartbeat_creates_install_id_and_fires(tele, mock_urlopen):
     assert tele.INSTALL_ID_FILE.exists()
 
 
-def test_heartbeat_noops_within_20h(tele, mock_urlopen):
+def test_heartbeat_fires_unconditionally(tele, mock_urlopen):
+    # Client no longer gates — Worker dedupes per-day for Discord. Every call
+    # produces a POST; D1 keeps the full event stream.
     tele.record_heartbeat()
     tele.record_heartbeat()
     tele.record_heartbeat()
-    assert mock_urlopen.call_count == 1
-
-
-def test_heartbeat_fires_after_20h(tele, mock_urlopen):
-    tele.record_heartbeat()
-    assert mock_urlopen.call_count == 1
-
-    now = tele._now_ts()
-    tele.LAST_HEARTBEAT_FILE.write_text(str(now - 21 * 3600))
-
-    tele.record_heartbeat()
-    assert mock_urlopen.call_count == 2
+    assert mock_urlopen.call_count == 3
 
 
 def test_install_id_is_stable_across_calls(tele, mock_urlopen):
     tele.record_heartbeat()
     first = tele.INSTALL_ID_FILE.read_text()
-    # Force another heartbeat
-    tele.LAST_HEARTBEAT_FILE.write_text(str(tele._now_ts() - 21 * 3600))
     tele.record_heartbeat()
     assert tele.INSTALL_ID_FILE.read_text() == first
 
@@ -122,9 +110,8 @@ def test_network_error_is_swallowed(tele, monkeypatch):
 
     monkeypatch.setattr(tele.urllib.request, "urlopen", _boom)
     tele.record_heartbeat()
-    # State files should still be written even though send failed
+    # install_id is written before send is attempted
     assert tele.INSTALL_ID_FILE.exists()
-    assert tele.LAST_HEARTBEAT_FILE.exists()
 
 
 # ---- Payload shape ----
