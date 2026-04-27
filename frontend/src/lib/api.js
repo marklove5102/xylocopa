@@ -305,12 +305,14 @@ export const resumeAgent = (id, body = null) =>
     method: "POST",
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-export const fetchDisplay = (agentId, { offset = 0, tailBytes = 0 } = {}) => {
+export const fetchDisplaySent = (agentId, { offset = 0, tailBytes = 0 } = {}) => {
   const params = new URLSearchParams();
   if (offset) params.set("offset", String(offset));
   if (tailBytes) params.set("tail_bytes", String(tailBytes));
-  return request(`/api/agents/${agentId}/display?${params}`);
+  return request(`/api/agents/${agentId}/display/sent?${params}`);
 };
+export const fetchDisplayPreSent = (agentId) =>
+  request(`/api/agents/${agentId}/display/pre-sent`);
 export const wakeSync = (agentId) =>
   request(`/api/agents/${agentId}/wake-sync`, { method: "POST" });
 export const sendMessage = (agentId, content, { scheduled_at = null } = {}) =>

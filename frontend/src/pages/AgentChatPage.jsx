@@ -4,7 +4,8 @@ import { Bell, BellOff, Hourglass } from "lucide-react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAgent,
-  fetchDisplay,
+  fetchDisplaySent,
+  fetchDisplayPreSent,
   sendMessage,
   stopAgent,
   resumeAgent,
@@ -2344,7 +2345,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const visible = usePageVisible();
   const [agent, setAgent] = useState(null);
   const [taskData, setTaskData] = useState(null);
-  const [messages, setMessages] = useState([]);
+  // Split source-of-truth: sentMessages mirrors /display/sent (file-backed,
+  // append-only, byte-incremental); preSentMessages mirrors /display/pre-sent
+  // (in-memory snapshot, full-replace). Render derives a unified `messages`
+  // via useMemo for legacy filter compatibility, but mutations target the
+  // correct source state directly.
+  const [sentMessages, setSentMessages] = useState([]);
+  const [preSentMessages, setPreSentMessages] = useState([]);
+  const messages = useMemo(
+    () => [...sentMessages, ...preSentMessages],
+    [sentMessages, preSentMessages],
+  );
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2493,15 +2504,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     messagesRef.current = messages;
   }, [messages]);
 
-  // Shared: apply display API response to message state.
-  // initial=true replaces all messages (preserving WS-delivered_at);
+  // Apply /display/sent response to sentMessages.
+  // initial=true replaces all (preserving WS-delivered_at on collisions);
   // initial=false merges incrementally (handles _replace entries from update_last).
-  //
-  // Queued/pre-sent state rules:
-  // - Initial load OR data.queued_authoritative=true: merge data.queued into state.
-  // - Incremental poll with data.queued_authoritative=false (or absent): preserve
-  //   prev's pre-sent entries (no seq); WS events drive changes.
-  const applyDisplayData = useCallback((data, { initial = false } = {}) => {
+  // Also evicts any matching ids from preSentMessages (defends against the
+  // pre_sent_tombstoned signal arriving after message_sent on promote).
+  const applySentData = useCallback((data, { initial = false } = {}) => {
     if (data.next_offset != null) {
       nextOffsetRef.current = data.next_offset;
     }
@@ -2509,16 +2517,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       hasEarlierRef.current = !!data.has_earlier;
     }
 
-    setMessages((prev) => {
-      // Initial: start fresh; incremental: merge into existing
+    let newIds = null;
+    setSentMessages((prev) => {
       const byId = new Map(initial ? [] : prev.map((m) => [m.id, m]));
-
-      // For initial loads, preserve delivered_at set by WS events
       const prevById = (initial && prev.length)
         ? new Map(prev.map((m) => [m.id, m]))
         : null;
 
-      // Delivered messages: always merge
       for (const msg of data.messages || []) {
         if (prevById) {
           const p = prevById.get(msg.id);
@@ -2529,55 +2534,49 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         }
         byId.set(msg.id, msg);
       }
-
-      // Sequenced (displayed) messages — Map preserves insertion order
-      const displayed = [...byId.values()].filter((m) => m.seq != null);
-      const displayedIds = new Set(displayed.map((m) => m.id));
-
-      // Queued messages: ONLY merge on initial load OR when backend flags
-      // queued_authoritative=true. On incremental polls, backend returns
-      // queued_authoritative=false and queued should not clobber prev state —
-      // WS events (pre_sent_*/message_sent) are the source of truth.
-      if (initial || data.queued_authoritative) {
-        const queued = (data.queued || []).filter((q) => !displayedIds.has(q.id));
-        return [...displayed, ...queued];
-      }
-
-      // Incremental: preserve prev's pre-sent entries (no seq, not
-      // already-sent). Skip any that are now in `displayed` (promoted to sent).
-      const prevQueued = prev.filter((m) => m.seq == null);
-      const preservedQueued = prevQueued.filter((m) => !displayedIds.has(m.id));
-      return [...displayed, ...preservedQueued];
+      newIds = new Set((data.messages || []).map((m) => m.id));
+      return [...byId.values()];
     });
+
+    // Evict promoted ids from preSentMessages so we don't double-render.
+    if (newIds && newIds.size) {
+      setPreSentMessages((prev) => prev.filter((e) => !newIds.has(e.id)));
+    }
   }, []);
 
-  // Initial load: fetch agent + latest 50 messages
+  // Apply /display/pre-sent snapshot to preSentMessages — full replace.
+  const applyPreSentData = useCallback((snapshot) => {
+    setPreSentMessages(snapshot.entries || []);
+  }, []);
+
+  // Initial load: fetch agent + sent (tail) + pre-sent (snapshot) in parallel.
   const loadData = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      // Reset display cursor for fresh initial load
       nextOffsetRef.current = 0;
-      const [agentData] = await Promise.all([
-        fetchAgent(id),
-      ]);
+      const agentData = await fetchAgent(id);
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) return;
       setAgent(agentData);
-      // Fetch linked task for retry context (fire-and-forget)
       if (agentData.task_id && !taskData) {
         fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
       }
 
-      // Display API is the sole authority for message ordering
-      const displayData = await fetchDisplay(id, { tailBytes: 50000 });
+      const [sentData, preSentData] = await Promise.all([
+        fetchDisplaySent(id, { tailBytes: 50000 }),
+        fetchDisplayPreSent(id),
+      ]);
       if (controller.signal.aborted) return;
-      applyDisplayData(displayData, { initial: true });
-      setHasMore(!!displayData.has_earlier);
-      // Restore active tool state from display file — check if last tool_activity is still running.
+      applySentData(sentData, { initial: true });
+      applyPreSentData(preSentData);
+      setHasMore(!!sentData.has_earlier);
+
+      // Restore active tool state — check the last tool_activity in the
+      // combined window for an unfinished one.
       {
-        const allMsgs = [...(displayData.messages || []), ...(displayData.queued || [])];
+        const allMsgs = [...(sentData.messages || []), ...(preSentData.entries || [])];
         const lastToolMsg = [...allMsgs].reverse().find((m) => m.kind === "tool_activity");
         if (lastToolMsg && lastToolMsg.status !== "COMPLETED") {
           const meta = lastToolMsg.metadata || {};
@@ -2604,7 +2603,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [id, showToast]);
 
-  // Load older messages (scroll-up pagination)
+  // Load older sent messages (scroll-up pagination). Pre-sent state is
+  // unaffected — it's a fixed-size snapshot, not paginated.
   const loadOlderMessages = useCallback(async () => {
     const current = messagesRef.current;
     if (!current.length || loadingMore) return;
@@ -2612,19 +2612,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     try {
       let older = [];
       let moreFlag = false;
-      // Load earlier messages via display API only
       if (hasEarlierRef.current) {
-        const data = await fetchDisplay(id, { offset: 0, tailBytes: nextOffsetRef.current });
+        const data = await fetchDisplaySent(id, { offset: 0, tailBytes: nextOffsetRef.current });
         older = Array.isArray(data?.messages) ? data.messages : [];
         moreFlag = !!data?.has_earlier;
         hasEarlierRef.current = moreFlag;
       }
       if (older.length) {
-        // Capture scroll height before DOM update for scroll preservation
         const el = scrollContainerRef.current;
         if (el) savedScrollHeight.current = el.scrollHeight;
-        // Deduplicate: only prepend messages not already in the list
-        setMessages((prev) => {
+        setSentMessages((prev) => {
           const seenIds = new Set(prev.map((m) => m.id));
           const unique = older.filter((m) => !seenIds.has(m.id));
           return unique.length ? [...unique, ...prev] : prev;
@@ -2638,8 +2635,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [id, loadingMore]);
 
-  // Incremental refresh via display API.
-  // Fetches only bytes after the last known offset and merges into state.
+  // Incremental refresh: refetch sent (byte-incremental) and pre-sent
+  // (full snapshot). Both are cheap; refreshing both keeps any cross-bucket
+  // promote transition consistent regardless of WS event arrival order.
   const refreshMessages = useCallback(async () => {
     try {
       const agentData = await fetchAgent(id);
@@ -2647,16 +2645,20 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setAgent(agentData);
 
       const isInitial = nextOffsetRef.current === 0;
-      const params = isInitial
+      const sentParams = isInitial
         ? { tailBytes: 50000 }
         : { offset: nextOffsetRef.current };
 
-      const data = await fetchDisplay(id, params);
-      applyDisplayData(data, { initial: isInitial });
+      const [sentData, preSentData] = await Promise.all([
+        fetchDisplaySent(id, sentParams),
+        fetchDisplayPreSent(id),
+      ]);
+      applySentData(sentData, { initial: isInitial });
+      applyPreSentData(preSentData);
     } catch {
       // Transient errors during polling — silently ignore
     }
-  }, [id, applyDisplayData]);
+  }, [id, applySentData, applyPreSentData]);
 
   // Initial load + clear notification flag for this agent
   useEffect(() => {
@@ -2742,22 +2744,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [messages, agent?.status]);
   hasPendingInteractiveRef.current = hasPendingInteractive;
 
-  // Bottom-area user messages: active queue (queued / scheduled / cancelled).
-  // Pre-sent zone uses lowercase 'queued' / 'scheduled' / 'cancelled'.
-  // SENT (formerly QUEUED) is NOT a queued state — it means "sent to tmux",
-  // which lives in the main scroll, not the bottom queue.
+  // Bottom-area user messages: active queue (queued / cancelled). Sourced
+  // directly from preSentMessages — no need to filter the merged messages
+  // array since preSent entries live in their own state now.
   const queuedMessages = useMemo(
-    () => messages.filter((m) =>
+    () => preSentMessages.filter((m) =>
       m.role === "USER" && !m.scheduled_at && (
         m.status === "queued" || m.status === "cancelled"
       ),
     ),
-    [messages],
+    [preSentMessages],
   );
   // Subset that still needs dispatch — drives escape-button urgency and
   // bulk cancel. Excludes cancelled entries (they are terminal pre-sent).
   const activeQueuedMessages = useMemo(
-    () => queuedMessages.filter((m) => m.status !== "cancelled" && m.status !== "CANCELLED"),
+    () => queuedMessages.filter((m) => m.status !== "cancelled"),
     [queuedMessages],
   );
 
@@ -3170,16 +3171,36 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // to React 18 batching (unlike the old setLastEvent/useEffect pattern).
   const refreshMessagesRef = useRef(refreshMessages);
   refreshMessagesRef.current = refreshMessages;
-  // Debounced refetch: absorb bursts of chat-message signals (e.g. promote +
-  // delivered + executed all in <50ms) into a single display-file refetch.
-  const refetchTimerRef = useRef(null);
-  const debouncedRefetch = useCallback(() => {
-    clearTimeout(refetchTimerRef.current);
-    refetchTimerRef.current = setTimeout(() => {
-      refreshMessagesRef.current();
+  // Debounced refetches per channel. Bursts of same-channel signals
+  // (e.g. delivered + executed in <50ms) collapse to one HTTP call.
+  // pre_sent and sent are independently debounced — message_sent (which
+  // crosses both) triggers both timers, which is correct.
+  const refetchSentTimerRef = useRef(null);
+  const refetchPreSentTimerRef = useRef(null);
+  const debouncedRefreshSent = useCallback(() => {
+    clearTimeout(refetchSentTimerRef.current);
+    refetchSentTimerRef.current = setTimeout(async () => {
+      try {
+        const isInitial = nextOffsetRef.current === 0;
+        const params = isInitial ? { tailBytes: 50000 } : { offset: nextOffsetRef.current };
+        const data = await fetchDisplaySent(id, params);
+        applySentData(data, { initial: isInitial });
+      } catch {}
     }, 50);
+  }, [id, applySentData]);
+  const debouncedRefreshPreSent = useCallback(() => {
+    clearTimeout(refetchPreSentTimerRef.current);
+    refetchPreSentTimerRef.current = setTimeout(async () => {
+      try {
+        const data = await fetchDisplayPreSent(id);
+        applyPreSentData(data);
+      } catch {}
+    }, 50);
+  }, [id, applyPreSentData]);
+  useEffect(() => () => {
+    clearTimeout(refetchSentTimerRef.current);
+    clearTimeout(refetchPreSentTimerRef.current);
   }, []);
-  useEffect(() => () => clearTimeout(refetchTimerRef.current), []);
   useWsEvent((event) => {
     if (event.data?.agent_id !== id) return;
 
@@ -3229,19 +3250,31 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
 
     // Chat-message signals — display file is the single source of truth.
-    // Each event carries only {agent_id, message_id}; we refetch the
-    // display file (debounced 50ms) and re-render from it. Bursts of
-    // signals (e.g. promote → delivered → executed in <50ms) collapse
-    // into one refetch.
-    const CHAT_SIGNALS = new Set([
-      "metadata_update",
+    // Each signal routes to the channel(s) it affects:
+    //   pre_sent_*   → preSent channel only (queued/scheduled/cancelled changes)
+    //   message_sent → BOTH (promote evicts from preSent, inserts into sent)
+    //   delivered/executed/update/metadata_update → sent channel only
+    const PRE_SENT_SIGNALS = new Set([
       "pre_sent_created", "pre_sent_updated", "pre_sent_tombstoned",
-      "message_sent", "message_executed", "message_delivered",
-      "message_update",
     ]);
-    if (CHAT_SIGNALS.has(event.type)) {
+    const SENT_SIGNALS = new Set([
+      "message_executed", "message_delivered", "message_update",
+      "metadata_update",
+    ]);
+    if (event.type === "message_sent") {
       pushWsEvent(event.type, { id: event.data?.message_id });
-      debouncedRefetch();
+      debouncedRefreshSent();
+      debouncedRefreshPreSent();
+      return;
+    }
+    if (PRE_SENT_SIGNALS.has(event.type)) {
+      pushWsEvent(event.type, { id: event.data?.message_id });
+      debouncedRefreshPreSent();
+      return;
+    }
+    if (SENT_SIGNALS.has(event.type)) {
+      pushWsEvent(event.type, { id: event.data?.message_id });
+      debouncedRefreshSent();
       return;
     }
 
@@ -3371,35 +3404,39 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   };
 
-  // Per-message DELETE button: tombstones the bubble in one call.
-  // ESC handler uses the separate cancelMessage (POST .../cancel) for
-  // soft-cancel-only semantics — queued backlog stays visible as grey.
+  // Per-message DELETE button: tombstones the bubble. Hits both states
+  // since the message could be pre-sent or sent (for sent, the backend
+  // tombstones the display entry). WS pre_sent_tombstoned will re-sync
+  // pre-sent state; we optimistically drop from both source states for
+  // immediate visual feedback.
   const handleCancelMessage = async (messageId) => {
     try {
       await deleteMessage(id, messageId);
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      setPreSentMessages((prev) => prev.filter((m) => m.id !== messageId));
+      setSentMessages((prev) => prev.filter((m) => m.id !== messageId));
       showToast("Message deleted");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
   };
 
-  // Update a scheduled/pending message
+  // Update a scheduled/pending message — always pre-sent.
   const handleUpdateMessage = async (messageId, data) => {
     try {
       const updated = await updateMessage(id, messageId, data);
-      setMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
+      setPreSentMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
       showToast("Message updated");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
     }
   };
 
-  // Send a scheduled message immediately (clear its scheduled_at)
+  // Send a scheduled message immediately — pre-sent transition (still
+  // pre-sent, just status changes). Refresh pre-sent for canonical state.
   const handleSendNow = async (messageId) => {
     try {
       const updated = await updateMessage(id, messageId, { scheduled_at: "" });
-      setMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
+      setPreSentMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
       showToast("Sending now");
     } catch (err) {
       showToast("Failed: " + err.message, "error");
@@ -3929,87 +3966,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <SyncPrompt agentId={id} onSync={refreshMessages} />
         ) : (
           <>
-            {/* Previous attempt summary + attempt navigation for retry agents.
-                Rendered ABOVE the lazy-load / conversation-start markers so
-                the task context stays visible regardless of how many older
-                messages are loaded. */}
-            {(() => {
-              const attempts = taskData?.attempt_agents || [];
-              const myIdx = attempts.findIndex(a => a.agent_id === id);
-              if (myIdx < 1) return null;
-              const total = attempts.length;
-              const sel = selectedAttempt ?? myIdx;
-              const selAgent = attempts[sel];
-              const isSelCurrent = selAgent?.agent_id === id;
-              // agent_summary describes attempt (total-2); retry_context is feedback about (total-2)
-              const showSummary = sel < total - 1 && sel === total - 2 && taskData.agent_summary;
-              const showUserFeedback = sel < total - 1 && sel === total - 2 && taskData.retry_context;
-              return (
-                <div className="mx-auto w-[85%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
-                  {/* Attempt pills + Enter Chat */}
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-semibold text-orange-500 dark:text-orange-400 mr-1">Attempts</span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {attempts.map((a, i) => (
-                        <button
-                          key={a.agent_id}
-                          type="button"
-                          onClick={() => setSelectedAttempt(i)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
-                            i === sel
-                              ? "bg-orange-500 text-white"
-                              : "bg-transparent border border-orange-500/40 text-orange-500 dark:text-orange-400 hover:bg-orange-500/15"
-                          }`}
-                        >
-                          #{i + 1}
-                        </button>
-                      ))}
-                    </div>
-                    {!isSelCurrent && (
-                      <button
-                        type="button"
-                        onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`, { state: forwardState(location) })}
-                        className="ml-auto text-[10px] text-orange-500 dark:text-orange-400 hover:underline"
-                      >
-                        Enter Chat →
-                      </button>
-                    )}
-                  </div>
-                  {taskData.description && (
-                    <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.description.replace(/\[Attached file: [^\]]+\]/g, "").trim()}</p>
-                  )}
-                  {showSummary && (
-                    <details className="mt-2">
-                      <summary className="text-[10px] font-medium text-orange-500 dark:text-orange-400 cursor-pointer select-none list-none flex items-center gap-1">
-                        <span className="transition-transform duration-200 text-[8px] [details[open]>&]:rotate-90">▶</span>
-                        Agent Summary
-                      </summary>
-                      <div className="mt-1">
-                        {taskData.agent_summary === ":::generating:::" ? (
-                          <p className="text-xs text-dim/50 italic">Generating summary...</p>
-                        ) : (
-                          <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.agent_summary}</p>
-                        )}
-                      </div>
-                    </details>
-                  )}
-                  {showUserFeedback && (
-                    <details className="mt-2">
-                      <summary className="text-[10px] font-medium text-orange-500 dark:text-orange-400 cursor-pointer select-none list-none flex items-center gap-1">
-                        <span className="transition-transform duration-200 text-[8px] [details[open]>&]:rotate-90">▶</span>
-                        User Feedback
-                      </summary>
-                      <div className="mt-1">
-                        <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.retry_context}</p>
-                      </div>
-                    </details>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Lazy-load indicator sits below the Attempts bubble so that
-                pinned task context is always on top. */}
+            {/* Lazy-load indicator at top of scroll container.
+                The "Attempts" retry card now lives in the message stream
+                itself as a seq=0 retry_marker entry (intercepted in the
+                visible.map below), so it's only visible when the user
+                has lazy-loaded all the way back — matching the natural
+                position of "first thing said in this conversation". */}
             {loadingMore && (
               <div className="text-center py-3 text-xs opacity-60">Loading older messages...</div>
             )}
@@ -4018,21 +3980,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             )}
 
             {(() => {
+              // Source the main scroll directly from sentMessages — pre-sent
+              // entries live in their own state and render in the bottom
+              // queue area. We still filter out stop_hook entries (system
+              // bookkeeping not meant for the chat view).
               const isRetryAgent = (taskData?.attempt_agents || []).findIndex(a => a.agent_id === id) >= 1;
               const retryContext = taskData?.retry_context;
               let replacedFirstTask = false;
-              // Exclude pre-sent user messages (they render in the bottom
-              // queue list separately). Covers both legacy uppercase statuses
-              // Pre-sent statuses: hide from main scroll, render in bottom queue.
-              // SENT is NOT pre-sent — it means "sent to tmux", a live state
-              // that belongs in the main scroll. CANCELLED uppercase is the
-              // legacy MessageStatus enum value that paired with the lowercase
-              // "cancelled" pre-sent status.
-              const _preSentStatuses = new Set([
-                "CANCELLED",
-                "queued", "scheduled", "cancelled",
-              ]);
-              const visible = messages.filter((m) => !(m.role === "USER" && _preSentStatuses.has(m.status)) && m.kind !== "stop_hook")
+              const visible = sentMessages.filter((m) => m.kind !== "stop_hook")
                 .map((m) => {
                   // For retry agents, replace first source=task user message text with retry_context,
                   // but keep all [Attached file: ...] tags from both original and retry_context
@@ -4095,6 +4050,83 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                 }
               }
               return visible.map((msg) => {
+                // Retry marker (seq=0): orange "Attempts" card with pills.
+                // Sourced from the in-message metadata (attempts list +
+                // current_idx); description / agent_summary / retry_context
+                // remain live from taskData since they can change after the
+                // marker was written (e.g. summary regeneration).
+                if (msg.kind === "retry_marker") {
+                  const meta = msg.metadata || {};
+                  const attempts = meta.attempts || [];
+                  const myIdx = meta.current_idx ?? 0;
+                  const total = attempts.length;
+                  const sel = selectedAttempt ?? myIdx;
+                  const selAgent = attempts[sel];
+                  const isSelCurrent = selAgent?.agent_id === id;
+                  const showSummary = sel < total - 1 && sel === total - 2 && taskData?.agent_summary;
+                  const showUserFeedback = sel < total - 1 && sel === total - 2 && taskData?.retry_context;
+                  return (
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="retry_marker" className="mx-auto w-[85%] mb-3 rounded-xl bg-orange-500/8 border border-orange-500/20 px-4 py-3">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="text-[10px] font-semibold text-orange-500 dark:text-orange-400 mr-1">Attempts</span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {attempts.map((a, i) => (
+                            <button
+                              key={a.agent_id}
+                              type="button"
+                              onClick={() => setSelectedAttempt(i)}
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
+                                i === sel
+                                  ? "bg-orange-500 text-white"
+                                  : "bg-transparent border border-orange-500/40 text-orange-500 dark:text-orange-400 hover:bg-orange-500/15"
+                              }`}
+                            >
+                              #{i + 1}
+                            </button>
+                          ))}
+                        </div>
+                        {!isSelCurrent && selAgent && (
+                          <button
+                            type="button"
+                            onClick={() => embedded && onNavigateAgent ? onNavigateAgent(selAgent.agent_id) : navigate(`/agents/${selAgent.agent_id}`, { state: forwardState(location) })}
+                            className="ml-auto text-[10px] text-orange-500 dark:text-orange-400 hover:underline"
+                          >
+                            Enter Chat →
+                          </button>
+                        )}
+                      </div>
+                      {taskData?.description && (
+                        <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.description.replace(/\[Attached file: [^\]]+\]/g, "").trim()}</p>
+                      )}
+                      {showSummary && (
+                        <details className="mt-2">
+                          <summary className="text-[10px] font-medium text-orange-500 dark:text-orange-400 cursor-pointer select-none list-none flex items-center gap-1">
+                            <span className="transition-transform duration-200 text-[8px] [details[open]>&]:rotate-90">▶</span>
+                            Agent Summary
+                          </summary>
+                          <div className="mt-1">
+                            {taskData.agent_summary === ":::generating:::" ? (
+                              <p className="text-xs text-dim/50 italic">Generating summary...</p>
+                            ) : (
+                              <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.agent_summary}</p>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                      {showUserFeedback && (
+                        <details className="mt-2">
+                          <summary className="text-[10px] font-medium text-orange-500 dark:text-orange-400 cursor-pointer select-none list-none flex items-center gap-1">
+                            <span className="transition-transform duration-200 text-[8px] [details[open]>&]:rotate-90">▶</span>
+                            User Feedback
+                          </summary>
+                          <div className="mt-1">
+                            <p className="text-xs text-dim/80 whitespace-pre-wrap">{taskData.retry_context}</p>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                }
                 // Grouped tool entries (tool_use + tool_activity) — handled before role checks
                 if (msg.kind === "tool_use" || msg.kind === "tool_activity") {
                   if (toolGroups.has(msg.id)) {
@@ -4137,10 +4169,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             {/* Typing indicator while executing */}
             {isExecuting ? <div data-msg-id="typing" data-msg-type="typing_indicator"><TypingIndicator /></div> : null}
 
-            {/* Queued/pending/scheduled messages always at the bottom */}
+            {/* Queued/scheduled messages always at the bottom — both
+                sourced from preSentMessages directly. */}
             {(() => {
               const queued = queuedMessages;
-              const scheduled = messages.filter((m) => m.role === "USER" && m.status === "PENDING" && m.scheduled_at);
+              const scheduled = preSentMessages.filter((m) => m.role === "USER" && m.status === "scheduled" && m.scheduled_at);
               return (
                 <>
                   {queued.map((msg, idx) => (
