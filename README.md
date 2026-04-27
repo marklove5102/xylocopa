@@ -46,6 +46,9 @@ Watch everything in real time, from desk or phone.
 - **Split screen**: 2/3/4 panes side by side, each navigating independently.
 - **Attention button**: draggable FAB with a cyan unread badge. Tap for the oldest unread (FIFO), long-press for split screen.
 - **Rich chat**: markdown, inline media, interactive cards for tool approvals and plan review.
+- **Compact chat header**: status dot next to the title, tinted Stop / Resume / OK pills on row 1; project / worktree icon-pill / Auto / branch / Task / 4-char id pill collapsed into one tag row underneath. Hover or long-press the id pill for a `xylo id:` popover, double-click to copy; same interaction on the worktree pill.
+
+  ![Chat header](docs/getting-started/12-chat-header.png)
 - **Dual-directional CLI sync**: CLI sessions show up in the web app; web sessions are resumable from the CLI via `tmux attach -t xy-<id>` (legacy `ah-` still recognized).
 
   ![CLI sync demo](docs/cli-sync.gif)
@@ -270,7 +273,7 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 - **Agents** (and inside a Project's agent tab): mark Read / Stop / Delete the selection — including stopping or deleting agents in bulk (no per-row delete button; long-press is the entry point).
 - **Projects**: Activate / Archive / Delete; the Activate and Archive buttons light up only when the selection is uniformly archived or active, otherwise only Delete is available.
 - **Trash**: bulk Restore / permanently Delete deleted projects.
-- **Double-tap an agent's session ID** to quickly copy it to the clipboard.
+- **ID pill** in the chat header (4-char monospace, row 2): hover or long-press for a `xylo id:` popover with a Copy button; double-click to copy directly. Same pattern on the **worktree pill**.
 - **Double-tap a message** in the chat view to quickly copy its content.
 - **Double-tap a tab** in the bottom nav to scroll to the first unread / pending item.
 

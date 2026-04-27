@@ -107,13 +107,24 @@ is always re-fetched from the display file, **never pushed as WS payload**.
    through `AgentDispatcher.wake_sync(agent_id)` (`agent_dispatcher.py:2452`),
    which wakes the per-agent sync loop (or restarts it via
    `_ensure_sync_running` if it died). Hook handlers never create JSONL-sourced
-   messages directly.
-2. **Incremental, pointer-based.** `Agent.last_turn_count` tracks where the
-   sync left off. Only compact/clear/new-conversation events trigger
-   `sync_full_scan`, which resets the pointer.
+   messages directly. Hooks themselves only `wake_sync`, never write status
+   directly.
+2. **Incremental, pointer-based — and the pointer is persisted.**
+   `Agent.last_turn_count` tracks where the sync left off and is written back
+   to the DB after each tick, so an orchestrator restart resumes from the last
+   synced turn instead of replaying full session history. Only
+   compact/clear/new-conversation events trigger `sync_full_scan`, which
+   resets the pointer. **On the initial / pointer-reset scan, `sync_engine`
+   skips status inference and stop-hook / interrupt / rate-limit side effects**
+   (otherwise replayed history would re-fire those signals).
 3. **Display file is downstream of DB, and the frontend is downstream of the
    display file.** Don't short-circuit either edge. New message kinds need
    to flush through `display_writer` before they're visible in the UI.
+4. **WebSocket is signal-only for chat content.** Seven chat-message events
+   (`pre_sent_created`, `pre_sent_updated`, `message_sent`, `message_executed`,
+   `message_delivered`, `message_update`, `metadata_update`) carry no payload —
+   the frontend hears "something changed for agent X" and re-fetches the
+   display file tail. Don't push message bodies as WS payloads.
 
 ## MCP server, cross-session reference
 
@@ -236,14 +247,21 @@ against the code as of writing):
    `meta_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)`.
 
 5. **Queued message dispatch.** The dispatcher is **sync_engine**, not the
-   stop hook itself. Flow: message enters DB as `PENDING` → Claude's turn
-   ends and writes a `stop_hook_summary` entry in JSONL → `sync_engine.py:609–639`
-   detects it during the next sync tick → calls
+   stop hook itself. Pre-sent (queued/scheduled/cancelled) entries live in
+   the per-agent display file as a separate in-memory index — there is no
+   DB row until they are dispatched. Flow: user queues a message → entry
+   appended to display file with `status: queued` (no `Message` row) →
+   Claude's turn ends and writes a `stop_hook_summary` entry in JSONL →
+   `sync_engine.py:609–639` detects it during the next sync tick → calls
    `AgentDispatcher.dispatch_pending_message()` → `send_tmux_message()`
-   pastes into the tmux pane → `UserPromptSubmit` hook
-   (`routers/hooks.py:135`) marks the message `DELIVERED`. The stop hook's
-   job is just to wake sync; the detection and dispatch live in
-   `sync_engine`.
+   pastes into the tmux pane → on dispatch, the pre-sent entry is promoted
+   into a real `Message` row with `MessageStatus.SENT` → `UserPromptSubmit`
+   hook (`routers/hooks.py:135`) flips it to `COMPLETED` /
+   `delivered_at`. The stop hook's job is just to wake sync; detection,
+   promotion, and dispatch live in `sync_engine` + `display_writer`.
+
+   `MessageStatus`: `SENT` (was `QUEUED`) → `EXECUTING` → `COMPLETED` /
+   `FAILED` / `CANCELLED`. `PENDING` and `TIMEOUT` were removed.
 
 6. **When fixing a shared helper, grep ALL call sites.** Helpers like
    `_resolve_session_jsonl`, `tmux_session_candidates`, and `wake_sync`

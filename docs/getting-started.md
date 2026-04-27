@@ -123,12 +123,21 @@ Once a project exists, open any inbox task, assign the project, and hit **Dispat
 
 ### 3. Watch it run
 
-If you dispatched, you're now in the agent's chat view. You can:
+If you dispatched, you're now in the agent's chat view.
+
+<p align="center"><img src="getting-started/12-chat-header-annotated-en.png" alt="Chat header — id pill, worktree pill, Task chip, branch, Stop button" width="640"></p>
+
+The header is two rows:
+
+- **Row 1** — status dot next to the title; on the right, tinted action pills (red **Stop** / cyan **Resume** / green **OK**) and an icon toolbar (refresh, files, notifications, schedule, star).
+- **Row 2** — a single tag strip: project • **worktree pill** (icon only — hover or long-press for a `worktree: <name>` popover, double-click copies) • **Auto** chip (when Auto mode is on) • branch (violet text) • **Task chip** (orange, opens the task card) • **ID pill** (4-char monospace — same hover/long-press = popover, double-click = copy).
+
+From here you can:
 
 - Read the agent's thinking and tool calls as they stream in.
 - Approve or deny tool calls (when Auto mode is off).
 - Send follow-ups, course-correct, or stop the agent.
-- **Double-tap a message** to copy it. **Double-tap the session ID** to copy the session ID.
+- **Double-tap a message** to copy it.
 
 On desktop, tap the split-screen button (bottom-right corner) to watch 2–4 agents at once:
 
