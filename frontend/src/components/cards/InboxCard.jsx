@@ -51,6 +51,33 @@ function isImagePath(path) {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(path);
 }
 
+/** Place the caret inside `el` at the document point (x, y). Falls back to end-of-content. */
+function placeCaretAtPoint(el, x, y) {
+  const sel = window.getSelection();
+  if (!sel) return;
+  let range = null;
+  if (x != null && y != null) {
+    if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(x, y);
+      if (pos && el.contains(pos.offsetNode)) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    } else if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(x, y);
+      if (r && el.contains(r.startContainer)) range = r;
+    }
+  }
+  if (!range) {
+    range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+  }
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 export default memo(function InboxCard({ task, selecting, selected, onToggle, onEnterSelect, expanded, onExpand, onRefresh, dragHandleProps }) {
   const projColor = "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400";
   const isExpanded = expanded && !selecting;
@@ -75,14 +102,13 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   const startTitleEditing = (e) => {
     e.stopPropagation();
     if (!isExpanded || titleEditing) return;
+    const { clientX, clientY } = e;
     setTitleEditing(true);
     requestAnimationFrame(() => {
       const el = titleRef.current;
       if (!el) return;
       el.focus();
-      const sel = window.getSelection();
-      sel.selectAllChildren(el);
-      sel.collapseToEnd();
+      placeCaretAtPoint(el, clientX, clientY);
     });
   };
 
@@ -208,15 +234,14 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   const startEditing = (e) => {
     e.stopPropagation();
     if (editing) return;
+    const { clientX, clientY } = e;
     setEditing(true);
     requestAnimationFrame(() => {
       const el = editRef.current;
       if (!el) return;
       el.innerText = descText; // Restore content (React clears children on editing transition)
       el.focus();
-      const sel = window.getSelection();
-      sel.selectAllChildren(el);
-      sel.collapseToEnd();
+      placeCaretAtPoint(el, clientX, clientY);
     });
   };
 
