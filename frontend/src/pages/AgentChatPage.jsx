@@ -2490,31 +2490,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Display API cursor tracking
   const nextOffsetRef = useRef(0);
   const hasEarlierRef = useRef(false);
-  // Buffer for message_delivered events that arrive before the message
-  // exists in state (race condition: WS event beats HTTP POST response).
-  const pendingDeliveriesRef = useRef(new Map());
 
-  // Keep messagesRef in sync + apply any buffered delivery events
+  // Keep messagesRef in sync.
   useEffect(() => {
     messagesRef.current = messages;
-    if (pendingDeliveriesRef.current.size > 0) {
-      const pending = pendingDeliveriesRef.current;
-      let applied = false;
-      const updated = messages.map((m) => {
-        if (!m.delivered_at && pending.has(m.id)) {
-          applied = true;
-          return { ...m, delivered_at: pending.get(m.id) };
-        }
-        return m;
-      });
-      if (applied) {
-        // Clear only the entries we just applied
-        for (const m of updated) {
-          if (pending.has(m.id) && m.delivered_at) pending.delete(m.id);
-        }
-        setMessages(updated);
-      }
-    }
   }, [messages]);
 
   // Shared: apply display API response to message state.
@@ -3198,6 +3177,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // to React 18 batching (unlike the old setLastEvent/useEffect pattern).
   const refreshMessagesRef = useRef(refreshMessages);
   refreshMessagesRef.current = refreshMessages;
+  // Debounced refetch: absorb bursts of chat-message signals (e.g. promote +
+  // delivered + executed all in <50ms) into a single display-file refetch.
+  const refetchTimerRef = useRef(null);
+  const debouncedRefetch = useCallback(() => {
+    clearTimeout(refetchTimerRef.current);
+    refetchTimerRef.current = setTimeout(() => {
+      refreshMessagesRef.current();
+    }, 50);
+  }, []);
+  useEffect(() => () => clearTimeout(refetchTimerRef.current), []);
   useWsEvent((event) => {
     if (event.data?.agent_id !== id) return;
 
@@ -3246,101 +3235,20 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
-    if (event.type === "metadata_update") {
-      const { message_id, metadata } = event.data;
-      setMessages((prev) =>
-        prev.map((m) => (m.id === message_id ? { ...m, metadata } : m))
-      );
-      return;
-    }
-
-    // Pre-sent WS events (refactor: pre-sent messages live in display file).
-    // Backend emits these whenever pre-sent state changes; frontend reacts
-    // directly, bypassing poll. All handlers are idempotent against duplicates
-    // and order-insensitive between pre_sent_created and message_sent.
-    if (event.type === "pre_sent_created") {
-      pushWsEvent('pre_sent_created', { id: event.data?.entry?.id });
-      const entry = event.data?.entry;
-      if (!entry?.id) return;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === entry.id)) return prev;
-        return [...prev, entry];
-      });
-      return;
-    }
-
-    if (event.type === "pre_sent_updated") {
-      pushWsEvent('pre_sent_updated', { id: event.data?.message_id });
-      const { message_id, patch } = event.data || {};
-      if (!message_id || !patch) return;
-      setMessages((prev) => prev.map((m) =>
-        m.id === message_id ? { ...m, ...patch } : m
-      ));
-      return;
-    }
-
-    if (event.type === "pre_sent_tombstoned") {
-      pushWsEvent('pre_sent_tombstoned', { id: event.data?.message_id });
-      const message_id = event.data?.message_id;
-      if (!message_id) return;
-      setMessages((prev) => prev.filter((m) => m.id !== message_id));
-      return;
-    }
-
-    if (event.type === "message_sent") {
-      pushWsEvent('message_sent', { id: event.data?.message_id, seq: event.data?.seq });
-      const { message_id, seq, entry } = event.data || {};
-      if (!message_id) return;
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === message_id);
-        const sentEntry = { ...(entry || {}), id: message_id, seq, status: 'sent' };
-        if (idx === -1) {
-          return [...prev, sentEntry];
-        }
-        const next = prev.slice();
-        next[idx] = { ...prev[idx], ...sentEntry };
-        return next;
-      });
-      return;
-    }
-
-    if (event.type === "message_executed") {
-      pushWsEvent('message_executed', event.data);
-      const { message_id, completed_at } = event.data || {};
-      if (!message_id) return;
-      setMessages((prev) => prev.map((m) => m.id === message_id
-        ? { ...m, completed_at, status: 'executed' }
-        : m));
-      return;
-    }
-
-    if (event.type === "message_delivered") {
-      pushWsEvent('message_delivered', event.data);
-      const { message_id, delivered_at } = event.data;
-      setMessages((prev) => {
-        const found = prev.some((m) => m.id === message_id);
-        if (!found) {
-          // Message not in state yet (race: WS event beat HTTP POST response).
-          // Buffer it so the useEffect on messages can apply it later.
-          pendingDeliveriesRef.current.set(message_id, delivered_at);
-          return prev;
-        }
-        return prev.map((m) => (m.id === message_id
-          ? { ...m, delivered_at, status: (m.status === 'sent' ? 'delivered' : m.status) }
-          : m));
-      });
-      return;
-    }
-
-    // Legacy: PENDING→QUEUED and similar upper-case transitions. Kept for
-    // backwards compat during Phase 2 transition; can be dropped in Phase 3.
-    if (event.type === "message_update") {
-      const { message_id, status, error_message, completed_at } = event.data;
-      setMessages((prev) =>
-        prev.map((m) => (m.id === message_id
-          ? { ...m, status, ...(error_message ? { error_message } : {}), ...(completed_at ? { completed_at } : {}) }
-          : m))
-      );
+    // Chat-message signals — display file is the single source of truth.
+    // Each event carries only {agent_id, message_id}; we refetch the
+    // display file (debounced 50ms) and re-render from it. Bursts of
+    // signals (e.g. promote → delivered → executed in <50ms) collapse
+    // into one refetch.
+    const CHAT_SIGNALS = new Set([
+      "metadata_update",
+      "pre_sent_created", "pre_sent_updated", "pre_sent_tombstoned",
+      "message_sent", "message_executed", "message_delivered",
+      "message_update",
+    ]);
+    if (CHAT_SIGNALS.has(event.type)) {
+      pushWsEvent(event.type, { id: event.data?.message_id });
+      debouncedRefetch();
       return;
     }
 

@@ -245,7 +245,6 @@ def _promote_or_create_user_msg(db, ctx: SyncContext, content, jsonl_uuid, seq, 
                 from websocket import emit_message_delivered
                 asyncio.ensure_future(emit_message_delivered(
                     ctx.agent_id, web_msg.id,
-                    web_msg.delivered_at.isoformat(),
                 ))
             return None  # updated — no insert needed
 
@@ -657,7 +656,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                 from websocket import emit_metadata_update
                 for _d in _dismissed:
                     ad._emit(emit_metadata_update(
-                        ctx.agent_id, _d["message_id"], _d["metadata"],
+                        ctx.agent_id, _d["message_id"],
                     ))
                 logger.info(
                     "sync: dismissed %d interactive card(s) for agent %s on interrupt",
@@ -921,8 +920,7 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
                 if _compact_msg_re and _compact_msg_re.completed_at:
                     from websocket import emit_message_update
                     asyncio.ensure_future(emit_message_update(
-                        ctx.agent_id, _compact_finalized_msg_id, "COMPLETED",
-                        completed_at=_compact_msg_re.completed_at.isoformat(),
+                        ctx.agent_id, _compact_finalized_msg_id,
                     ))
 
         # If turns are missing from DB, reset pointer so sync loop reimports them.

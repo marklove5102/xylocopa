@@ -275,98 +275,74 @@ async def emit_new_message(agent_id: str, message_id: str,
     })
 
 
-async def emit_message_delivered(agent_id: str, message_id: str,
-                                 delivered_at: str):
-    """Notify clients that a web-sent message was delivered to Claude."""
+# ---- Chat-message event emitters ----
+#
+# Signal-only by design: each event carries only {agent_id, message_id}.
+# The display file (data/display/{agent_id}.jsonl) is the single source of
+# truth for chat messages — frontend refetches via GET /api/agents/{id}/display
+# when any of these signals arrive. Callers MUST flush the relevant write
+# (display_writer.flush_agent / pre_sent_* / update_last) BEFORE emitting.
+
+
+async def emit_message_delivered(agent_id: str, message_id: str):
+    """Signal: a web-sent message was delivered to Claude."""
     await ws_manager.broadcast("message_delivered", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "delivered_at": delivered_at,
     })
 
 
-# ---- Pre-delivery event emitters ----
-
-
-async def emit_pre_sent_created(agent_id: str, entry: dict):
-    """Notify clients that a new pre-sent entry was created.
-
-    Frontend adds the entry to its queued state immediately — no poll
-    required.
-    """
+async def emit_pre_sent_created(agent_id: str, message_id: str):
+    """Signal: a new pre-sent entry was created in the display file."""
     await ws_manager.broadcast("pre_sent_created", {
         "agent_id": agent_id,
-        "entry": entry,
+        "message_id": message_id,
     })
 
 
-async def emit_pre_sent_updated(agent_id: str, message_id: str, patch: dict):
-    """Notify clients that a pre-sent entry was patched (content,
-    scheduled_at, status, metadata). Frontend merges `patch` into its
-    local queued state for `message_id`.
-    """
+async def emit_pre_sent_updated(agent_id: str, message_id: str):
+    """Signal: a pre-sent entry was patched (content, scheduled_at,
+    status, metadata)."""
     await ws_manager.broadcast("pre_sent_updated", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "patch": patch,
     })
 
 
 async def emit_pre_sent_tombstoned(agent_id: str, message_id: str):
-    """Notify clients that a pre-sent entry was hard-deleted.
-
-    Frontend removes the entry from its queued state.
-    """
+    """Signal: a pre-sent entry was hard-deleted."""
     await ws_manager.broadcast("pre_sent_tombstoned", {
         "agent_id": agent_id,
         "message_id": message_id,
     })
 
 
-async def emit_message_sent(agent_id: str, message_id: str, seq: int,
-                             entry: dict):
-    """Notify clients that a pre-sent entry was promoted to sent.
-
-    Frontend removes the entry from its queued state and adds it to the
-    delivered partition with the newly-allocated `seq`.
-    """
+async def emit_message_sent(agent_id: str, message_id: str):
+    """Signal: a pre-sent entry was promoted to sent (file + DB)."""
     await ws_manager.broadcast("message_sent", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "seq": seq,
-        "entry": entry,
     })
 
 
-async def emit_message_executed(agent_id: str, message_id: str,
-                                completed_at: str):
-    """Notify clients that a sent/delivered message was executed (completed).
+async def emit_message_executed(agent_id: str, message_id: str):
+    """Signal: a sent/delivered message was executed (completed).
 
     Used for slash commands whose completion is marked by a hook
     (/compact PostCompact, /clear SessionStart source=clear, /loop SessionEnd).
-    Frontend transitions the entry status to 'executed' (green double check).
     """
     await ws_manager.broadcast("message_executed", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "completed_at": completed_at,
     })
 
 
-async def emit_message_update(agent_id: str, message_id: str, status: str,
-                              error_message: str | None = None,
-                              completed_at: str | None = None):
-    """Notify clients that a message's status changed (e.g. PENDING→EXECUTING)."""
-    payload: dict = {
+async def emit_message_update(agent_id: str, message_id: str):
+    """Signal: a message's status changed."""
+    await ws_manager.broadcast("message_update", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "status": status,
-    }
-    if error_message:
-        payload["error_message"] = error_message
-    if completed_at:
-        payload["completed_at"] = completed_at
-    await ws_manager.broadcast("message_update", payload)
+    })
 
 
 async def emit_agent_stream_end(agent_id: str,
@@ -399,13 +375,11 @@ async def emit_tool_activity(agent_id: str, tool_name: str, phase: str,
     await ws_manager.broadcast("tool_activity", payload)
 
 
-async def emit_metadata_update(agent_id: str, message_id: str,
-                                metadata: dict):
-    """Notify clients that a message's interactive metadata changed."""
+async def emit_metadata_update(agent_id: str, message_id: str):
+    """Signal: a message's interactive metadata changed."""
     await ws_manager.broadcast("metadata_update", {
         "agent_id": agent_id,
         "message_id": message_id,
-        "metadata": metadata,
     })
 
 

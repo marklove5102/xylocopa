@@ -2616,7 +2616,7 @@ async def send_agent_message(
     from display_writer import pre_sent_create
     from websocket import emit_pre_sent_created
     pre_sent_create(agent.id, entry)
-    asyncio.ensure_future(emit_pre_sent_created(agent.id, entry))
+    asyncio.ensure_future(emit_pre_sent_created(agent.id, entry["id"]))
 
     if ad and not scheduled_at:
         # IDLE / BUSY: dispatcher decides whether to send immediately or
@@ -2721,7 +2721,7 @@ async def cancel_message(agent_id: str, message_id: str, db: Session = Depends(g
 
     pre_sent_cancel(agent_id, message_id)
     asyncio.ensure_future(
-        emit_pre_sent_updated(agent_id, message_id, {"status": "cancelled"})
+        emit_pre_sent_updated(agent_id, message_id)
     )
     logger.info("Message %s cancelled (soft) for agent %s", message_id, agent_id)
     return {"detail": "cancelled"}
@@ -2774,7 +2774,7 @@ async def update_message(
     if patch:
         pre_sent_update(agent_id, message_id, patch)
         asyncio.ensure_future(
-            emit_pre_sent_updated(agent_id, message_id, patch)
+            emit_pre_sent_updated(agent_id, message_id)
         )
 
     # Build the synthetic MessageOut from the updated entry.
@@ -3047,7 +3047,7 @@ async def answer_agent_interactive(
             logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
         else:
             from websocket import emit_metadata_update
-            await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
+            await emit_metadata_update(agent_id, patched["message_id"])
 
         # Multi-Q: accumulate answers until all questions are answered
         total_questions = _count_interactive_questions(db, agent_id, body.tool_use_id)
@@ -3131,7 +3131,7 @@ async def answer_agent_interactive(
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
             else:
                 from websocket import emit_metadata_update
-                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
+                await emit_metadata_update(agent_id, patched["message_id"])
 
             try:
                 # Store approved plan on task for the execution agent
@@ -3190,7 +3190,7 @@ async def answer_agent_interactive(
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
             else:
                 from websocket import emit_metadata_update
-                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
+                await emit_metadata_update(agent_id, patched["message_id"])
 
             # Capture pane content AFTER sending keys for diagnostics
             await asyncio.sleep(0.5)
@@ -3210,7 +3210,7 @@ async def answer_agent_interactive(
                 logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
             else:
                 from websocket import emit_metadata_update
-                await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
+                await emit_metadata_update(agent_id, patched["message_id"])
 
         return {"detail": "ok", "keys_sent": len(keys) if has_tmux else 0, "prompt_type": prompt_type, "auto_approved": not has_tmux}
 
@@ -3233,7 +3233,7 @@ async def answer_agent_interactive(
             logger.warning("Interactive patch missed: tool_use_id=%s agent=%s", body.tool_use_id, agent_id)
         else:
             from websocket import emit_metadata_update
-            await emit_metadata_update(agent_id, patched["message_id"], patched["metadata"])
+            await emit_metadata_update(agent_id, patched["message_id"])
 
         return {"detail": "ok", "keys_sent": len(keys), "auto_approved": not has_tmux}
 
@@ -3305,7 +3305,7 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     if dismissed:
         from websocket import emit_metadata_update
         for d in dismissed:
-            await emit_metadata_update(agent_id, d["message_id"], d["metadata"])
+            await emit_metadata_update(agent_id, d["message_id"])
         logger.info("escape: dismissed %d interactive card(s) for agent %s",
                      len(dismissed), agent_id[:8])
 

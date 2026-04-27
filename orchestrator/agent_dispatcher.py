@@ -2036,8 +2036,7 @@ Here are the day's conversations (with timestamps):
         msg.completed_at = _utcnow()
         if emit:
             from websocket import emit_message_update
-            self._emit(emit_message_update(msg.agent_id, msg.id, "FAILED",
-                                           error_message=reason))
+            self._emit(emit_message_update(msg.agent_id, msg.id))
 
     def _fail_pending_messages(self, db: Session, agent_id: str, reason: str):
         """Fail all EXECUTING messages for an agent. Also tombstones any
@@ -2628,9 +2627,7 @@ Here are the day's conversations (with timestamps):
         sent_line["status"] = "sent"
 
         pre_sent_promote_to_sent(agent.id, msg_id, next_seq, sent_line)
-        asyncio.ensure_future(emit_message_sent(
-            agent.id, msg_id, next_seq, sent_line,
-        ))
+        asyncio.ensure_future(emit_message_sent(agent.id, msg_id))
         logger.info(
             "dispatch_pending: promoted %s → sent (seq=%d) for agent %s",
             msg_id[:8], next_seq, agent.id[:8],

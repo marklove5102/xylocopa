@@ -282,8 +282,8 @@ def mark_delivered(agent_id: str, content: str) -> str | None:
         update_last(agent_id, msg.id)
 
         from websocket import emit_message_delivered, emit_message_update
-        asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
-        asyncio.ensure_future(emit_message_update(agent_id, msg.id, msg.status.value))
+        asyncio.ensure_future(emit_message_delivered(agent_id, msg.id))
+        asyncio.ensure_future(emit_message_update(agent_id, msg.id))
         logger.info("slash_commands: %s delivered for %s (msg=%s)", cmd, agent_id[:8], msg.id)
         return msg.id
     finally:
@@ -339,16 +339,11 @@ def mark_completed(agent_id: str) -> str | None:
         update_last(agent_id, msg.id)
 
         from websocket import emit_message_executed, emit_message_update
-        asyncio.ensure_future(emit_message_update(
-            agent_id, msg.id, "COMPLETED",
-            completed_at=msg.completed_at.isoformat(),
-        ))
-        asyncio.ensure_future(emit_message_executed(
-            agent_id, msg.id, msg.completed_at.isoformat(),
-        ))
+        asyncio.ensure_future(emit_message_update(agent_id, msg.id))
+        asyncio.ensure_future(emit_message_executed(agent_id, msg.id))
         if msg.delivered_at == now:
             from websocket import emit_message_delivered
-            asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
+            asyncio.ensure_future(emit_message_delivered(agent_id, msg.id))
 
         cmd, _ = parse(msg.content)
         logger.info("slash_commands: %s completed for %s (msg=%s)", cmd, agent_id[:8], msg.id)
@@ -409,14 +404,9 @@ def mark_delivered_and_completed(agent_id: str, content: str) -> str | None:
             emit_message_executed,
             emit_message_update,
         )
-        asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
-        asyncio.ensure_future(emit_message_executed(
-            agent_id, msg.id, now.isoformat(),
-        ))
-        asyncio.ensure_future(emit_message_update(
-            agent_id, msg.id, "COMPLETED",
-            completed_at=now.isoformat(),
-        ))
+        asyncio.ensure_future(emit_message_delivered(agent_id, msg.id))
+        asyncio.ensure_future(emit_message_executed(agent_id, msg.id))
+        asyncio.ensure_future(emit_message_update(agent_id, msg.id))
 
         logger.info("slash_commands: %s delivered+completed for %s (msg=%s)", cmd, agent_id[:8], msg.id)
         return msg.id
@@ -464,16 +454,11 @@ def mark_loop_completed(agent_id: str) -> str | None:
         update_last(agent_id, msg.id)
 
         from websocket import emit_message_executed, emit_message_update
-        asyncio.ensure_future(emit_message_update(
-            agent_id, msg.id, "COMPLETED",
-            completed_at=now.isoformat(),
-        ))
-        asyncio.ensure_future(emit_message_executed(
-            agent_id, msg.id, now.isoformat(),
-        ))
+        asyncio.ensure_future(emit_message_update(agent_id, msg.id))
+        asyncio.ensure_future(emit_message_executed(agent_id, msg.id))
         if msg.delivered_at == now:
             from websocket import emit_message_delivered
-            asyncio.ensure_future(emit_message_delivered(agent_id, msg.id, now.isoformat()))
+            asyncio.ensure_future(emit_message_delivered(agent_id, msg.id))
 
         logger.info("slash_commands: /loop completed for %s (msg=%s)", agent_id[:8], msg.id)
         return msg.id

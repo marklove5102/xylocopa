@@ -449,7 +449,7 @@ async def hook_agent_tool_activity(request: Request):
                             for _item in _meta.get("interactive", []):
                                 if _item.get("tool_use_id") == tool_use_id and _item.get("answer") == _answer_text:
                                     from websocket import emit_metadata_update
-                                    await emit_metadata_update(agent_id, _msg.id, _meta)
+                                    await emit_metadata_update(agent_id, _msg.id)
                                     break
                 finally:
                     _db.close()
