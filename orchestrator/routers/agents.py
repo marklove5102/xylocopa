@@ -3276,14 +3276,30 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     # so a bare C-u is a no-op if the restore parks the cursor at position 0.
     send_tmux_keys(agent.tmux_pane, ["End", "C-u"])
 
-    # Interrupt confirmation and dispatch are handled by the sync engine:
-    # CC writes "[Request interrupted by user]" to JSONL → sync imports it
-    # → _stop_generating clears state → dispatch_pending_message fires.
-    # We just need to clear generating state (immediate UI update) and wake sync.
+    # Escape is a privileged terminal signal: a user-initiated interrupt
+    # is itself authoritative, on par with stop_hook/interrupt/rate_limit.
+    # We can't rely on sync_engine alone here because CC does NOT always
+    # write "[Request interrupted by user]" to JSONL — early interrupts
+    # (Esc within a few seconds of sending, before any assistant content
+    # is committed) leave no JSONL marker, so the sync_engine path would
+    # leave status stuck at EXECUTING forever.
+    #
+    # Design note: this widens the state-machine invariant from "only
+    # sync_engine writes status" to "only sync_engine writes EXECUTING;
+    # a few authoritative paths may write IDLE directly." Escape qualifies
+    # because the user explicitly demanded the agent stop.
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
         ad._stop_generating(agent_id)
         ad.wake_sync(agent_id)
+    if agent.status == AgentStatus.EXECUTING:
+        agent.status = AgentStatus.IDLE
+        agent.generating_msg_id = None
+        db.commit()
+        from websocket import emit_agent_update
+        await emit_agent_update(agent_id, "IDLE", agent.project or "")
+        if ad:
+            asyncio.ensure_future(ad.dispatch_pending_message(agent_id, delay=0))
 
     # Patch any unanswered interactive cards so hasPendingInteractive unblocks.
     # C-c interrupts the CLI before tool_result can be written, so the normal
