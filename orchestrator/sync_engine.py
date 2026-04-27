@@ -73,6 +73,11 @@ class SyncContext:
     idle_polls: int = 0
     getsize_error_count: int = 0
     awaiting_rotation: bool = False     # set by SessionEnd, consumed by SessionStart
+    # PreCompact hook stashes the trigger here ("manual" | "auto"); sync_full_scan
+    # reads it on PostCompact processing to decide whether to flip status to IDLE
+    # (manual = user /compact done) or keep EXECUTING (auto = user task that
+    # filled context still ongoing). Reset to None after consumption.
+    compact_trigger: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +147,60 @@ def _notify_interactive(ad, agent, new_turns):
         ad._send_agent_notification(agent, "Plan approval needed")
     elif "ask_user_question" in _interactive_types:
         ad._send_agent_notification(agent, "Question — waiting for your answer")
+
+
+def _infer_status_from_signals(
+    db,
+    ctx: SyncContext,
+    *,
+    saw_user_turn: bool,
+    saw_stop_hook: bool,
+    saw_rate_limit: bool,
+    saw_interrupt: bool,
+) -> str | None:
+    """Derive the agent.status transition implied by JSONL signals seen this
+    sync cycle. The single writer of EXECUTING/IDLE based on JSONL truth.
+
+    Returns the new status value as a string ("EXECUTING" | "IDLE") if a
+    DB write happened (caller should emit), else None (no change).
+
+    Caller MUST already have committed message inserts so this runs
+    against a fresh agent row.
+
+    Rules:
+      saw_stop_hook | saw_rate_limit | saw_interrupt → IDLE (only if not
+        already IDLE; clears generating_msg_id)
+      saw_user_turn (and no stop signal) → EXECUTING (only if status is
+        IDLE/STARTING — never overrides STOPPED/ERROR)
+
+    EXECUTING vs IDLE in the same cycle: stop signals always come at the
+    end of a Claude turn after any user echo, so a "saw_user_turn AND
+    saw_stop_hook" cycle means "user turn happened then turn ended" —
+    end state is IDLE, which the stop branch handles correctly.
+
+    This function is additive during the state-machine refactor: it runs
+    alongside the legacy _start_generating / _stop_generating writes. The
+    DB writes are idempotent (same target value), so dual-write is safe.
+    Once legacy writers are removed, this becomes the sole writer.
+    """
+    agent = db.get(Agent, ctx.agent_id)
+    if not agent or agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
+        return None
+
+    if saw_stop_hook or saw_rate_limit or saw_interrupt:
+        if agent.status != AgentStatus.IDLE or agent.generating_msg_id is not None:
+            agent.status = AgentStatus.IDLE
+            agent.generating_msg_id = None
+            db.commit()
+            return "IDLE"
+        return None
+
+    if saw_user_turn and agent.status in (AgentStatus.IDLE, AgentStatus.STARTING):
+        agent.status = AgentStatus.EXECUTING
+        db.commit()
+        return "EXECUTING"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +565,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         _saw_interrupt = False
         _saw_stop_hook = False
         _saw_rate_limit = False
+        _saw_user_turn = False  # any new user turn → agent is now EXECUTING
         # Accumulate message_ids updated (sent→delivered) this cycle so we
         # can call update_last AFTER db.commit(). Writing inline would
         # violate the display_writer "commit → then flush" contract (the
@@ -523,6 +583,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                          ctx.agent_id[:8], seq, role, kind, jsonl_uuid, len(content or ""))
 
             if role == "user":
+                _saw_user_turn = True
                 msg = _promote_or_create_user_msg(
                     db, ctx, content, jsonl_uuid, seq, meta, kind, jsonl_ts,
                     deferred_updates=_deferred_updates,
@@ -609,6 +670,25 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         # turns not matched to a sent row — i.e. genuine CLI input).
         from display_writer import flush_agent as _flush_display
         _flush_display(ctx.agent_id)
+
+        # Status inference from JSONL signals — sync_engine is the truth
+        # writer for EXECUTING/IDLE under the state-machine refactor.
+        # Idempotent: if legacy hook→_start_generating already wrote the
+        # same value, this is a no-op (helper returns None).
+        _inferred_status = _infer_status_from_signals(
+            db, ctx,
+            saw_user_turn=_saw_user_turn,
+            saw_stop_hook=_saw_stop_hook,
+            saw_rate_limit=_saw_rate_limit,
+            saw_interrupt=_saw_interrupt,
+        )
+        if _inferred_status:
+            from websocket import emit_agent_update as _emit_agent_update
+            _agent_for_emit = db.get(Agent, ctx.agent_id)
+            ad._emit(_emit_agent_update(
+                ctx.agent_id, _inferred_status,
+                _agent_for_emit.project if _agent_for_emit else "",
+            ))
 
         # Rate limit detected: transition to IDLE but do NOT dispatch queued
         # messages — the agent cannot process them while rate-limited.
@@ -886,6 +966,32 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
                 import time as _time
                 ctx.compact_detected_at = _time.monotonic()
             ctx.compact_notified = False
+
+            # Compact trigger discrimination — owns the EXECUTING/IDLE
+            # transition for compact. PreCompact stashes ctx.compact_trigger:
+            #   "manual" → user invoked /compact, turn is over → IDLE
+            #   "auto"   → context-fill auto-compact, original user task
+            #              still ongoing → keep EXECUTING (don't write)
+            # Default unknown trigger to "manual" (safer to land at IDLE
+            # than to leave a stuck EXECUTING).
+            _trigger = ctx.compact_trigger or "manual"
+            _agent_for_compact = db.get(Agent, ctx.agent_id)
+            if (_agent_for_compact and _agent_for_compact.status not in
+                    (AgentStatus.STOPPED, AgentStatus.ERROR)):
+                if _trigger == "manual" and _agent_for_compact.status == AgentStatus.EXECUTING:
+                    _agent_for_compact.status = AgentStatus.IDLE
+                    _agent_for_compact.generating_msg_id = None
+                    _changes_made = True
+                    logger.info(
+                        "sync compact: trigger=manual, agent %s → IDLE",
+                        ctx.agent_id[:8],
+                    )
+                elif _trigger == "auto":
+                    logger.info(
+                        "sync compact: trigger=auto, keep agent %s status=%s",
+                        ctx.agent_id[:8], _agent_for_compact.status.value,
+                    )
+            ctx.compact_trigger = None  # consume
 
         # Log drift — no UI bubbles, no silent skipping.
         if missing_in_db:
