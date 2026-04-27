@@ -3979,7 +3979,6 @@ Here are the day's conversations (with timestamps):
             # a grace period so the user isn't stuck with stale indicators.
             _COMPACT_GRACE_SECS = 15
             if ctx.compact_detected_at:
-                import time as _time
                 _elapsed = _time.monotonic() - ctx.compact_detected_at
                 if _elapsed >= _COMPACT_GRACE_SECS:
                     logger.warning(
