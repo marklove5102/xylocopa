@@ -2043,13 +2043,13 @@ Here are the day's conversations (with timestamps):
         pre-sent entries (`_pre_sent` lines in the display file) so the user
         doesn't see zombie queued bubbles on a dead agent.
 
-        PENDING DB rows no longer exist under the Phase 2 model — legacy
-        rows are migrated on startup (see `main._migrate_pre_sent_legacy`).
-        Kept in the filter as a defensive belt-and-suspenders.
+        Pre-Phase-2 PENDING DB rows no longer exist (the enum value itself
+        was removed in v0.7.x; database.py migrates legacy PENDING rows on
+        startup). Pre-sent failures are handled by `_fail_all_pre_sent`.
         """
         pending = db.query(Message).filter(
             Message.agent_id == agent_id,
-            Message.status.in_([MessageStatus.PENDING, MessageStatus.EXECUTING]),
+            Message.status == MessageStatus.EXECUTING,
         ).all()
         for m in pending:
             self._fail_message(m, reason)
@@ -3362,7 +3362,7 @@ Here are the day's conversations (with timestamps):
             .filter(
                 Message.agent_id == agent.id,
                 Message.role.in_([MessageRole.USER, MessageRole.AGENT]),
-                Message.status.in_([MessageStatus.COMPLETED, MessageStatus.FAILED, MessageStatus.TIMEOUT]),
+                Message.status.in_([MessageStatus.COMPLETED, MessageStatus.FAILED]),
             )
             .order_by(Message.created_at.desc())
             .limit(20)

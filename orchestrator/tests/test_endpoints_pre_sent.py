@@ -255,7 +255,7 @@ async def test_post_messages_returns_valid_message_out(
     assert model.role == MessageRole.USER
     assert model.content == "shape me"
     assert model.source == "web"
-    assert model.status == MessageStatus.PENDING
+    assert model.status == "queued"
     assert model.delivered_at is None
     assert model.completed_at is None
 

@@ -253,6 +253,26 @@ def init_db():
         conn.execute(text(
             "UPDATE messages SET status='SENT' WHERE status='QUEUED'"
         ))
+
+        # One-shot cleanup: legacy PENDING / TIMEOUT MessageStatus values were
+        # removed from the enum (PENDING was never written under the Phase 2
+        # pre_sent architecture; TIMEOUT was dead code with no writers).
+        # Existing rows must be reconciled before SQLAlchemy enum loading.
+        # PENDING rows: if delivered_at set → COMPLETED (was actually delivered);
+        # otherwise delete (legacy stale, user can re-send).
+        conn.execute(text(
+            "UPDATE messages SET status='COMPLETED', "
+            "completed_at=COALESCE(completed_at, delivered_at) "
+            "WHERE status='PENDING' AND delivered_at IS NOT NULL"
+        ))
+        conn.execute(text(
+            "DELETE FROM messages WHERE status='PENDING'"
+        ))
+        # TIMEOUT rows: collapse to FAILED (semantic equivalent — task didn't
+        # complete successfully).
+        conn.execute(text(
+            "UPDATE messages SET status='FAILED' WHERE status='TIMEOUT'"
+        ))
         conn.commit()
 
         # Drop plan-related columns from tasks (plan mode fully removed)

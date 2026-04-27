@@ -2472,19 +2472,11 @@ def _synthetic_message_out(agent_id: str, entry: dict) -> MessageOut:
     legacy MessageStatus enum value so existing frontend code that still
     reads uppercase strings continues to work during Phase 2 transition.
     """
-    # Map the new lowercase pre-sent statuses to the legacy uppercase
-    # MessageStatus values the response model still uses. Scheduled sends
-    # surface as PENDING (matching today's behavior for _dispatch_tmux_scheduled).
-    raw_status = entry.get("status") or "queued"
-    status_map = {
-        "queued": MessageStatus.PENDING,
-        "scheduled": MessageStatus.PENDING,
-        "cancelled": MessageStatus.CANCELLED,
-        "sent": MessageStatus.SENT,
-        "delivered": MessageStatus.COMPLETED,
-        "executed": MessageStatus.COMPLETED,
-    }
-    status = status_map.get(raw_status, MessageStatus.PENDING)
+    # Pre-sent entries carry lowercase status strings ("queued", "scheduled",
+    # "cancelled", "sent", "delivered", "executed"). MessageOut.status is
+    # `str | None`, so we pass through directly — frontend handles the
+    # lowercase/uppercase mix (display file vs DB-backed messages).
+    status = entry.get("status") or "queued"
 
     # created_at / scheduled_at may be strings (ISO) from the entry dict;
     # the MessageOut validator normalizes tzinfo but we need to convert

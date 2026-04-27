@@ -191,7 +191,11 @@ class MessageOut(BaseModel):
     agent_id: str
     role: MessageRole
     content: str
-    status: MessageStatus
+    # Accepts both uppercase MessageStatus enum values (DB-backed messages:
+    # "SENT", "EXECUTING", "COMPLETED", "FAILED", "CANCELLED") and lowercase
+    # pre-sent / post-send strings from the display file ("queued",
+    # "scheduled", "cancelled", "sent", "delivered", "executed").
+    status: str
     stream_log: str | None = None
     error_message: str | None = None
     source: str | None = None  # "web" | "cli" | None
@@ -236,9 +240,9 @@ class DisplayEntry(BaseModel):
     kind: str | None = None
     content: str | None = None
     source: str | None = None
-    # Accept both the legacy uppercase MessageStatus values
-    # ("PENDING", "SENT", "COMPLETED", ...) and the new lowercase
-    # pre-sent / post-send states ("queued", "scheduled",
+    # Accept both the uppercase MessageStatus enum values
+    # ("SENT", "EXECUTING", "COMPLETED", "FAILED", "CANCELLED") and the
+    # lowercase pre-sent / post-send states ("queued", "scheduled",
     # "cancelled", "sent", "delivered", "executed").
     status: str | None = None
     metadata: dict | None = None

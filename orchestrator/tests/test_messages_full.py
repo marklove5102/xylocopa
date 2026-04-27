@@ -63,7 +63,7 @@ async def test_send_message_to_idle_agent(client, db_engine):
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["status"] == "PENDING"
+    assert data["status"] == "queued"
     assert data["content"] == "Hello idle agent"
     assert data["agent_id"] == "idle11112222"
     assert data["role"] == "USER"
@@ -73,7 +73,7 @@ async def test_send_message_to_idle_agent(client, db_engine):
     db = _make_session(db_engine)
     msg = db.get(Message, data["id"])
     assert msg is not None
-    assert msg.status == MessageStatus.PENDING
+    assert msg.status == MessageStatus.SENT
     db.close()
 
 
@@ -129,7 +129,7 @@ async def test_send_message_with_queue_flag(client, db_engine):
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["status"] == "PENDING"
+    assert data["status"] == "queued"
     assert data["content"] == "Queued message"
 
 
@@ -148,7 +148,7 @@ async def test_send_message_with_scheduled_at(client, db_engine):
     assert resp.status_code == 201
     data = resp.json()
     assert data["scheduled_at"] is not None
-    assert data["status"] == "PENDING"
+    assert data["status"] == "scheduled"
 
 
 # ===========================================================================
@@ -271,7 +271,7 @@ async def test_delete_pending_message(client, db_engine):
         agent_id="delp11112222",
         role=MessageRole.USER,
         content="To be cancelled",
-        status=MessageStatus.PENDING,
+        status=MessageStatus.SENT,
     )
     db.add(msg)
     db.commit()
@@ -311,7 +311,7 @@ async def test_delete_completed_message_rejected(client, db_engine):
 
     resp = await client.delete(f"/api/agents/delc11112222/messages/{msg_id}")
     assert resp.status_code == 400
-    assert "PENDING" in resp.json()["detail"]
+    assert "pre-sent" in resp.json()["detail"]
 
 
 @pytest.mark.anyio
@@ -335,7 +335,7 @@ async def test_delete_message_wrong_agent(client, db_engine):
         agent_id="delw11112222",
         role=MessageRole.USER,
         content="Belongs to agent1",
-        status=MessageStatus.PENDING,
+        status=MessageStatus.SENT,
     )
     db.add(msg)
     db.commit()
@@ -361,7 +361,7 @@ async def test_update_pending_message_content(client, db_engine):
         agent_id="updt11112222",
         role=MessageRole.USER,
         content="Original content",
-        status=MessageStatus.PENDING,
+        status=MessageStatus.SENT,
     )
     db.add(msg)
     db.commit()
@@ -407,7 +407,7 @@ async def test_update_completed_message_rejected(client, db_engine):
         json={"content": "Trying to update"},
     )
     assert resp.status_code == 400
-    assert "PENDING" in resp.json()["detail"]
+    assert "queued/scheduled" in resp.json()["detail"]
 
 
 @pytest.mark.anyio
@@ -419,7 +419,7 @@ async def test_update_message_empty_content(client, db_engine):
         agent_id="upde11112222",
         role=MessageRole.USER,
         content="Some content",
-        status=MessageStatus.PENDING,
+        status=MessageStatus.SENT,
     )
     db.add(msg)
     db.commit()

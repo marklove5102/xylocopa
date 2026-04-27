@@ -95,14 +95,16 @@ def load_registry(db: Session):
 def _migrate_pre_sent_legacy():
     """Clean up pre-cutover DB rows that no longer belong in `messages`.
 
-    Pre-Phase-2 code created DB rows for PENDING/SENT/CANCELLED web/task/
+    Pre-Phase-2 code created DB rows for SENT/CANCELLED web/task/
     plan_continue messages. Post-Phase-2 those states live in the display
     file's pre-sent zone (no DB row) or, once dispatched, as COMPLETED
     rows. This migration reconciles residue.
 
+    PENDING rows are pre-cleaned by database.py on enum load (the
+    MessageStatus.PENDING value was removed); this function only
+    handles SENT and CANCELLED residue.
+
     Rules:
-      - PENDING (never sent to tmux): move to pre_sent zone with
-        status='queued' (or 'scheduled' if scheduled_at is set); delete row.
       - SENT with delivered_at set: was actually delivered, legacy status
         is stale; flip to COMPLETED, keep row.
       - SENT without delivered_at (never confirmed): move to pre_sent
@@ -130,7 +132,6 @@ def _migrate_pre_sent_legacy():
             .filter(
                 Message.source.in_(("web", "task", "plan_continue")),
                 Message.status.in_((
-                    MessageStatus.PENDING,
                     MessageStatus.SENT,
                     MessageStatus.CANCELLED,
                 )),
@@ -150,7 +151,7 @@ def _migrate_pre_sent_legacy():
                         deleted_cancelled += 1
                     continue
 
-                # PENDING or SENT
+                # SENT
                 if msg.delivered_at is not None and msg.display_seq is not None:
                     # Actually delivered — just fix the status label.
                     msg.status = MessageStatus.COMPLETED

@@ -210,7 +210,7 @@ def test_concurrent_dispatch_single_agent():
                     agent_id=agent_id,
                     role=MessageRole.USER,
                     content="test prompt",
-                    status=MessageStatus.PENDING,
+                    status=MessageStatus.SENT,
                     source="task",
                 )
                 db.add(msg)

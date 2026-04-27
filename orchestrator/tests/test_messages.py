@@ -42,7 +42,7 @@ def test_message_role_enum_values():
 
 def test_message_status_enum_values():
     """MessageStatus should have all expected values."""
-    expected = {"PENDING", "SENT", "EXECUTING", "COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"}
+    expected = {"SENT", "EXECUTING", "COMPLETED", "FAILED", "CANCELLED"}
     actual = {s.value for s in MessageStatus}
     assert actual == expected
 
@@ -239,15 +239,15 @@ async def test_send_message_idle_tmux_pane_missing_falls_back_to_pending(
     )
     assert resp.status_code == 201
     payload = resp.json()
-    assert payload["status"] == "PENDING"
+    # Pre-sent messages live in the display file with lowercase "queued"
+    # status; no DB row is created until promote_to_sent.
+    assert payload["status"] == "queued"
 
     db = Session()
     agent = db.get(Agent, "syncmsg11111")
     assert agent.tmux_pane is None
     msg = db.get(Message, payload["id"])
-    assert msg is not None
-    assert msg.status == MessageStatus.PENDING
-    assert msg.source == "web"
+    assert msg is None  # pre_sent: no DB row
     db.close()
 
 

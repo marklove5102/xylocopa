@@ -1112,15 +1112,12 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const isUser = message.role === "USER";
   // Normalize status for comparison: the Phase 2 refactor introduces
   // lowercase pre-sent statuses ('queued', 'scheduled', 'cancelled',
-  // 'sent', 'delivered', 'executed') alongside the legacy uppercase
-  // MessageStatus values. Match on both during the transition.
+  // 'sent', 'delivered', 'executed') alongside the uppercase MessageStatus
+  // enum values. Match on both — pre-sent zone uses lowercase, DB-backed
+  // messages use uppercase.
   const status = message.status || "";
-  const isScheduled = isUser && message.scheduled_at && (
-    status === "scheduled" || status === "PENDING"
-  );
-  const isPreQueued = isUser && !message.scheduled_at && (
-    status === "queued" || status === "PENDING"
-  );
+  const isScheduled = isUser && message.scheduled_at && status === "scheduled";
+  const isPreQueued = isUser && !message.scheduled_at && status === "queued";
   const isCancelled = isUser && (status === "cancelled" || status === "CANCELLED");
   const isSent = isUser && (status === "sent" || status === "SENT");
   const isExecuted = isUser && status === "executed";
@@ -2746,16 +2743,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   hasPendingInteractiveRef.current = hasPendingInteractive;
 
   // Bottom-area user messages: active queue (queued / scheduled / cancelled).
-  // Under the Phase 2 pre-sent refactor, the file's `status` field uses
-  // the lowercase strings 'queued' | 'scheduled' | 'cancelled'. PENDING is
-  // a legacy pre-Phase-2 fallback for "in web queue" rows. SENT (formerly
-  // QUEUED) is NOT a queued state — it means "sent to tmux", which lives
-  // in the main scroll, not the bottom queue.
+  // Pre-sent zone uses lowercase 'queued' / 'scheduled' / 'cancelled'.
+  // SENT (formerly QUEUED) is NOT a queued state — it means "sent to tmux",
+  // which lives in the main scroll, not the bottom queue.
   const queuedMessages = useMemo(
     () => messages.filter((m) =>
       m.role === "USER" && !m.scheduled_at && (
         m.status === "queued" || m.status === "cancelled"
-        || m.status === "PENDING"
       ),
     ),
     [messages],
@@ -4035,15 +4029,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               let replacedFirstTask = false;
               // Exclude pre-sent user messages (they render in the bottom
               // queue list separately). Covers both legacy uppercase statuses
-              // (PENDING/QUEUED) and new lowercase vocabulary (queued/
-              // scheduled/cancelled) introduced by the Phase 2 refactor.
-              // Without this, a pre_sent entry shows in BOTH the main
-              // flow and the bottom list → duplicate bubble.
-              // Pre-sent statuses (hide from main scroll, render in bottom queue).
-              // SENT is NOT pre-sent — it's "sent to tmux", a live state that
-              // belongs in the main scroll.
+              // Pre-sent statuses: hide from main scroll, render in bottom queue.
+              // SENT is NOT pre-sent — it means "sent to tmux", a live state
+              // that belongs in the main scroll. CANCELLED uppercase is the
+              // legacy MessageStatus enum value that paired with the lowercase
+              // "cancelled" pre-sent status.
               const _preSentStatuses = new Set([
-                "PENDING", "CANCELLED",
+                "CANCELLED",
                 "queued", "scheduled", "cancelled",
               ]);
               const visible = messages.filter((m) => !(m.role === "USER" && _preSentStatuses.has(m.status)) && m.kind !== "stop_hook")

@@ -49,12 +49,10 @@ class MessageRole(str, enum.Enum):
 
 
 class MessageStatus(str, enum.Enum):
-    PENDING = "PENDING"
     SENT = "SENT"           # sent via tmux send-keys, awaiting JSONL delivery confirmation
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    TIMEOUT = "TIMEOUT"
     CANCELLED = "CANCELLED"  # soft-cancelled by user before dispatch; bubble stays visible (greyed)
 
 
