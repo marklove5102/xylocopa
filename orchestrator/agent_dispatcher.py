@@ -2375,21 +2375,25 @@ Here are the day's conversations (with timestamps):
         return gid
 
     def _start_generating(self, agent_id: str, msg_id: str | None = None) -> int:
-        """Mark agent as generating: in-memory set, DB status, and WS event."""
+        """In-memory generation marker only — DB status writes belong to
+        sync_engine under the state-machine refactor.
+
+        Adds the agent to `_generating_agents` (used as a fast in-process
+        guard by dispatch_pending_message and others) and allocates the
+        next generation_id (used to fence stale stream events). Returns
+        the new generation_id.
+
+        Status (EXECUTING) and generating_msg_id are written by
+        sync_engine._infer_status_from_signals when it sees the new user
+        turn in JSONL.
+
+        `msg_id` is accepted for caller compatibility but no longer
+        recorded here (sync_engine derives generating_msg_id from the
+        promoted Message row).
+        """
+        del msg_id  # unused under the refactored architecture
         gid = self._next_generation_id(agent_id)
         self._generating_agents.add(agent_id)
-        db = SessionLocal()
-        try:
-            agent = db.get(Agent, agent_id)
-            if agent:
-                agent.status = AgentStatus.EXECUTING
-                if msg_id is not None:
-                    agent.generating_msg_id = msg_id
-                db.commit()
-                from websocket import emit_agent_update
-                self._emit(emit_agent_update(agent_id, "EXECUTING", agent.project or ""))
-        finally:
-            db.close()
         return gid
 
     def wake_sync(self, agent_id: str) -> bool:
@@ -2456,39 +2460,27 @@ Here are the day's conversations (with timestamps):
             db.close()
 
     def _stop_generating(self, agent_id: str, *, dispatch_after_idle: bool = True):
-        """Mark agent as no longer generating: in-memory set, DB status, and WS events.
+        """Clear in-memory generation marker and emit stream-end signal.
 
-        On EXECUTING → IDLE transition, schedules dispatch of any PENDING
-        message (unless `dispatch_after_idle=False`).  Covers paths that
-        flip the agent idle without going through the JSONL stop_hook_summary
-        branch in sync_engine: PostCompact hook, manual escape/stop, sync
-        task cleanup, generating-agents fallback, etc.  Idempotent with the
-        explicit dispatch_pending_message calls in sync_engine.
+        Under the state-machine refactor, status (EXECUTING → IDLE) and
+        generating_msg_id writes are owned by sync_engine —
+        _infer_status_from_signals reacts to stop_hook_summary /
+        rate_limit / interrupt JSONL turns.
+
+        This helper is now in-memory only:
+          - discard from `_generating_agents`
+          - emit `agent_stream_end` (UI clears the spinner immediately)
+          - schedule dispatch of any pre-sent messages if the agent was
+            actually generating before this call (only path that needs
+            to drain the queue without waiting for sync to write IDLE)
         """
+        was_generating = agent_id in self._generating_agents
         gid = self._generation_ids.get(agent_id)
         self._generating_agents.discard(agent_id)
-        from websocket import emit_agent_stream_end, emit_agent_update
+        from websocket import emit_agent_stream_end
         self._emit(emit_agent_stream_end(agent_id, generation_id=gid))
-        transitioned_to_idle = False
-        db = SessionLocal()
-        try:
-            agent = db.get(Agent, agent_id)
-            if agent:
-                changed = False
-                if agent.generating_msg_id is not None:
-                    agent.generating_msg_id = None
-                    changed = True
-                if agent.status == AgentStatus.EXECUTING:
-                    agent.status = AgentStatus.IDLE
-                    changed = True
-                    transitioned_to_idle = True
-                    self._emit(emit_agent_update(agent_id, "IDLE", agent.project or ""))
-                if changed:
-                    db.commit()
-        finally:
-            db.close()
 
-        if dispatch_after_idle and transitioned_to_idle:
+        if dispatch_after_idle and was_generating:
             asyncio.ensure_future(self.dispatch_pending_message(agent_id, delay=0))
 
     async def dispatch_pending_message(self, agent_id: str, delay: float = 0):
