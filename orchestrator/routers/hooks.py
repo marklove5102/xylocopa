@@ -356,10 +356,14 @@ async def hook_agent_tool_activity(request: Request):
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
 
-    # No heartbeat fallback under the state-machine refactor: sync_engine
-    # is the sole writer of EXECUTING from JSONL signals. Tool activity
-    # itself doesn't change agent.status — the user turn that preceded
-    # this tool call already triggered EXECUTING via the inference path.
+    # Wake sync — tool_use writes new assistant turns to JSONL between
+    # UserPromptSubmit and Stop. Without waking sync here, the JSONL
+    # changes wouldn't be imported until the next idle poll (~60s),
+    # leaving the chat scroll silent and status stuck. Hooks themselves
+    # never write status (Rule 3); they only signal "JSONL has new bytes,
+    # please process".
+    if ad:
+        ad.wake_sync(agent_id)
 
     tool_name = phase = summary = output_summary = ""
     is_error = False

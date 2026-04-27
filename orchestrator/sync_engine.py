@@ -562,10 +562,13 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     )
 
         _actually_inserted = 0
-        _saw_interrupt = False
-        _saw_stop_hook = False
-        _saw_rate_limit = False
-        _saw_user_turn = False  # any new user turn → agent is now EXECUTING
+        # State signals are derived from the LAST turn in new_turns, not
+        # accumulated across the batch. Reason: if missing_in_db forces
+        # sync_full_scan to reset the pointer, this loop replays the entire
+        # JSONL — accumulators would assert "saw stop_hook anywhere" and
+        # re-fire push notifications / dismiss live interactive cards /
+        # re-dispatch queued messages for historical events. The current
+        # state is determined purely by the most recent turn.
         # Accumulate message_ids updated (sent→delivered) this cycle so we
         # can call update_last AFTER db.commit(). Writing inline would
         # violate the display_writer "commit → then flush" contract (the
@@ -583,7 +586,6 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                          ctx.agent_id[:8], seq, role, kind, jsonl_uuid, len(content or ""))
 
             if role == "user":
-                _saw_user_turn = True
                 msg = _promote_or_create_user_msg(
                     db, ctx, content, jsonl_uuid, seq, meta, kind, jsonl_ts,
                     deferred_updates=_deferred_updates,
@@ -599,13 +601,6 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     continue
 
             elif role == "system":
-                if kind == "stop_hook":
-                    _saw_stop_hook = True
-                if kind == "interrupt":
-                    _saw_interrupt = True
-                if kind == "rate_limit":
-                    _saw_rate_limit = True
-
                 msg = _create_system_msg(
                     db, ctx, content, jsonl_uuid, seq, kind, jsonl_ts,
                 )
@@ -685,11 +680,23 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         from display_writer import flush_agent as _flush_display
         _flush_display(ctx.agent_id)
 
-        # Status inference from JSONL signals — sync_engine is the truth
-        # writer for EXECUTING/IDLE. The pointer-reset corner case (where
-        # _saw_* would accumulate historical signals) is structurally
-        # eliminated by persisting ctx.last_turn_count / last_offset /
-        # last_content_hash to DB across restarts.
+        # Derive state signals from the LAST turn in new_turns. Looking
+        # only at the latest turn is structurally correct: current state
+        # is determined by the most recent event, not "anything that
+        # happened in this batch". Eliminates the historical-replay bug
+        # when sync_full_scan resets the pointer (missing_in_db case).
+        _last_role = _last_kind = None
+        if new_turns:
+            _last = new_turns[-1]
+            _last_role = _last[0]
+            _last_kind = _last[4] if len(_last) > 4 else None
+        _saw_user_turn = (_last_role == "user")
+        _saw_stop_hook = (_last_role == "system" and _last_kind == "stop_hook")
+        _saw_interrupt = (_last_role == "system" and _last_kind == "interrupt")
+        _saw_rate_limit = (_last_role == "system" and _last_kind == "rate_limit")
+
+        # Status inference from the latest signal — sync_engine is the
+        # truth writer for EXECUTING/IDLE.
         _inferred_status = _infer_status_from_signals(
             db, ctx,
             saw_user_turn=_saw_user_turn,
