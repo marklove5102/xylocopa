@@ -3613,19 +3613,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
             )}
 
             {compactHeader ? (
-              /* Compact: status dot + stop/resume + expand chevron */
+              /* Compact: stop/resume + expand chevron */
               <div className="shrink-0 flex items-center gap-1.5">
-                <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
                 {(isStopped || isError) ? (
                   <button type="button" onClick={() => handleResume()} disabled={resuming}
-                    className="px-2 h-6 flex items-center gap-1 rounded-md text-[10px] font-medium bg-cyan-600 text-white disabled:opacity-50 enabled:hover:bg-cyan-500">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z" /></svg>
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 transition-colors disabled:opacity-50 enabled:hover:bg-cyan-500/25">
+                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z" /></svg>
                     {resuming ? "..." : "Resume"}
                   </button>
                 ) : (
                   <button type="button" onClick={() => setShowStopConfirm(true)}
-                    className="px-2 h-6 flex items-center gap-1 rounded-md text-[10px] font-medium bg-red-600 text-white hover:bg-red-500">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                    className="px-2 py-0.5 flex items-center gap-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-500 dark:text-red-400 transition-colors hover:bg-red-500/25">
+                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                     Stop
                   </button>
                 )}
