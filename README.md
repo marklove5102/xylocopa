@@ -286,7 +286,6 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 
 ## Known Issues
 
-- **iPad & mobile browser layout**: layout needs further optimization for iPad and non-PWA mobile browsers. There are minor visual quirks on iPad standalone mode. Tested and working correctly on iPhone (Add to Home Screen) and desktop browsers.
 - **CLI sessions started while backend is offline are silently missed**: adoption of externally-created `claude` CLI sessions relies on the `SessionStart` hook reaching the backend over HTTP. If the backend happens to be down at that moment (e.g. a crash, oomd kill, or manual restart window), the hook's offline fallback only persists managed-agent signal files, unmanaged session markers are dropped, and there is no startup rescan. The session will run normally but never appear in the "unlinked sessions" adoption UI. Workaround: after the backend is back, exit and re-launch `claude` in the same tmux pane so the hook fires again. Tracked in `TODO.md`.
 
 ## Contributing
