@@ -397,6 +397,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
               {isExpanded ? (
                 <div
                   ref={titleRef}
+                  data-no-longpress
                   contentEditable={titleEditing}
                   suppressContentEditableWarning
                   onClick={startTitleEditing}
@@ -420,7 +421,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
 
             {/* Description — flexible middle, grows to fill space */}
             {isExpanded ? (
-              <div className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
+              <div data-no-longpress className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
                 <div
                   ref={editRef}
                   contentEditable={editing}
