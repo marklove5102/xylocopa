@@ -175,12 +175,10 @@ async def hook_agent_user_prompt(request: Request):
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
-        # generating_msg_id stays NULL — sync fills the real one when it
-        # matches the JSONL turn. Busy-checks treat status==EXECUTING as
-        # sufficient signal, so the brief "status set, msg_id null" window
-        # is harmless.
-        ad._start_generating(agent_id)
-        logger.info("hook_agent_user_prompt: started generating for %s", agent_id[:8])
+        # Hook only wakes sync — sync_engine reads the new user turn from
+        # JSONL and writes EXECUTING via _infer_status_from_signals. No
+        # direct DB write here under the state-machine refactor.
+        logger.info("hook_agent_user_prompt: waking sync for %s", agent_id[:8])
         async def _post_prompt_sync(_aid):
             from config import JSONL_FLUSH_DELAY
             await asyncio.sleep(JSONL_FLUSH_DELAY)
@@ -315,8 +313,11 @@ async def hook_agent_post_compact(request: Request):
     await emit_tool_activity(agent_id, "Compact", "end",
                              tool_output="context compacted")
 
-    # Transition to IDLE. Agent runtime state, hook-owned.
-    ad._stop_generating(agent_id)
+    # Hook only wakes sync — sync_full_scan(reason="compact") reads
+    # ctx.compact_trigger (stashed by PreCompact) and decides:
+    #   manual → status → IDLE (user /compact done)
+    #   auto   → keep EXECUTING (original user task continues)
+    # No direct status write here under the state-machine refactor.
 
     logger.info("hook_agent_post_compact: agent=%s", agent_id[:8])
     return {}
@@ -355,11 +356,10 @@ async def hook_agent_tool_activity(request: Request):
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
 
-    # Heartbeat: tool activity proves the agent is executing.  If DB/in-memory
-    # state drifted to IDLE (launch race, server restart, etc.), correct it.
-    if ad and agent_id not in ad._generating_agents:
-        logger.info("hook_agent_tool_activity: heartbeat — restoring EXECUTING for %s", agent_id[:8])
-        ad._start_generating(agent_id)
+    # No heartbeat fallback under the state-machine refactor: sync_engine
+    # is the sole writer of EXECUTING from JSONL signals. Tool activity
+    # itself doesn't change agent.status — the user turn that preceded
+    # this tool call already triggered EXECUTING via the inference path.
 
     tool_name = phase = summary = output_summary = ""
     is_error = False
@@ -584,14 +584,22 @@ async def hook_agent_tool_activity(request: Request):
         kind = "compact"
         summary = "context compaction"
         await emit_tool_activity(agent_id, tool_name, phase)
-        # /compact skips UserPromptSubmit.  _start_generating fires now
-        # (UI shows activity); mark_delivered is deferred until AFTER the
-        # drain so the single-check appears once the old session's final
-        # turns have landed in the DB.  PostCompact then flips to double
-        # check when the compact rewrite is fully done.
+        # /compact skips UserPromptSubmit. Stash the trigger ("manual" or
+        # "auto") on the SyncContext so sync_full_scan can decide whether
+        # PostCompact ends the turn (manual) or continues it (auto).
+        # mark_delivered is deferred until AFTER the drain below so the
+        # single-check appears once the old session's final turns land in
+        # the DB. PostCompact then flips to double-check when the compact
+        # rewrite is fully done.
         if ad:
-            ad._start_generating(agent_id, msg_id="compact")
-            logger.info("PreCompact: started generating for %s", agent_id[:8])
+            _trigger = body.get("trigger") or "manual"
+            ctx_for_trigger = ad._sync_contexts.get(agent_id)
+            if ctx_for_trigger:
+                ctx_for_trigger.compact_trigger = _trigger
+            logger.info(
+                "PreCompact: trigger=%s for %s (status managed by sync)",
+                _trigger, agent_id[:8],
+            )
         # Drain the old session's pending JSONL turns into the DB before
         # compact rewrites the file.  Without this, any turn produced in
         # the hook-silent window since the last sync (e.g. final assistant
