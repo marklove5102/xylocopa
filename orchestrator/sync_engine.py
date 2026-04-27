@@ -154,6 +154,7 @@ def _infer_status_from_signals(
     ctx: SyncContext,
     *,
     saw_user_turn: bool,
+    saw_assistant_turn: bool,
     saw_stop_hook: bool,
     saw_rate_limit: bool,
     saw_interrupt: bool,
@@ -170,18 +171,18 @@ def _infer_status_from_signals(
     Rules:
       saw_stop_hook | saw_rate_limit | saw_interrupt → IDLE (only if not
         already IDLE; clears generating_msg_id)
-      saw_user_turn (and no stop signal) → EXECUTING (only if status is
-        IDLE/STARTING — never overrides STOPPED/ERROR)
+      saw_user_turn | saw_assistant_turn (and no stop signal) → EXECUTING
+        (only if status is IDLE/STARTING — never overrides STOPPED/ERROR)
 
     EXECUTING vs IDLE in the same cycle: stop signals always come at the
-    end of a Claude turn after any user echo, so a "saw_user_turn AND
-    saw_stop_hook" cycle means "user turn happened then turn ended" —
-    end state is IDLE, which the stop branch handles correctly.
+    end of a Claude turn, so any cycle that contains a stop signal ends
+    in IDLE regardless of preceding user/assistant turns.
 
-    This function is additive during the state-machine refactor: it runs
-    alongside the legacy _start_generating / _stop_generating writes. The
-    DB writes are idempotent (same target value), so dual-write is safe.
-    Once legacy writers are removed, this becomes the sole writer.
+    saw_assistant_turn covers the recovery case where user_prompt hook
+    was missed (network/config/restart) but Claude is clearly working
+    because new assistant turns are streaming into JSONL — this lets
+    sync flip IDLE→EXECUTING from JSONL truth alone, without depending
+    on the hook chain.
     """
     agent = db.get(Agent, ctx.agent_id)
     if not agent or agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR):
@@ -195,7 +196,7 @@ def _infer_status_from_signals(
             return "IDLE"
         return None
 
-    if saw_user_turn and agent.status in (AgentStatus.IDLE, AgentStatus.STARTING):
+    if (saw_user_turn or saw_assistant_turn) and agent.status in (AgentStatus.IDLE, AgentStatus.STARTING):
         agent.status = AgentStatus.EXECUTING
         db.commit()
         return "EXECUTING"
@@ -562,13 +563,10 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     )
 
         _actually_inserted = 0
-        # State signals are derived from the LAST turn in new_turns, not
-        # accumulated across the batch. Reason: if missing_in_db forces
-        # sync_full_scan to reset the pointer, this loop replays the entire
-        # JSONL — accumulators would assert "saw stop_hook anywhere" and
-        # re-fire push notifications / dismiss live interactive cards /
-        # re-dispatch queued messages for historical events. The current
-        # state is determined purely by the most recent turn.
+        # State signals are accumulated across new_turns (see derivation
+        # block after the import loop). The historical-replay risk that
+        # last-only was guarding against is now bounded by 93fbd00's
+        # benign-vs-real drift split, so accumulator's robustness wins.
         # Accumulate message_ids updated (sent→delivered) this cycle so we
         # can call update_last AFTER db.commit(). Writing inline would
         # violate the display_writer "commit → then flush" contract (the
@@ -680,26 +678,40 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         from display_writer import flush_agent as _flush_display
         _flush_display(ctx.agent_id)
 
-        # Derive state signals from the LAST turn in new_turns. Looking
-        # only at the latest turn is structurally correct: current state
-        # is determined by the most recent event, not "anything that
-        # happened in this batch". Eliminates the historical-replay bug
-        # when sync_full_scan resets the pointer (missing_in_db case).
-        _last_role = _last_kind = None
-        if new_turns:
-            _last = new_turns[-1]
-            _last_role = _last[0]
-            _last_kind = _last[4] if len(_last) > 4 else None
-        _saw_user_turn = (_last_role == "user")
-        _saw_stop_hook = (_last_role == "system" and _last_kind == "stop_hook")
-        _saw_interrupt = (_last_role == "system" and _last_kind == "interrupt")
-        _saw_rate_limit = (_last_role == "system" and _last_kind == "rate_limit")
+        # Derive state signals by accumulating across new_turns. Last-only
+        # was structurally fragile: Claude Code's JSONL writer occasionally
+        # places a trailing assistant entry after stop_hook_summary (with an
+        # earlier timestamp), which left agents stuck EXECUTING. Accumulator
+        # is safe now that 93fbd00 distinguishes real drift from benign
+        # timing gaps — full-scan replay is rare and already restricted
+        # to genuinely-missing turns; the residual side-effect risk on
+        # restart (extra unread bump / push retry) is acceptable.
+        _saw_user_turn = False
+        _saw_assistant_turn = False
+        _saw_stop_hook = False
+        _saw_interrupt = False
+        _saw_rate_limit = False
+        for _t in new_turns:
+            _r = _t[0]
+            _k = _t[4] if len(_t) > 4 else None
+            if _r == "user":
+                _saw_user_turn = True
+            elif _r == "assistant":
+                _saw_assistant_turn = True
+            elif _r == "system":
+                if _k == "stop_hook":
+                    _saw_stop_hook = True
+                elif _k == "interrupt":
+                    _saw_interrupt = True
+                elif _k == "rate_limit":
+                    _saw_rate_limit = True
 
-        # Status inference from the latest signal — sync_engine is the
+        # Status inference from accumulated signals — sync_engine is the
         # truth writer for EXECUTING/IDLE.
         _inferred_status = _infer_status_from_signals(
             db, ctx,
             saw_user_turn=_saw_user_turn,
+            saw_assistant_turn=_saw_assistant_turn,
             saw_stop_hook=_saw_stop_hook,
             saw_rate_limit=_saw_rate_limit,
             saw_interrupt=_saw_interrupt,
