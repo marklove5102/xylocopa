@@ -173,7 +173,7 @@ async def test_dispatch_pending_promotes_pre_sent(ad_env):
         assert row is not None
         assert row.agent_id == agent_id
         assert row.role == MessageRole.USER
-        assert row.status == MessageStatus.QUEUED
+        assert row.status == MessageStatus.SENT
         assert row.source == "web"
         assert row.display_seq is not None
         assert row.delivered_at is None
@@ -275,7 +275,7 @@ async def test_dispatch_scheduled_picks_due_entries(ad_env):
     try:
         row = db.get(Message, msg_id)
         assert row is not None
-        assert row.status == MessageStatus.QUEUED
+        assert row.status == MessageStatus.SENT
         assert row.display_seq is not None
     finally:
         db.close()

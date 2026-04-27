@@ -50,7 +50,7 @@ class MessageRole(str, enum.Enum):
 
 class MessageStatus(str, enum.Enum):
     PENDING = "PENDING"
-    QUEUED = "QUEUED"       # sent via tmux send-keys, awaiting JSONL delivery confirmation
+    SENT = "SENT"           # sent via tmux send-keys, awaiting JSONL delivery confirmation
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"

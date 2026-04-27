@@ -95,7 +95,7 @@ def load_registry(db: Session):
 def _migrate_pre_sent_legacy():
     """Clean up pre-cutover DB rows that no longer belong in `messages`.
 
-    Pre-Phase-2 code created DB rows for PENDING/QUEUED/CANCELLED web/task/
+    Pre-Phase-2 code created DB rows for PENDING/SENT/CANCELLED web/task/
     plan_continue messages. Post-Phase-2 those states live in the display
     file's pre-sent zone (no DB row) or, once dispatched, as COMPLETED
     rows. This migration reconciles residue.
@@ -103,9 +103,9 @@ def _migrate_pre_sent_legacy():
     Rules:
       - PENDING (never sent to tmux): move to pre_sent zone with
         status='queued' (or 'scheduled' if scheduled_at is set); delete row.
-      - QUEUED with delivered_at set: was actually delivered, legacy status
+      - SENT with delivered_at set: was actually delivered, legacy status
         is stale; flip to COMPLETED, keep row.
-      - QUEUED without delivered_at (never confirmed): move to pre_sent
+      - SENT without delivered_at (never confirmed): move to pre_sent
         zone; delete row. CC may have received the message but we have no
         UserPromptSubmit confirmation — user can re-send if needed.
       - CANCELLED with display_seq: was delivered then cancelled (historical
@@ -131,7 +131,7 @@ def _migrate_pre_sent_legacy():
                 Message.source.in_(("web", "task", "plan_continue")),
                 Message.status.in_((
                     MessageStatus.PENDING,
-                    MessageStatus.QUEUED,
+                    MessageStatus.SENT,
                     MessageStatus.CANCELLED,
                 )),
             )
@@ -150,7 +150,7 @@ def _migrate_pre_sent_legacy():
                         deleted_cancelled += 1
                     continue
 
-                # PENDING or QUEUED
+                # PENDING or SENT
                 if msg.delivered_at is not None and msg.display_seq is not None:
                     # Actually delivered — just fix the status label.
                     msg.status = MessageStatus.COMPLETED

@@ -246,6 +246,15 @@ def init_db():
             conn.execute(text("ALTER TABLE agents DROP COLUMN plan"))
             conn.commit()
 
+        # One-shot data migration: rename legacy MessageStatus.QUEUED to SENT.
+        # The QUEUED enum was renamed to SENT to match its actual semantic of
+        # "sent via tmux send-keys, awaiting JSONL delivery confirmation".
+        # Idempotent: a clean DB makes this a no-op.
+        conn.execute(text(
+            "UPDATE messages SET status='SENT' WHERE status='QUEUED'"
+        ))
+        conn.commit()
+
         # Drop plan-related columns from tasks (plan mode fully removed)
         task_cols_pre = _table_columns(conn, "tasks")
         if "plan_approved" in task_cols_pre:

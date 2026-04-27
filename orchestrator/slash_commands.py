@@ -274,7 +274,7 @@ def mark_delivered(agent_id: str, content: str) -> str | None:
         # Transition QUEUED → EXECUTING so the UI drops the "pending" muted
         # styling and the single-check delivered state becomes visible against
         # the saturated bubble.  completion happens later (PostCompact etc.).
-        if msg.status == MessageStatus.QUEUED:
+        if msg.status == MessageStatus.SENT:
             msg.status = MessageStatus.EXECUTING
         db.commit()
 

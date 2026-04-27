@@ -237,7 +237,7 @@ class DisplayEntry(BaseModel):
     content: str | None = None
     source: str | None = None
     # Accept both the legacy uppercase MessageStatus values
-    # ("PENDING", "QUEUED", "COMPLETED", ...) and the new lowercase
+    # ("PENDING", "SENT", "COMPLETED", ...) and the new lowercase
     # pre-sent / post-send states ("queued", "scheduled",
     # "cancelled", "sent", "delivered", "executed").
     status: str | None = None

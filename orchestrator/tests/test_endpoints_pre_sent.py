@@ -389,7 +389,7 @@ async def test_delete_sent_returns_400(
         agent_id="delsent00001",
         role=MessageRole.USER,
         content="already sent",
-        status=MessageStatus.QUEUED,  # legacy QUEUED = sent
+        status=MessageStatus.SENT,  # legacy QUEUED = sent
         source="web",
     ))
     db.commit()
@@ -484,7 +484,7 @@ async def test_put_sent_returns_400(
         agent_id="putsent00001",
         role=MessageRole.USER,
         content="already sent",
-        status=MessageStatus.QUEUED,
+        status=MessageStatus.SENT,
         source="web",
     ))
     db.commit()

@@ -2604,7 +2604,7 @@ Here are the day's conversations (with timestamps):
             content=entry.get("content") or "",
             # Legacy enum: QUEUED is the "sent" semantic label under the
             # new vocabulary (file status='sent'; frontend maps it for UI).
-            status=MessageStatus.QUEUED,
+            status=MessageStatus.SENT,
             source=entry.get("source") or "web",
             jsonl_uuid=None,
             meta_json=meta_json,
@@ -2620,7 +2620,7 @@ Here are the day's conversations (with timestamps):
 
         # Build sent_line via the shared serializer, then override `status`
         # to the new vocabulary label ("sent") while keeping the DB enum as
-        # MessageStatus.QUEUED. Frontend maps "QUEUED"/"sent" to the faded
+        # MessageStatus.SENT. Frontend maps "SENT"/"sent" to the faded
         # grey single-check; "COMPLETED"/"delivered" to solid green; and
         # messages with completed_at to the double-check executed state.
         sent_line = json.loads(_serialize_message(msg, next_seq))

@@ -2480,7 +2480,7 @@ def _synthetic_message_out(agent_id: str, entry: dict) -> MessageOut:
         "queued": MessageStatus.PENDING,
         "scheduled": MessageStatus.PENDING,
         "cancelled": MessageStatus.CANCELLED,
-        "sent": MessageStatus.QUEUED,
+        "sent": MessageStatus.SENT,
         "delivered": MessageStatus.COMPLETED,
         "executed": MessageStatus.COMPLETED,
     }

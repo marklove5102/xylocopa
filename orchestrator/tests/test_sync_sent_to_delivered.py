@@ -112,7 +112,7 @@ async def test_sync_matches_sent_row_and_marks_delivered(sync_env):
             agent_id=agent_id,
             role=MessageRole.USER,
             content="hello from web",
-            status=MessageStatus.QUEUED,   # legacy enum for "sent"
+            status=MessageStatus.SENT,   # legacy enum for "sent"
             source="web",
             jsonl_uuid=None,
             delivered_at=None,
@@ -211,7 +211,7 @@ async def test_sync_skips_row_already_delivered(sync_env):
             agent_id=agent_id,
             role=MessageRole.USER,
             content="previously delivered",
-            status=MessageStatus.QUEUED,
+            status=MessageStatus.SENT,
             source="web",
             jsonl_uuid=None,         # no uuid yet
             delivered_at=now,        # but delivered_at set

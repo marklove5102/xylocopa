@@ -1122,7 +1122,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     status === "queued" || status === "PENDING"
   );
   const isCancelled = isUser && (status === "cancelled" || status === "CANCELLED");
-  const isSent = isUser && (status === "sent" || status === "QUEUED");
+  const isSent = isUser && (status === "sent" || status === "SENT");
   const isExecuted = isUser && status === "executed";
   // Legacy aliases still used throughout the render below.
   const isPending = isPreQueued || isSent;
@@ -2747,16 +2747,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
   // Bottom-area user messages: active queue (queued / scheduled / cancelled).
   // Under the Phase 2 pre-sent refactor, the file's `status` field uses
-  // the lowercase strings 'queued' | 'scheduled' | 'cancelled'. We keep the
-  // uppercase 'QUEUED' / 'PENDING' fallbacks for legacy rows during the
-  // transition. `scheduled_at` filtering stays the same — only non-scheduled
-  // entries land in the unshaped "queued" list, scheduled entries show
-  // inline.
+  // the lowercase strings 'queued' | 'scheduled' | 'cancelled'. PENDING is
+  // a legacy pre-Phase-2 fallback for "in web queue" rows. SENT (formerly
+  // QUEUED) is NOT a queued state — it means "sent to tmux", which lives
+  // in the main scroll, not the bottom queue.
   const queuedMessages = useMemo(
     () => messages.filter((m) =>
       m.role === "USER" && !m.scheduled_at && (
         m.status === "queued" || m.status === "cancelled"
-        || m.status === "QUEUED" || m.status === "PENDING"
+        || m.status === "PENDING"
       ),
     ),
     [messages],
@@ -4040,8 +4039,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               // scheduled/cancelled) introduced by the Phase 2 refactor.
               // Without this, a pre_sent entry shows in BOTH the main
               // flow and the bottom list → duplicate bubble.
+              // Pre-sent statuses (hide from main scroll, render in bottom queue).
+              // SENT is NOT pre-sent — it's "sent to tmux", a live state that
+              // belongs in the main scroll.
               const _preSentStatuses = new Set([
-                "PENDING", "QUEUED", "CANCELLED",
+                "PENDING", "CANCELLED",
                 "queued", "scheduled", "cancelled",
               ]);
               const visible = messages.filter((m) => !(m.role === "USER" && _preSentStatuses.has(m.status)) && m.kind !== "stop_hook")

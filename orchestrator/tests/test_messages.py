@@ -42,7 +42,7 @@ def test_message_role_enum_values():
 
 def test_message_status_enum_values():
     """MessageStatus should have all expected values."""
-    expected = {"PENDING", "QUEUED", "EXECUTING", "COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"}
+    expected = {"PENDING", "SENT", "EXECUTING", "COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"}
     actual = {s.value for s in MessageStatus}
     assert actual == expected
 
@@ -298,7 +298,7 @@ async def test_send_message_idle_tmux_recover_pane_and_send_direct(
     )
     assert resp.status_code == 201
     payload = resp.json()
-    assert payload["status"] == "QUEUED"
+    assert payload["status"] == "SENT"
     assert sent == {"pane": "%222", "text": "recover and send"}
 
     db = Session()
@@ -306,5 +306,5 @@ async def test_send_message_idle_tmux_recover_pane_and_send_direct(
     assert agent.tmux_pane == "%222"
     msg = db.get(Message, payload["id"])
     assert msg is not None
-    assert msg.status == MessageStatus.QUEUED
+    assert msg.status == MessageStatus.SENT
     db.close()
