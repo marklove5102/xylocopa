@@ -279,8 +279,10 @@ async def emit_new_message(agent_id: str, message_id: str,
 #
 # Signal-only by design: each event carries only {agent_id, message_id}.
 # The display file (data/display/{agent_id}.jsonl) is the single source of
-# truth for chat messages — frontend refetches via GET /api/agents/{id}/display
-# when any of these signals arrive. Callers MUST flush the relevant write
+# truth for chat messages — frontend refetches via the split endpoints
+# GET /api/agents/{id}/display/sent (byte-incremental file read) and
+# GET /api/agents/{id}/display/pre-sent (full snapshot from in-memory
+# index) when these signals arrive. Callers MUST flush the relevant write
 # (display_writer.flush_agent / pre_sent_* / update_last) BEFORE emitting.
 
 

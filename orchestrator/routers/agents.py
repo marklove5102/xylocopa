@@ -28,7 +28,7 @@ from agent_dispatcher import ACTIVE_STATUSES, ALIVE_STATUSES, TERMINAL_STATUSES
 from plat import platform as _platform
 from schemas import (
     AgentBrief, AgentCreate, AgentInsightSuggestionOut, AgentOut,
-    DisplayEntry, DisplayResponse,
+    DisplayEntry, PreSentDisplayResponse, SentDisplayResponse,
     MessageOut, MessageSearchResponse, MessageSearchResult,
     SendMessage, UpdateMessage,
 )
@@ -2285,50 +2285,48 @@ async def update_agent(agent_id: str, request: Request, db: Session = Depends(ge
     return agent
 
 
-@router.get("/api/agents/{agent_id}/display", response_model=DisplayResponse)
-async def get_agent_display(
+@router.get("/api/agents/{agent_id}/display/sent", response_model=SentDisplayResponse)
+async def get_agent_display_sent(
     agent_id: str,
     offset: int = Query(0, ge=0),
     tail_bytes: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Read display entries from the per-agent JSONL file.
+    """Read sent (delivered) messages from the per-agent JSONL file.
 
-    Returns parsed messages, the byte offset to resume from, any queued
-    web/plan messages not yet written, and whether earlier content exists
-    before the returned window.
+    Two modes:
+      - Initial load: tail_bytes > 0 and offset == 0 → read the last
+        tail_bytes of the file, aligned to a line boundary.
+      - Incremental poll: offset > 0 → read from offset to end of file.
 
-    Note: last-occurrence-wins by id handles _replace entries appended by
-    update_last() for streaming and delivery-status updates.
+    Returns only entries with `seq != null` (sent messages). Pre-sent
+    entries (queued / scheduled / cancelled) are exposed by the separate
+    /display/pre-sent endpoint.
+
+    Last-occurrence-wins by id handles `_replace` lines from streaming
+    updates and delivery-status patches; `_deleted` tombstones drop the
+    entry entirely.
     """
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     display_path = os.path.join(DISPLAY_DIR, f"{agent_id}.jsonl")
-    # Initial load is authoritative for queued; incremental polls are not.
-    is_initial = tail_bytes > 0 and offset == 0
-    empty = DisplayResponse(
-        messages=[], next_offset=0, queued=[], has_earlier=False,
-        queued_authoritative=is_initial,
-    )
+    empty = SentDisplayResponse(messages=[], next_offset=0, has_earlier=False)
 
     if not os.path.isfile(display_path):
-        # No display file yet → nothing to show. All message state (queued
-        # included) flows through the display file after Phase 2A/2B; the
-        # old DB fallback query was scaffolding removed in Phase 3.
         return empty
 
+    is_initial = tail_bytes > 0 and offset == 0
     has_earlier = False
     try:
         with open(display_path, "r", encoding="utf-8") as f:
-            file_size = f.seek(0, 2)  # seek to end to get size
+            file_size = f.seek(0, 2)
 
             if is_initial:
                 start = max(0, file_size - tail_bytes)
                 f.seek(start)
                 if start > 0:
-                    # Align to next complete line boundary
                     f.readline()  # discard partial line
                 has_earlier = f.tell() > 0 and start > 0
             elif offset > 0:
@@ -2342,8 +2340,6 @@ async def get_agent_display(
     except OSError:
         return empty
 
-    # Parse lines, dedup by id (last occurrence wins across ALL entry types:
-    # regular, _replace, _queued, _queued+_replace, _deleted tombstone).
     seen: dict[str, DisplayEntry] = {}
     for line in raw.split("\n"):
         line = line.strip()
@@ -2361,69 +2357,49 @@ async def get_agent_display(
             continue
         seen[entry.id] = entry
 
-    # Partition the winners: delivered (has seq, not queued, not deleted),
-    # queued (_queued true, not deleted). Drop tombstoned entries entirely.
+    # Sent-only partition: drop tombstones, drop pre-sent (_queued), keep
+    # entries with a seq.
     displayed: list[DisplayEntry] = []
-    queued_from_file: list[DisplayEntry] = []
     for entry in seen.values():
-        if entry.deleted:
+        if entry.deleted or entry.queued:
             continue
-        if entry.queued:
-            queued_from_file.append(entry)
-        elif entry.seq is not None:
+        if entry.seq is not None:
             displayed.append(entry)
-        else:
-            # Neither _queued, _deleted, nor seq — this is a writer bug.
-            # Log loudly so it surfaces in monitoring instead of becoming
-            # an invisible message loss.
-            logger.warning(
-                "get_agent_display: malformed entry for agent %s id=%s "
-                "(no seq, no _queued, no _deleted) — skipping. This is a "
-                "writer-side bug; investigate display_writer output.",
-                agent_id[:8], entry.id,
-            )
 
-    # Initial load: return the authoritative pre-sent snapshot from
-    # the in-memory index. This is the Phase 1 fix for the "queued bubble
-    # disappears on poll" regression — file-scanned entries that don't
-    # have _pre markers (legacy _queued lines from Phase 0 writers) are
-    # still honored as a backwards-compat fallback, with index values
-    # taking precedence over file values on id collision.
-    #
-    # Incremental poll: return an empty queued list with
-    # queued_authoritative=False so the frontend leaves its queued state
-    # untouched.
-    if is_initial:
-        from display_writer import pre_sent_list
-        merged_queued: dict[str, DisplayEntry] = {}
-        # Seed with legacy file entries (backwards compat during Phase 1).
-        for entry in queued_from_file:
-            merged_queued[entry.id] = entry
-        # Overlay authoritative in-memory _pre entries — these win on
-        # id collision.
-        for raw_entry in pre_sent_list(agent_id):
-            try:
-                merged_queued[raw_entry["id"]] = DisplayEntry.model_validate(
-                    raw_entry
-                )
-            except Exception as e:
-                logger.warning(
-                    "get_agent_display: failed to validate pre_sent "
-                    "entry id=%s: %s", raw_entry.get("id"), e,
-                )
-        queued_out = list(merged_queued.values())
-        queued_authoritative = True
-    else:
-        queued_out = []
-        queued_authoritative = False
-
-    return DisplayResponse(
+    return SentDisplayResponse(
         messages=displayed,
         next_offset=next_offset,
-        queued=queued_out,
         has_earlier=has_earlier,
-        queued_authoritative=queued_authoritative,
     )
+
+
+@router.get("/api/agents/{agent_id}/display/pre-sent", response_model=PreSentDisplayResponse)
+async def get_agent_display_pre_sent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return the full pre-sent snapshot from the in-memory index.
+
+    Pre-sent entries (status=queued/scheduled/cancelled) are a small,
+    state-mutating set — full snapshot every call is cheap and avoids
+    the increment-vs-snapshot semantic confusion that gave us the
+    "queued bubble disappears" bug.
+    """
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from display_writer import pre_sent_list
+    entries: list[DisplayEntry] = []
+    for raw_entry in pre_sent_list(agent_id):
+        try:
+            entries.append(DisplayEntry.model_validate(raw_entry))
+        except Exception as e:
+            logger.warning(
+                "get_agent_display_pre_sent: failed to validate entry id=%s: %s",
+                raw_entry.get("id"), e,
+            )
+    return PreSentDisplayResponse(entries=entries)
 
 
 @router.post("/api/agents/{agent_id}/wake-sync")

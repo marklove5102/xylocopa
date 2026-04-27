@@ -275,16 +275,14 @@ class DisplayEntry(BaseModel):
         return v
 
 
-class DisplayResponse(BaseModel):
+class SentDisplayResponse(BaseModel):
     messages: list[DisplayEntry]
     next_offset: int
-    queued: list[DisplayEntry]
     has_earlier: bool
-    # True on initial (tail_bytes) loads — `queued` is the authoritative
-    # full snapshot. False on incremental (offset) polls — `queued` is
-    # empty; the frontend must not touch its queued state from the poll
-    # response. Default True for backwards compat with existing callers.
-    queued_authoritative: bool = True
+
+
+class PreSentDisplayResponse(BaseModel):
+    entries: list[DisplayEntry]
 
 
 class MessageSearchResult(BaseModel):
