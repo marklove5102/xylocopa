@@ -4069,6 +4069,46 @@ Here are the day's conversations (with timestamps):
                                     "Re-detected tmux pane %s for agent %s",
                                     pane, agent_id,
                                 )
+
+                        # 10-min stale-EXECUTING fallback: SIGKILL / OOM /
+                        # pane-killed / power-loss leave the agent stuck at
+                        # EXECUTING because no JSONL signal can ever arrive.
+                        # When both last_message_at AND JSONL mtime are
+                        # >600s old AND status is still EXECUTING, write
+                        # IDLE as a no-signal fallback. This is the ONE
+                        # exception to "JSONL is the truth" — it covers
+                        # the case where there will never be a JSONL signal.
+                        if agent.status == AgentStatus.EXECUTING:
+                            _last_at = agent.last_message_at
+                            if _last_at:
+                                if _last_at.tzinfo is None:
+                                    _last_at = _last_at.replace(tzinfo=timezone.utc)
+                                _msg_age = (_utcnow() - _last_at).total_seconds()
+                            else:
+                                _msg_age = 9999
+                            try:
+                                _file_age = _time.time() - os.path.getmtime(ctx.jsonl_path)
+                            except OSError:
+                                _file_age = 9999
+                            if _msg_age >= 600 and _file_age >= 600:
+                                logger.warning(
+                                    "Stale EXECUTING for agent %s "
+                                    "(msg_age=%.0fs, file_age=%.0fs) — "
+                                    "writing IDLE as no-signal fallback",
+                                    agent_id[:8], _msg_age, _file_age,
+                                )
+                                agent.status = AgentStatus.IDLE
+                                agent.generating_msg_id = None
+                                db.commit()
+                                self._generating_agents.discard(agent_id)
+                                from websocket import emit_agent_stream_end as _emit_se
+                                self._emit(_emit_se(
+                                    agent_id,
+                                    generation_id=self._generation_ids.get(agent_id),
+                                ))
+                                self._emit(emit_agent_update(
+                                    agent_id, "IDLE", agent.project,
+                                ))
                     finally:
                         db.close()
 
@@ -4417,13 +4457,11 @@ Here are the day's conversations (with timestamps):
                                 session_active = False
 
                         if session_active:
-                            # Trust DB status: if agent was EXECUTING before
-                            # restart, Claude Code is still mid-turn in tmux —
-                            # preserve EXECUTING so dispatch_pending_message's
-                            # busy guard holds. The sync loop will transition
-                            # to IDLE when it sees stop_hook_summary in JSONL.
-                            if agent.status != AgentStatus.EXECUTING:
-                                agent.status = AgentStatus.IDLE
+                            # Trust DB status as-is. If EXECUTING before
+                            # restart, sync_engine will eventually transition
+                            # to IDLE on stop_hook_summary. If STARTING or
+                            # IDLE, leave it; sync inference handles all
+                            # transitions from JSONL signals.
                             agent.tmux_pane = pane
                             agents_to_sync.append(
                                 (agent.id, agent.session_id, project_path)
@@ -4464,9 +4502,8 @@ Here are the day's conversations (with timestamps):
                 # No pane — pane detection failed, session is gone.
 
                 if alive:
-                    # Same as above: preserve EXECUTING if that's what DB says.
-                    if agent.status != AgentStatus.EXECUTING:
-                        agent.status = AgentStatus.IDLE
+                    # Trust DB status — never overwrite on restart. Sync
+                    # inference owns all EXECUTING/IDLE transitions.
                     if agent.session_id:
                         agents_to_sync.append(
                             (agent.id, agent.session_id, project_path)
@@ -4518,22 +4555,14 @@ Here are the day's conversations (with timestamps):
             if relinked:
                 logger.info("Re-linked %d stopped agents with live tmux sessions", relinked)
 
-            # Restore generating state from DB — the in-memory set is lost
-            # on restart, but status=EXECUTING persists.  Also fix any
-            # legacy agents that have generating_msg_id set but status IDLE
-            # (from before _start_generating wrote status to DB).
+            # Restore in-memory _generating_agents from DB — DB status is the
+            # single source of truth (sync_engine owns all writes). No legacy
+            # heartbeat-fallback rewrite: if generating_msg_id is set but
+            # status is IDLE, that's a bug to fix in sync_engine, not paper
+            # over here.
             generating = db.query(Agent).filter(
                 Agent.status == AgentStatus.EXECUTING,
             ).all()
-            legacy_generating = db.query(Agent).filter(
-                Agent.generating_msg_id.is_not(None),
-                Agent.status == AgentStatus.IDLE,
-            ).all()
-            for ag in legacy_generating:
-                ag.status = AgentStatus.EXECUTING
-                generating.append(ag)
-            if legacy_generating:
-                db.commit()
             for ag in generating:
                 self._generating_agents.add(ag.id)
             if generating:
