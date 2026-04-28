@@ -1139,7 +1139,6 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const [inlineLightbox, setInlineLightbox] = useState(null); // { media, initialIndex }
   const [justBookmarked, setJustBookmarked] = useState(false);
   const bubbleToast = useToast();
-  const longPressTimer = useRef(null);
   const lastTapRef = useRef(0);
   const touchStartYRef = useRef(0);
   const editTextareaRef = useRef(null);
@@ -1192,12 +1191,11 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   // pre-sent state + any user message (Copy-only path).
   const canModify = canEdit; // legacy name: controls edit-path UI only
 
-  const handleLongPressStart = (e) => {
+  // Touch start — only used to track the start Y so we can distinguish a
+  // tap from a scroll in handleTouchEnd. The action menu is opened by
+  // double-tap only (no long-press).
+  const handleTouchStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
-    if (!canEdit && !isCancelled && !canBookmark) return;
-    longPressTimer.current = setTimeout(() => {
-      setShowActions(true);
-    }, LONG_PRESS_DELAY);
   };
 
   const handleBookmark = async (e) => {
@@ -1212,14 +1210,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
       bubbleToast.error(err?.message || "Failed to bookmark");
     }
   };
-  const handleLongPressEnd = (e) => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    // Double-tap detection for touch — opens the action menu (Copy / Bookmark
-    // / Modify / Delete are all reachable from one tap inside the menu).
-    // Skip if the finger moved significantly (scroll gesture, not a tap).
+  // Touch end — double-tap detection. Skip if the finger moved significantly
+  // (scroll gesture, not a tap).
+  const handleTouchEnd = (e) => {
     const endY = e.changedTouches?.[0]?.clientY ?? 0;
     const movedTooFar = Math.abs(endY - touchStartYRef.current) > 10;
     if (!movedTooFar) {
@@ -1398,9 +1391,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
               : "bg-surface shadow-card text-body rounded-bl-md"
           } ${canModify ? "select-none" : ""} overflow-hidden`}
           onDoubleClick={handleDoubleClick}
-          onTouchStart={handleLongPressStart}
-          onTouchEnd={handleLongPressEnd}
-          onTouchCancel={handleLongPressEnd}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
         >
           {isUser ? (
             editing ? (
