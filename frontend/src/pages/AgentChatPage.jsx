@@ -2394,16 +2394,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const toastCtx = useToast();
   // Only one chat-bubble action menu open at a time across the whole list.
   const [openMenuMsgId, setOpenMenuMsgId] = useState(null);
-  // Auto-close: any pointerdown / touchstart outside the menu closes it.
-  useEffect(() => {
-    if (!openMenuMsgId) return;
-    const closeIfOutside = (e) => {
-      if (e.target?.closest?.("[data-action-menu]")) return;
-      setOpenMenuMsgId(null);
-    };
-    document.addEventListener("pointerdown", closeIfOutside, true);
-    return () => document.removeEventListener("pointerdown", closeIfOutside, true);
-  }, [openMenuMsgId]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(false);
