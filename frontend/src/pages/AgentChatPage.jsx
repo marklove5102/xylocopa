@@ -31,6 +31,7 @@ import {
   fetchTaskV2,
   wakeSync,
   createBookmark,
+  fetchProjectBookmarks,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
 import FloatingTaskCard from "../components/FloatingTaskCard";
@@ -1095,7 +1096,7 @@ function AgentTextSegment({ text, project }) {
   );
 }
 
-function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries, openMenuMsgId, setOpenMenuMsgId }) {
+function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries, openMenuMsgId, setOpenMenuMsgId, bookmarkedSet }) {
   if (message.kind === "tool_activity") {
     return null;
   }
@@ -1150,7 +1151,9 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const [editSchedule, setEditSchedule] = useState("");
   const [copied, setCopied] = useState(false);
   const [inlineLightbox, setInlineLightbox] = useState(null); // { media, initialIndex }
+  const serverBookmarked = !!(bookmarkedSet && message?.id && bookmarkedSet.has(message.id));
   const [justBookmarked, setJustBookmarked] = useState(false);
+  const bookmarkActive = serverBookmarked || justBookmarked;
   const bubbleToast = useToast();
   const lastTapRef = useRef(0);
   const touchStartYRef = useRef(0);
@@ -1561,7 +1564,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {userInsights && userInsights.length > 0 && (
           <InsightsBubble insights={userInsights} />
         )}
-        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} messageId={message.id} project={project} />}
+        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} messageId={message.id} project={project} initialBookmarked={bookmarkActive} />}
         {inlineLightbox && (
           <ImageLightbox
             media={inlineLightbox.media}
@@ -1602,10 +1605,10 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                 <button
                   type="button"
                   onClick={handleBookmark}
-                  title={justBookmarked ? "Bookmarked" : "Bookmark"}
+                  title={bookmarkActive ? "Bookmarked" : "Bookmark"}
                   className="px-3 py-2 text-amber-500 hover:bg-amber-600/10 transition-colors"
                 >
-                  <svg className="w-4 h-4" fill={justBookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill={bookmarkActive ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                   </svg>
                 </button>
@@ -2394,6 +2397,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const toastCtx = useToast();
   // Only one chat-bubble action menu open at a time across the whole list.
   const [openMenuMsgId, setOpenMenuMsgId] = useState(null);
+  // Set of message ids that already have a bookmark on the server. Refreshed
+  // when the agent / project is known. Used to seed the initial filled state
+  // of the bookmark icons in the action menu and on attachment ActionButtons.
+  const [bookmarkedSet, setBookmarkedSet] = useState(() => new Set());
+  useEffect(() => {
+    const proj = agent?.project;
+    if (!proj) return;
+    let cancelled = false;
+    fetchProjectBookmarks(proj)
+      .then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        setBookmarkedSet(new Set(rows.map((r) => r.message_id)));
+      })
+      .catch(() => { /* non-fatal */ });
+    return () => { cancelled = true; };
+  }, [agent?.project]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(false);
@@ -4194,7 +4213,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
@@ -4205,17 +4224,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <div key={msg.id} data-msg-id={msg.id} data-msg-type="legacy_split">
                         {segments.map((seg, i) => {
                           if (seg.type === "tools") return <ToolLogBubble key={`${msg.id}-t${i}`} entries={seg.entries} />;
-                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} />;
+                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} />;
                           return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent.project} />;
                         })}
                         {lastTextIdx === -1 && msg.metadata?.interactive?.length > 0 && (
-                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} />
+                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} />
                         )}
                       </div>
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>;
               });
             })()}
 
@@ -4230,10 +4249,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               return (
                 <>
                   {queued.map((msg, idx) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>
                   ))}
                   {scheduled.map((msg) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>
                   ))}
                 </>
               );

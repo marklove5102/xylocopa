@@ -50,6 +50,16 @@ class BookmarkUpdate(BaseModel):
     user_note: str | None = None
 
 
+class BookmarkCreate(BaseModel):
+    user_note: str | None = None
+    # When the user clicked the bookmark icon on a specific attachment, the
+    # frontend tells us so we (a) force the right kind and (b) put that path
+    # first in media_json — that way the row's title shows *their* filename
+    # rather than whatever happens to be media[0].
+    kind_override: str | None = None  # "image" | "file"
+    target_path: str | None = None
+
+
 # ===========================================================================
 # Media extraction (from meta_json + content)
 # ===========================================================================
@@ -388,7 +398,7 @@ def create_bookmark(
     name: str,
     message_id: str,
     background: BackgroundTasks,
-    payload: BookmarkUpdate | None = None,
+    payload: BookmarkCreate | None = None,
     db: Session = Depends(get_db),
 ):
     proj = db.get(Project, name)
@@ -403,14 +413,45 @@ def create_bookmark(
 
     existing = db.get(BookmarkedMessage, message_id)
     if existing:
-        # Idempotent: just update user_note if provided, return existing
+        # Idempotent: update user_note if provided. Also: if the existing
+        # bookmark is a generic "message" kind but the new request points at
+        # a specific attachment, upgrade to image/file so the entry shows
+        # filename-first. Don't downgrade in the other direction.
+        changed = False
         if payload and payload.user_note is not None:
             existing.user_note = payload.user_note.strip() or None
+            changed = True
+        if payload and payload.kind_override in ("image", "file") and existing.kind == "message":
+            existing.kind = payload.kind_override
+            changed = True
+        if payload and payload.target_path:
+            try:
+                cur = json.loads(existing.media_json or "[]")
+            except json.JSONDecodeError:
+                cur = []
+            cur = [m for m in cur if m.get("path") != payload.target_path]
+            cur.insert(0, {
+                "kind": payload.kind_override or ("image" if payload.target_path.lower().endswith(_IMAGE_EXT) else "file"),
+                "path": payload.target_path,
+                "source": "attachment",
+            })
+            existing.media_json = json.dumps(cur)
+            changed = True
+        if changed:
             db.commit()
         return _to_out(existing, msg, agent)
 
     media = _collect_neighborhood_media(db, msg)
-    kind = _classify_kind(msg, media)
+    kind = payload.kind_override if (payload and payload.kind_override in ("image", "file")) else _classify_kind(msg, media)
+
+    # If a specific attachment was clicked, promote it to the front of media
+    if payload and payload.target_path:
+        media = [m for m in media if m.get("path") != payload.target_path]
+        media.insert(0, {
+            "kind": "image" if payload.target_path.lower().endswith(_IMAGE_EXT) else "file",
+            "path": payload.target_path,
+            "source": "attachment",
+        })
 
     bm = BookmarkedMessage(
         message_id=message_id,

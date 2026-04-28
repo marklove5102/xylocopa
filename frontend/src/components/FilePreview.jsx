@@ -5,9 +5,11 @@ import ImageLightbox from "./ImageLightbox";
 
 // --- Shared action buttons (download + copy path + bookmark) ---
 
-function ActionButtons({ src, filename, originalPath, messageId, project }) {
+const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"];
+
+function ActionButtons({ src, filename, originalPath, messageId, project, attachmentType, initialBookmarked }) {
   const [copied, setCopied] = useState(false);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(!!initialBookmarked);
   const toast = useToast();
 
   const handleDownload = (e) => {
@@ -33,8 +35,20 @@ function ActionButtons({ src, filename, originalPath, messageId, project }) {
     e.stopPropagation();
     e.preventDefault();
     if (!messageId || !project) return;
+    // Pick kind based on the attachment type the user clicked
+    let kindOverride = null;
+    if (attachmentType === "image") kindOverride = "image";
+    else if (attachmentType === "video") kindOverride = "file"; // videos render as files for now
+    else if (attachmentType === "doc" || attachmentType === "file") kindOverride = "file";
+    else if (originalPath) {
+      const lower = originalPath.toLowerCase();
+      kindOverride = IMAGE_EXTS.some((ext) => lower.endsWith(ext)) ? "image" : "file";
+    }
     try {
-      await createBookmark(project, messageId);
+      await createBookmark(project, messageId, {
+        kindOverride,
+        targetPath: originalPath || null,
+      });
       setBookmarked(true);
       toast.success("Bookmarked");
     } catch (err) {
@@ -91,7 +105,7 @@ function ActionButtons({ src, filename, originalPath, messageId, project }) {
 
 // --- Image Preview (compact thumbnail, tappable fullscreen) ---
 
-function ImagePreview({ src, thumbSrc, filename, originalPath, onOpen, messageId, project }) {
+function ImagePreview({ src, thumbSrc, filename, originalPath, onOpen, messageId, project, initialBookmarked }) {
   // Two-stage error: thumb fails → try full-res → then show error UI
   const [thumbFailed, setThumbFailed] = useState(false);
   const [error, setError] = useState(false);
@@ -139,7 +153,7 @@ function ImagePreview({ src, thumbSrc, filename, originalPath, onOpen, messageId
       </div>
       <div className="flex items-center gap-1 mt-1">
         <p className="text-xs text-dim truncate max-w-[200px]">{filename}</p>
-        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} />
+        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} attachmentType="image" initialBookmarked={initialBookmarked} />
       </div>
     </div>
   );
@@ -147,7 +161,7 @@ function ImagePreview({ src, thumbSrc, filename, originalPath, onOpen, messageId
 
 // --- Video Preview (thumbnail, tappable to open in lightbox) ---
 
-function VideoPreview({ src, filename, originalPath, onOpen, messageId, project }) {
+function VideoPreview({ src, filename, originalPath, onOpen, messageId, project, initialBookmarked }) {
   const [thumbError, setThumbError] = useState(false);
   const thumbUrl = src + ".thumb.jpg";
 
@@ -179,7 +193,7 @@ function VideoPreview({ src, filename, originalPath, onOpen, messageId, project 
       </div>
       <div className="flex items-center gap-1 mt-1">
         <p className="text-xs text-dim truncate max-w-[200px]">{filename}</p>
-        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} />
+        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} attachmentType="video" initialBookmarked={initialBookmarked} />
       </div>
     </div>
   );
@@ -187,7 +201,7 @@ function VideoPreview({ src, filename, originalPath, onOpen, messageId, project 
 
 // --- Doc/Code File Preview (collapsible card) ---
 
-function DocFilePreview({ src, filename, ext, originalPath, messageId, project }) {
+function DocFilePreview({ src, filename, ext, originalPath, messageId, project, initialBookmarked }) {
   const [expanded, setExpanded] = useState(false);
   const [content, setContent] = useState(null);
   const [loadState, setLoadState] = useState("idle"); // idle | loading | loaded | error
@@ -224,7 +238,7 @@ function DocFilePreview({ src, filename, ext, originalPath, messageId, project }
         </svg>
         <span className="text-xs text-label truncate flex-1 min-w-0">{filename}</span>
         <span className="text-[10px] text-dim uppercase shrink-0">{ext}</span>
-        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} />
+        <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} attachmentType="doc" initialBookmarked={initialBookmarked} />
         <svg className={`w-3 h-3 text-dim shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" d="m19 9-7 7-7-7" />
         </svg>
@@ -260,21 +274,21 @@ function DocFilePreview({ src, filename, ext, originalPath, messageId, project }
 
 // --- Generic File Card (non-media, non-doc — fallback for user uploads) ---
 
-function GenericFilePreview({ src, filename, originalPath, messageId, project }) {
+function GenericFilePreview({ src, filename, originalPath, messageId, project, initialBookmarked }) {
   return (
     <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-elevated max-w-[240px]">
       <svg className="w-4 h-4 text-dim shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
       </svg>
       <span className="text-xs text-label truncate flex-1 min-w-0">{filename}</span>
-      <ActionButtons src={src} filename={filename} originalPath={originalPath} />
+      <ActionButtons src={src} filename={filename} originalPath={originalPath} messageId={messageId} project={project} attachmentType="file" initialBookmarked={initialBookmarked} />
     </div>
   );
 }
 
 // --- Grouped doc files card (collapsible list for 2+ doc files) ---
 
-function DocGroupCard({ docs, messageId, project }) {
+function DocGroupCard({ docs, messageId, project, initialBookmarked }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -306,7 +320,7 @@ function DocGroupCard({ docs, messageId, project }) {
                 </svg>
                 <span className="text-xs text-label truncate flex-1 min-w-0">{filename}</span>
                 <span className="text-[10px] text-dim uppercase shrink-0">{att.ext}</span>
-                <ActionButtons src={att.resolvedUrl} filename={filename} originalPath={att.originalPath} messageId={messageId} project={project} />
+                <ActionButtons src={att.resolvedUrl} filename={filename} originalPath={att.originalPath} messageId={messageId} project={project} attachmentType="doc" initialBookmarked={initialBookmarked} />
               </div>
             );
           })}
@@ -318,7 +332,7 @@ function DocGroupCard({ docs, messageId, project }) {
 
 // --- Main component ---
 
-export default function FileAttachments({ attachments, compact, messageId, project }) {
+export default function FileAttachments({ attachments, compact, messageId, project, initialBookmarked }) {
   const [lightbox, setLightbox] = useState(null); // { media, initialIndex } or null
 
   if (!attachments || attachments.length === 0) return null;
@@ -400,19 +414,20 @@ export default function FileAttachments({ attachments, compact, messageId, proje
               onOpen={() => openLightbox(idx)}
               messageId={messageId}
               project={project}
+              initialBookmarked={initialBookmarked}
             />
           );
         }
-        return <VideoPreview key={att.path} src={att.resolvedUrl} filename={filename} originalPath={att.originalPath} onOpen={() => openLightbox(idx)} messageId={messageId} project={project} />;
+        return <VideoPreview key={att.path} src={att.resolvedUrl} filename={filename} originalPath={att.originalPath} onOpen={() => openLightbox(idx)} messageId={messageId} project={project} initialBookmarked={initialBookmarked} />;
       })}
       {/* Doc files: single card if 1, grouped card if 2+ */}
       {docs.length === 1 && (
-        <DocFilePreview src={docs[0].resolvedUrl} filename={docs[0].path.split("/").pop()} ext={docs[0].ext} originalPath={docs[0].originalPath} messageId={messageId} project={project} />
+        <DocFilePreview src={docs[0].resolvedUrl} filename={docs[0].path.split("/").pop()} ext={docs[0].ext} originalPath={docs[0].originalPath} messageId={messageId} project={project} initialBookmarked={initialBookmarked} />
       )}
-      {docs.length >= 2 && <DocGroupCard docs={docs} messageId={messageId} project={project} />}
+      {docs.length >= 2 && <DocGroupCard docs={docs} messageId={messageId} project={project} initialBookmarked={initialBookmarked} />}
       {/* Generic fallback for non-media, non-doc */}
       {other.map((att) => (
-        <GenericFilePreview key={att.path} src={att.resolvedUrl} filename={att.path.split("/").pop()} originalPath={att.originalPath} messageId={messageId} project={project} />
+        <GenericFilePreview key={att.path} src={att.resolvedUrl} filename={att.path.split("/").pop()} originalPath={att.originalPath} messageId={messageId} project={project} initialBookmarked={initialBookmarked} />
       ))}
 
       {/* Lightbox for media gallery */}
