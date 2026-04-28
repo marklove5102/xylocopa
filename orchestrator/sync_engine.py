@@ -524,6 +524,21 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
     # 4. Slice new turns using the pointer
     new_turns = turns[ctx.last_turn_count:]
 
+    # DRIFT_INSTRUMENT: log entry-level breakdown of new_turns so we can see
+    # whether multi-block JSONL entries (text + tool_use_A + tool_use_B) are
+    # being correctly expanded into separate parser turns.
+    if new_turns:
+        from collections import Counter as _Counter
+        _kind_counter = _Counter(
+            (t[0], t[4] if len(t) > 4 else None) for t in new_turns
+        )
+        logger.info(
+            "DRIFT_INSTRUMENT sync_start agent=%s pointer=%d total_turns=%d "
+            "new_turns=%d breakdown=%s",
+            ctx.agent_id[:8], ctx.last_turn_count, len(turns),
+            len(new_turns), dict(_kind_counter),
+        )
+
     # 5. Streaming update — last turn content changed but no new turns
     if not new_turns and turns:
         return _handle_streaming_update(ad, ctx, turns, current_size)
@@ -563,6 +578,10 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     )
 
         _actually_inserted = 0
+        # DRIFT_INSTRUMENT: track per-turn outcomes for end-of-loop reconciliation
+        _drift_skipped_dedup: list[tuple[int, str, str | None, str | None]] = []
+        _drift_skipped_integrity: list[tuple[int, str, str | None, str | None, bool, str]] = []
+        _drift_skipped_other_role: list[tuple[int, str]] = []
         # State signals are accumulated across new_turns (see derivation
         # block after the import loop). The historical-replay risk that
         # last-only was guarding against is now bounded by 93fbd00's
@@ -589,6 +608,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     deferred_updates=_deferred_updates,
                 )
                 if msg is None:
+                    _drift_skipped_dedup.append((seq, role, kind, jsonl_uuid))
                     continue
 
             elif role == "assistant":
@@ -596,6 +616,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     db, ctx, content, jsonl_uuid, seq, meta, meta_json, kind, jsonl_ts,
                 )
                 if msg is None:
+                    _drift_skipped_dedup.append((seq, role, kind, jsonl_uuid))
                     continue
 
             elif role == "system":
@@ -603,9 +624,11 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     db, ctx, content, jsonl_uuid, seq, kind, jsonl_ts,
                 )
                 if msg is None:
+                    _drift_skipped_dedup.append((seq, role, kind, jsonl_uuid))
                     continue
 
             else:
+                _drift_skipped_other_role.append((seq, role))
                 continue
 
             # SAVEPOINT insert — protects against duplicate UUIDs
@@ -614,10 +637,24 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
                     db.add(msg)
                     db.flush()
                     _actually_inserted += 1
-            except IntegrityError:
+            except IntegrityError as _exc:
+                # DRIFT_INSTRUMENT: verify whether the IntegrityError is a real
+                # duplicate (row already in DB) or a phantom (no row exists, but
+                # INSERT still failed — the latter would explain Bug B drift).
+                _existing = (
+                    db.query(Message.id)
+                      .filter(Message.agent_id == ctx.agent_id,
+                              Message.jsonl_uuid == jsonl_uuid)
+                      .first()
+                ) if jsonl_uuid else None
+                _drift_skipped_integrity.append(
+                    (seq, role, kind, jsonl_uuid, bool(_existing), str(_exc)[:120])
+                )
                 logger.warning(
-                    "Skipped duplicate jsonl_uuid %s for agent %s",
-                    jsonl_uuid, ctx.agent_id[:8],
+                    "DRIFT_INSTRUMENT savepoint_integrity_error agent=%s "
+                    "seq=%d role=%s kind=%s uuid=%s existing_in_db=%s exc=%s",
+                    ctx.agent_id[:8], seq, role, kind, jsonl_uuid,
+                    bool(_existing), str(_exc)[:120],
                 )
                 continue
 
@@ -644,6 +681,69 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             # DO NOT advance pointer — next cycle retries, UUID dedup
             # skips already-committed turns
             return "commit_error"
+
+        # DRIFT_INSTRUMENT: log per-sync reconciliation summary + real-time
+        # drift snapshot. This is the smoking-gun log for Bug B — if the JSONL
+        # has any UUID that doesn't exist in DB after this sync's commit, we
+        # log it immediately (instead of waiting for startup full_scan).
+        _expected = len(new_turns)
+        _skipped_total = (
+            len(_drift_skipped_dedup)
+            + len(_drift_skipped_integrity)
+            + len(_drift_skipped_other_role)
+        )
+        if _actually_inserted + _skipped_total != _expected:
+            logger.error(
+                "DRIFT_INSTRUMENT count_mismatch agent=%s "
+                "expected=%d inserted=%d skipped_dedup=%d "
+                "skipped_integrity=%d skipped_other_role=%d",
+                ctx.agent_id[:8], _expected, _actually_inserted,
+                len(_drift_skipped_dedup), len(_drift_skipped_integrity),
+                len(_drift_skipped_other_role),
+            )
+
+        # Real-time drift snapshot: compare full parser-emitted UUID set
+        # against DB UUID set for this agent. Anything in JSONL but not in
+        # DB is drift. Cheap (one indexed query, ~1ms for typical sessions).
+        _parser_uuids = {t[3] for t in turns if len(t) > 3 and t[3]}
+        if _parser_uuids:
+            _db_uuids_now = set(
+                _r[0] for _r in
+                db.query(Message.jsonl_uuid)
+                  .filter(Message.agent_id == ctx.agent_id,
+                          Message.jsonl_uuid.isnot(None))
+                  .all()
+            )
+            _drift_uuids = _parser_uuids - _db_uuids_now
+            if _drift_uuids:
+                # Find the offending turns' positions + kinds for diagnosis
+                _drift_details = []
+                for _t in turns:
+                    if len(_t) > 3 and _t[3] in _drift_uuids:
+                        _drift_details.append({
+                            "uuid": _t[3],
+                            "role": _t[0],
+                            "kind": _t[4] if len(_t) > 4 else None,
+                            "ts": _t[5] if len(_t) > 5 else None,
+                        })
+                logger.error(
+                    "DRIFT_INSTRUMENT drift_detected agent=%s "
+                    "drift_count=%d parser_uuids=%d db_uuids=%d details=%s",
+                    ctx.agent_id[:8], len(_drift_uuids),
+                    len(_parser_uuids), len(_db_uuids_now),
+                    _drift_details[:10],  # cap to avoid log explosion
+                )
+
+        # DRIFT_INSTRUMENT: lifecycle summary line for every sync that imported
+        # at least one turn. INFO-level so it shows up in default log; one line.
+        if _actually_inserted or _skipped_total:
+            logger.info(
+                "DRIFT_INSTRUMENT sync_done agent=%s expected=%d inserted=%d "
+                "skipped_dedup=%d skipped_integrity=%d new_pointer=%d",
+                ctx.agent_id[:8], _expected, _actually_inserted,
+                len(_drift_skipped_dedup), len(_drift_skipped_integrity),
+                len(turns),
+            )
 
         # Advance pointer ONLY on successful commit
         ctx.last_turn_count = len(turns)
@@ -944,6 +1044,20 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
         if reason == "compact":
             _cli_orphans = [m for m in extra_in_db if m.source == "cli"]
             if _cli_orphans:
+                # DRIFT_INSTRUMENT: log every UUID being purged. If we ever see
+                # this fire outside a real /compact event, we have a smoking
+                # gun for one possible Bug B mechanism (cleanup mistakes a
+                # transient parser shortfall for a true compact).
+                _orphan_details = [
+                    {"uuid": m.jsonl_uuid, "role": m.role.value if m.role else None,
+                     "kind": m.kind, "preview": (m.content or "")[:60]}
+                    for m in _cli_orphans[:10]
+                ]
+                logger.warning(
+                    "DRIFT_INSTRUMENT compact_purge agent=%s reason=%s "
+                    "purge_count=%d details=%s",
+                    ctx.agent_id, reason, len(_cli_orphans), _orphan_details,
+                )
                 for m in _cli_orphans:
                     db.delete(m)
                 logger.info(
