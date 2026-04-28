@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchHealth as apiFetchHealth,
   fetchAgents as apiFetchAgents,
@@ -89,6 +89,20 @@ export function MonitorProvider({ children }) {
       fetchSysStats(), fetchStorage(), fetchTasks(),
     ]);
   }, [fetchHealth, fetchAgents, fetchSysStats, fetchStorage, fetchTasks]);
+
+  // Warm-up: prefetch monitor data once after app mount so the first trip
+  // to MonitorPage shows everything instantly instead of empty placeholders.
+  // Deferred 2s so it doesn't compete with initial render / critical fetches.
+  const warmedUpRef = useRef(false);
+  useEffect(() => {
+    if (warmedUpRef.current || !visible) return;
+    const id = setTimeout(() => {
+      warmedUpRef.current = true;
+      refreshAll();
+      fetchUsage();
+    }, 2000);
+    return () => clearTimeout(id);
+  }, [visible, refreshAll, fetchUsage]);
 
   // Initial fetch + background poll only when MonitorPage is active
   useEffect(() => {
