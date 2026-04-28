@@ -242,6 +242,32 @@ class StarredSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class BookmarkedMessage(Base):
+    __tablename__ = "bookmarked_messages"
+    __table_args__ = (
+        Index("ix_bookmarks_project_created", "project", "created_at"),
+    )
+
+    message_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    project: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summary_emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False, default="message")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
 
