@@ -1162,8 +1162,8 @@ async def wake_all_agent_syncs(request: Request, db: Session = Depends(get_db)):
     """Wake sync loops for all active (non-STOPPED) agents.
 
     Mirrors the per-agent ``/api/agents/{id}/wake-sync`` endpoint:
-    recovers ERROR→IDLE, restarts dead sync loops, redispatches stuck
-    queued messages, and dispatches pending messages.
+    recovers ERROR→IDLE, restarts dead sync loops, and dispatches any
+    queued pre-sent messages for idle agents.
     """
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if not ad:
