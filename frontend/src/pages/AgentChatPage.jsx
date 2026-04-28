@@ -1569,7 +1569,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {userInsights && userInsights.length > 0 && (
           <InsightsBubble insights={userInsights} />
         )}
-        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} messageId={message.id} project={project} initialBookmarked={bookmarkActive} onAfterBookmark={onAfterBookmark} />}
+        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} />}
         {inlineLightbox && (
           <ImageLightbox
             media={inlineLightbox.media}
