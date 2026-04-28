@@ -6,15 +6,12 @@ import { useToast } from "../contexts/ToastContext";
  * Floating prompt that appears after a successful bookmark POST.
  *
  * Two-stage:
- *   1. Compact pill "📑 Bookmarked · Add note" at the top of the viewport.
- *      Auto-dismisses after `idleTimeoutMs` if the user doesn't expand.
+ *   1. Compact pill (toast-style, top-right on desktop / top-center on mobile)
+ *      auto-dismisses after `idleTimeoutMs` if the user doesn't expand.
  *   2. On tap → expands to a small card with textarea + Save/Skip.
  *
- * Props:
- *   project       — project name (required for PATCH)
- *   messageId     — bookmark target id (null = closed)
- *   onClose()     — called when prompt should disappear (saved or skipped)
- *   onSaved(note) — optional, fires after a successful PATCH
+ * Positioning mirrors ToastContext (`.toast-container .safe-area-toast`) so it
+ * sits next to native toasts instead of clipping the chat header.
  */
 export default function BookmarkNotePrompt({ project, messageId, onClose, onSaved }) {
   const [expanded, setExpanded] = useState(false);
@@ -66,32 +63,32 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
   const skip = () => onClose?.();
 
   return (
-    <div className="fixed inset-x-0 top-3 z-[9998] flex justify-center px-4 pointer-events-none">
+    <div className="bookmark-note-anchor safe-area-toast">
       {!expanded ? (
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500/[0.12] dark:bg-amber-500/[0.18] border border-amber-500/30 backdrop-blur-md px-3 py-1.5 text-xs shadow-lg animate-[toast-slide-in_0.25s_ease-out]"
+          className="bookmark-note-pill toast-enter pointer-events-auto inline-flex items-center gap-2"
         >
-          <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24">
             <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
           </svg>
-          <span className="text-amber-700 dark:text-amber-300 font-medium">Bookmarked</span>
-          <span className="text-amber-600/70 dark:text-amber-400/80">· Add note</span>
+          <span className="text-amber-700 dark:text-amber-300 font-semibold text-[13px]">Bookmarked</span>
+          <span className="text-amber-600/80 dark:text-amber-400/85 text-[13px]">· Add note</span>
           <span
             role="button"
             tabIndex={-1}
             onClick={(e) => { e.stopPropagation(); skip(); }}
-            className="text-amber-600/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-300 ml-1 px-1"
+            className="text-amber-600/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-300 ml-1 text-base leading-none"
             title="Dismiss"
           >
             ×
           </span>
         </button>
       ) : (
-        <div className="pointer-events-auto w-full max-w-sm rounded-2xl bg-surface shadow-xl border border-divider p-3 animate-[toast-slide-in_0.25s_ease-out]">
+        <div className="bookmark-note-card toast-enter pointer-events-auto">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <p className="text-xs font-semibold text-label uppercase tracking-wider flex items-center gap-1.5">
+            <p className="text-[13px] font-semibold text-label flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
               </svg>
@@ -133,6 +130,55 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
           </div>
         </div>
       )}
+      <style>{`
+        .bookmark-note-anchor {
+          position: fixed;
+          z-index: 9998;
+          pointer-events: none;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+        }
+        @media (min-width: 640px) {
+          .bookmark-note-anchor {
+            left: auto;
+            right: 16px;
+            transform: none;
+            align-items: flex-end;
+          }
+        }
+        .bookmark-note-pill {
+          background: rgba(255, 248, 230, 0.96);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 0.5px solid rgba(245, 158, 11, 0.35);
+          border-radius: 14px;
+          padding: 10px 14px;
+          max-width: 300px;
+          box-shadow: 0 2px 16px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.04);
+        }
+        .dark .bookmark-note-pill {
+          background: rgba(60, 45, 20, 0.92);
+          border-color: rgba(245, 158, 11, 0.40);
+          box-shadow: 0 2px 16px rgba(0,0,0,0.30), 0 0 0 0.5px rgba(255,255,255,0.06);
+        }
+        .bookmark-note-card {
+          background: rgba(255,255,255,0.95);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border-radius: 14px;
+          padding: 12px;
+          width: min(360px, calc(100vw - 32px));
+          box-shadow: 0 2px 16px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.06);
+        }
+        .dark .bookmark-note-card {
+          background: rgba(44,44,46,0.94);
+          box-shadow: 0 2px 16px rgba(0,0,0,0.30), 0 0 0 0.5px rgba(255,255,255,0.08);
+        }
+      `}</style>
     </div>
   );
 }
