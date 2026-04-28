@@ -37,7 +37,7 @@ function BookmarkRow({ item, onClick, onDelete, onRestore }) {
 
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
-              <p className="text-[15px] leading-snug truncate font-medium text-heading">
+              <p className="text-[13px] leading-snug truncate font-medium text-heading">
                 {item.body || (item.summary === null ? "Summarizing…" : "(no summary)")}
               </p>
               <span className="text-[11px] text-faint shrink-0 mt-0.5">{meta}</span>
