@@ -1215,9 +1215,24 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
                 "Agent %s: real drift, rewinding pointer %d → %d",
                 ctx.agent_id[:8], _old_count, _earliest_missing_idx,
             )
+        elif _earliest_missing_idx is not None:
+            # Missing UUIDs at index >= ctx.last_turn_count — incremental
+            # sync would re-import them on next cycle IF we don't advance
+            # the pointer past them. The original code unconditionally set
+            # ctx.last_turn_count = len(turns), which skipped ALL post-pointer
+            # missing UUIDs (Bug B: pm2-reload race + 93fbd00 off-by-one).
+            # Leave pointer at the earliest missing position so the next
+            # sync_import_new_turns picks it up.
+            ctx.last_turn_count = _earliest_missing_idx
+            ctx.last_offset = 0
+            ctx.last_content_hash = ""
+            logger.warning(
+                "Agent %s: post-pointer missing turn — leaving pointer at %d "
+                "(was %d, len(turns)=%d) so next sync re-imports",
+                ctx.agent_id[:8], _earliest_missing_idx, _old_count, len(turns),
+            )
         else:
-            # No real drift (or missing turns are post-pointer, which
-            # incremental sync will handle). Advance to current.
+            # No missing turns — safe to advance to current end.
             ctx.last_turn_count = len(turns)
             ctx.last_offset = current_size
             ctx.last_content_hash = _content_hash(turns[-1][1]) if turns else ""
