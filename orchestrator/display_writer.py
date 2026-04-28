@@ -702,6 +702,7 @@ def write_retry_marker(
 
     path = _display_path(agent_id)
 
+    # Idempotent: skip if file's first line is already a retry_marker.
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -731,9 +732,48 @@ def write_retry_marker(
         "scheduled_at": None,
         "tool_use_id": None,
     }
+    line = json.dumps(entry, separators=(",", ":"))
 
     os.makedirs(DISPLAY_DIR, exist_ok=True)
-    _write_locked(path, [json.dumps(entry, separators=(",", ":"))])
+
+    # Make the marker physically the first line of the file. For new agents
+    # the file doesn't exist yet → fast path, just write line. For backfill
+    # on an existing file → atomic rewrite (read all, write new+old) under
+    # flock so concurrent writers don't see a half-written file.
+    if not os.path.exists(path):
+        _write_locked(path, [line])
+        return
+
+    # Backfill: rewrite the file with marker prepended. Holding flock on
+    # the original file blocks all other writers for the duration of the
+    # rewrite; tmpfile + os.replace makes the swap atomic to readers.
+    import tempfile
+    with open(path, "r+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            existing = f.read()
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", delete=False,
+                dir=os.path.dirname(path), prefix=".retry-rewrite-",
+            )
+            try:
+                tmp.write(line + "\n")
+                if existing and not existing.endswith("\n"):
+                    existing += "\n"
+                tmp.write(existing)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, path)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def write_retry_marker_for_agent(db, agent) -> None:
