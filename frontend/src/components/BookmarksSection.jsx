@@ -31,13 +31,8 @@ function BookmarkRow({ item, onClick, onDelete, onRestore }) {
       >
         <div className="flex items-center gap-3 px-5 h-[68px]">
           <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1">
-            {isImage && item.media?.[0]?.path ? (
-              // Future: replace with served thumbnail URL when backend exposes one.
-              // For now, fall back to emoji to avoid broken-image placeholders.
-              <FluentEmoji char={pickEmoji(item)} size={22} />
-            ) : (
-              <FluentEmoji char={pickEmoji(item)} size={22} />
-            )}
+            {/* TODO: render thumbnail when backend exposes a served URL for media[0].path */}
+            <FluentEmoji char={pickEmoji(item)} size={22} />
           </div>
 
           <div className="min-w-0 flex-1">

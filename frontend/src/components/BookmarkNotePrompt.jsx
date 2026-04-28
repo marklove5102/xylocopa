@@ -13,7 +13,7 @@ import { useToast } from "../contexts/ToastContext";
  * Positioning mirrors ToastContext (`.toast-container .safe-area-toast`) so it
  * sits next to native toasts instead of clipping the chat header.
  */
-export default function BookmarkNotePrompt({ project, messageId, onClose, onSaved }) {
+export default function BookmarkNotePrompt({ project, messageId, onClose }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -52,7 +52,6 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
     try {
       await updateBookmark(project, messageId, next);
       toast.success("Note saved");
-      onSaved?.(next);
       onClose?.();
     } catch (err) {
       toast.error(err?.message || "Failed to save note");

@@ -1582,7 +1582,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         )}
         {/* Action popover — gated by message status (two-stage delete model) */}
         {showActions && (
-          <div data-action-menu className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
+          <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
               {canSendNow && (
                 <button

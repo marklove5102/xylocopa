@@ -200,14 +200,10 @@ export const unstarSession = (project, sessionId) =>
   request(`/api/projects/${e(project)}/sessions/${e(sessionId)}/star`, { method: "DELETE" });
 export const fetchProjectBookmarks = (project) =>
   request(`/api/projects/${e(project)}/bookmarks`);
-export const createBookmark = (project, messageId, opts = {}) =>
+export const createBookmark = (project, messageId, userNote = null) =>
   request(`/api/projects/${e(project)}/messages/${e(messageId)}/bookmark`, {
     method: "POST",
-    body: JSON.stringify({
-      user_note: opts.userNote ?? null,
-      kind_override: opts.kindOverride ?? null,
-      target_path: opts.targetPath ?? null,
-    }),
+    body: JSON.stringify({ user_note: userNote }),
   });
 export const updateBookmark = (project, messageId, userNote) =>
   request(`/api/projects/${e(project)}/bookmarks/${e(messageId)}`, {
