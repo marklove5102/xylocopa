@@ -1095,7 +1095,7 @@ function AgentTextSegment({ text, project }) {
   );
 }
 
-function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries }) {
+function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries, openMenuMsgId, setOpenMenuMsgId }) {
   if (message.kind === "tool_activity") {
     return null;
   }
@@ -1131,7 +1131,20 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const UNDELIVERED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   const isUndeliveredTimedOut = isWebUndelivered && (serverNow() - new Date(message.created_at).getTime()) > UNDELIVERED_TIMEOUT_MS;
 
-  const [showActions, setShowActions] = useState(false);
+  // Action menu visibility is hoisted to the parent so only one menu can be
+  // open across the whole message list at any time. Falls back to local state
+  // when the parent didn't wire props (e.g. legacy/embedded callers).
+  const [localShowActions, setLocalShowActions] = useState(false);
+  const showActions = setOpenMenuMsgId
+    ? openMenuMsgId === message.id
+    : localShowActions;
+  const setShowActions = (open) => {
+    if (setOpenMenuMsgId) {
+      setOpenMenuMsgId(open ? message.id : (openMenuMsgId === message.id ? null : openMenuMsgId));
+    } else {
+      setLocalShowActions(open);
+    }
+  };
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [editSchedule, setEditSchedule] = useState("");
@@ -2379,6 +2392,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const toastCtx = useToast();
+  // Only one chat-bubble action menu open at a time across the whole list.
+  const [openMenuMsgId, setOpenMenuMsgId] = useState(null);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(false);
@@ -4179,7 +4194,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
@@ -4190,17 +4205,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <div key={msg.id} data-msg-id={msg.id} data-msg-type="legacy_split">
                         {segments.map((seg, i) => {
                           if (seg.type === "tools") return <ToolLogBubble key={`${msg.id}-t${i}`} entries={seg.entries} />;
-                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} />;
+                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} />;
                           return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent.project} />;
                         })}
                         {lastTextIdx === -1 && msg.metadata?.interactive?.length > 0 && (
-                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} />
+                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} />
                         )}
                       </div>
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>;
               });
             })()}
 
@@ -4215,10 +4230,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               return (
                 <>
                   {queued.map((msg, idx) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>
                   ))}
                   {scheduled.map((msg) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} /></div>
                   ))}
                 </>
               );
