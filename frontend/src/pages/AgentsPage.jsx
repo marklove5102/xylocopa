@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, adoptUnlinkedSession } from "../lib/api";
+import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, replayPendingUnlinked, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
@@ -143,13 +143,14 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    // Fire scan + wake in parallel, then wait for sync loops to import
-    await Promise.allSettled([scanAgents(), wakeSyncAll()]);
-    // Give sync loops time to read JSONL and write to DB
+    // Fire scan + wake + replay in parallel, then wait for sync loops to import.
+    // replayPendingUnlinked picks up SessionStart events the hook stashed
+    // while the backend was offline.
+    await Promise.allSettled([scanAgents(), wakeSyncAll(), replayPendingUnlinked()]);
     await new Promise((r) => setTimeout(r, SYNC_SETTLE_DELAY_GLOBAL));
-    await load();
+    await Promise.all([load(), loadUnlinked()]);
     setTimeout(() => setRefreshing(false), 400);
-  }, [load]);
+  }, [load, loadUnlinked]);
 
   useEffect(() => {
     if (!visible) return;

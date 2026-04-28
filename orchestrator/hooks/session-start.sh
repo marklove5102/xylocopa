@@ -31,9 +31,28 @@ HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
 
 [ "$HTTP_CODE" = "200" ] && exit 0
 
-# Orchestrator offline — persist signal file for later pickup
+# Orchestrator offline — persist event for later pickup
 
-# Managed agent: write signal file for session rotation detection (new prefix)
 if [ -n "$AGENT_ID" ]; then
+  # Managed agent: signal file for session rotation detection
   echo "$SESSION_ID" > "/tmp/xy-${AGENT_ID}.newsession" 2>/dev/null
+else
+  # Unmanaged session: stash full event so backend can replay on refresh
+  mkdir -p "/tmp/xy-pending-unlinked" 2>/dev/null
+  export TMUX_SESSION_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#{session_name}' 2>/dev/null)
+  export PANE_KEY=$(printf '%s' "${TMUX_PANE:-unknown}" | tr -d '%/')
+  python3 -c '
+import json, os, time
+key = os.environ.get("PANE_KEY", "unknown")
+data = {
+    "session_id": os.environ.get("SESSION_ID", ""),
+    "cwd": os.environ.get("PWD", ""),
+    "tmux_pane": os.environ.get("TMUX_PANE", ""),
+    "tmux_session": os.environ.get("TMUX_SESSION_NAME", ""),
+    "source": os.environ.get("SESSION_SOURCE", ""),
+    "ts": time.time(),
+}
+with open("/tmp/xy-pending-unlinked/pane-" + key + ".json", "w") as f:
+    json.dump(data, f)
+' 2>/dev/null
 fi

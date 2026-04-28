@@ -1437,6 +1437,115 @@ async def adopt_unlinked_session(
     return AgentOut.model_validate(agent)
 
 
+@router.post("/api/unlinked-sessions/replay")
+async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db)):
+    """Replay SessionStart events the hook stashed when backend was offline.
+
+    Manually triggered by the Agents page refresh button. Reads
+    /tmp/xy-pending-unlinked/, applies the same guards as the live hook
+    path (routers/hooks.py:1242-1318), and promotes valid events into
+    BACKUP_DIR/unlinked-sessions/ via the same _write_unlinked_entry()
+    used by the live path. Stash files are deleted on success or skip.
+    """
+    from agent_dispatcher import _write_unlinked_entry
+    from routers.projects import active_projects
+    from route_helpers import session_signal_path
+
+    stash_dir = "/tmp/xy-pending-unlinked"
+    if not os.path.isdir(stash_dir):
+        return {"ok": True, "replayed": 0, "rotated": 0, "skipped": 0}
+
+    projects = active_projects(db)
+    project_reals = [(p, os.path.realpath(p.path)) for p in projects]
+
+    replayed = rotated = skipped = 0
+    for fname in os.listdir(stash_dir):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(stash_dir, fname)
+        try:
+            with open(fpath) as f:
+                ev = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            continue
+
+        sid = (ev.get("session_id") or "").strip()
+        cwd = (ev.get("cwd") or "").strip()
+        pane = (ev.get("tmux_pane") or "").strip()
+        if not sid or not cwd or not pane:
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            continue
+
+        # Guard A: session_id already owned by an agent
+        if db.query(Agent).filter(Agent.session_id == sid).first():
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            skipped += 1
+            continue
+
+        # Guard B: pane owned by managed agent → rotation signal, not unlinked
+        owner = db.query(Agent).filter(
+            Agent.tmux_pane == pane,
+            Agent.status.notin_([AgentStatus.STOPPED, AgentStatus.ERROR]),
+        ).first()
+        if owner:
+            try:
+                with open(session_signal_path(owner.id), "w") as sf:
+                    sf.write(sid)
+                rotated += 1
+            except OSError as e:
+                logger.warning("replay_pending_unlinked: rotation signal failed: %s", e)
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            continue
+
+        # Guard C: cwd matches a registered project
+        cwd_real = os.path.realpath(cwd)
+        matched = next(
+            (p for p, p_real in project_reals
+             if cwd_real == p_real or cwd_real.startswith(p_real + "/")),
+            None,
+        )
+        if not matched:
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            skipped += 1
+            continue
+
+        _write_unlinked_entry(
+            session_id=sid,
+            cwd=cwd_real,
+            tmux_pane=pane,
+            tmux_session=(ev.get("tmux_session") or None),
+            project_name=matched.name,
+        )
+        try:
+            os.unlink(fpath)
+        except OSError:
+            pass
+        replayed += 1
+
+    if replayed or rotated or skipped:
+        logger.info(
+            "replay_pending_unlinked: replayed=%d rotated=%d skipped=%d",
+            replayed, rotated, skipped,
+        )
+    return {"ok": True, "replayed": replayed, "rotated": rotated, "skipped": skipped}
+
+
 @router.get("/api/agents", response_model=list[AgentBrief])
 async def list_agents(
     request: Request,

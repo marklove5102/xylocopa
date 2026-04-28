@@ -284,6 +284,8 @@ export const wakeSyncAll = () =>
   request("/api/agents/wake-sync-all", { method: "POST" });
 export const fetchUnlinkedSessions = () =>
   request("/api/unlinked-sessions");
+export const replayPendingUnlinked = () =>
+  request("/api/unlinked-sessions/replay", { method: "POST" });
 export const adoptUnlinkedSession = (sessionId, body) =>
   request(`/api/unlinked-sessions/${sessionId}/adopt`, {
     method: "POST",
