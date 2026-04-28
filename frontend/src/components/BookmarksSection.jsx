@@ -216,7 +216,7 @@ export default function BookmarksSection({ projectName, items, onUpdateNote, onD
             <FluentEmoji char="📌" size={28} />
           </div>
           <p className="text-sm text-dim">No bookmarks yet</p>
-          <p className="text-xs text-faint mt-1">Long-press any message to save it</p>
+          <p className="text-xs text-faint mt-1">Double-tap any message to save it</p>
         </div>
       </div>
     );
