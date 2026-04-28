@@ -13,7 +13,6 @@ import {
   unstarSession,
   fetchProjectBookmarks,
   createBookmark,
-  updateBookmark,
   deleteBookmark,
   scanAgents,
   fetchProjectFile,
@@ -1446,14 +1445,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       <BookmarksSection
         projectName={name}
         items={bookmarks}
-        onUpdateNote={async (messageId, userNote) => {
-          try {
-            const updated = await updateBookmark(name, messageId, userNote);
-            setBookmarks((prev) => prev.map((b) => (b.message_id === messageId ? updated : b)));
-          } catch (err) {
-            showToast("Failed to save note: " + (err?.message || "unknown"), "error");
-          }
-        }}
         onDelete={async (messageId) => {
           // Soft delete: backend only. The row stays visible in this session;
           // the next loadData() poll will drop it from the list naturally.
