@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { authedFetch, downloadFile, createBookmark } from "../lib/api";
+import { authedFetch, downloadFile, createBookmark, deleteBookmark } from "../lib/api";
 import { useToast } from "../contexts/ToastContext";
 import ImageLightbox from "./ImageLightbox";
 
@@ -9,7 +9,11 @@ const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"];
 
 function ActionButtons({ src, filename, originalPath, messageId, project, attachmentType, initialBookmarked, onAfterBookmark }) {
   const [copied, setCopied] = useState(false);
-  const [bookmarked, setBookmarked] = useState(!!initialBookmarked);
+  // Local optimistic flip; parent's bookmarkedSet is authoritative on next render
+  // via the prop, but we use this to give immediate feedback before the parent
+  // round-trips the state update.
+  const [optimisticOverride, setOptimisticOverride] = useState(null); // null | true | false
+  const bookmarked = optimisticOverride !== null ? optimisticOverride : !!initialBookmarked;
   const toast = useToast();
 
   const handleDownload = (e) => {
@@ -35,6 +39,21 @@ function ActionButtons({ src, filename, originalPath, messageId, project, attach
     e.stopPropagation();
     e.preventDefault();
     if (!messageId || !project) return;
+    // Toggle: filled icon = remove; outline = add.
+    if (bookmarked) {
+      try {
+        await deleteBookmark(project, messageId);
+        setOptimisticOverride(false);
+        if (typeof onAfterBookmark === "function") {
+          onAfterBookmark(messageId, "removed");
+        } else {
+          toast.success("Bookmark removed");
+        }
+      } catch (err) {
+        toast.error(err?.message || "Failed to remove bookmark");
+      }
+      return;
+    }
     // Pick kind based on the attachment type the user clicked
     let kindOverride = null;
     if (attachmentType === "image") kindOverride = "image";
@@ -49,9 +68,9 @@ function ActionButtons({ src, filename, originalPath, messageId, project, attach
         kindOverride,
         targetPath: originalPath || null,
       });
-      setBookmarked(true);
+      setOptimisticOverride(true);
       if (typeof onAfterBookmark === "function") {
-        onAfterBookmark(messageId);
+        onAfterBookmark(messageId, "added");
       } else {
         toast.success("Bookmarked");
       }

@@ -31,6 +31,7 @@ import {
   fetchTaskV2,
   wakeSync,
   createBookmark,
+  deleteBookmark,
   fetchProjectBookmarks,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
@@ -1152,9 +1153,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const [editSchedule, setEditSchedule] = useState("");
   const [copied, setCopied] = useState(false);
   const [inlineLightbox, setInlineLightbox] = useState(null); // { media, initialIndex }
-  const serverBookmarked = !!(bookmarkedSet && message?.id && bookmarkedSet.has(message.id));
-  const [justBookmarked, setJustBookmarked] = useState(false);
-  const bookmarkActive = serverBookmarked || justBookmarked;
+  const bookmarkActive = !!(bookmarkedSet && message?.id && bookmarkedSet.has(message.id));
   const bubbleToast = useToast();
   const lastTapRef = useRef(0);
   const touchStartYRef = useRef(0);
@@ -1220,11 +1219,16 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     setShowActions(false);
     if (!project || !message?.id) return;
     try {
-      await createBookmark(project, message.id);
-      setJustBookmarked(true);
-      onAfterBookmark?.(message.id);
+      if (bookmarkActive) {
+        await deleteBookmark(project, message.id);
+        onAfterBookmark?.(message.id, "removed");
+        bubbleToast.success("Bookmark removed");
+      } else {
+        await createBookmark(project, message.id);
+        onAfterBookmark?.(message.id, "added");
+      }
     } catch (err) {
-      bubbleToast.error(err?.message || "Failed to bookmark");
+      bubbleToast.error(err?.message || "Failed to update bookmark");
     }
   };
   // Touch end — double-tap detection. Skip if the finger moved significantly
@@ -2416,7 +2420,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [agent?.project]);
   // After a successful bookmark POST, prompt for an optional user note.
   const [noteForBookmarkId, setNoteForBookmarkId] = useState(null);
-  const handleAfterBookmark = useCallback((messageId) => {
+  const handleAfterBookmark = useCallback((messageId, action) => {
+    if (action === "removed") {
+      setBookmarkedSet((prev) => {
+        if (!prev.has(messageId)) return prev;
+        const next = new Set(prev); next.delete(messageId); return next;
+      });
+      setNoteForBookmarkId((cur) => (cur === messageId ? null : cur));
+      return;
+    }
     setBookmarkedSet((prev) => {
       if (prev.has(messageId)) return prev;
       const next = new Set(prev); next.add(messageId); return next;
