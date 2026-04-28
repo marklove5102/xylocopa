@@ -1436,15 +1436,18 @@ async def adopt_unlinked_session(
     return AgentOut.model_validate(agent)
 
 
-@router.post("/api/unlinked-sessions/replay")
-async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db)):
+def _do_replay_pending_unlinked(db: Session) -> dict:
     """Replay SessionStart events the hook stashed when backend was offline.
 
-    Manually triggered by the Agents page refresh button. Reads
-    /tmp/xy-pending-unlinked/, applies the same guards as the live hook
-    path (routers/hooks.py:1242-1318), and promotes valid events into
-    BACKUP_DIR/unlinked-sessions/ via the same _write_unlinked_entry()
-    used by the live path. Stash files are deleted on success or skip.
+    Reads /tmp/xy-pending-unlinked/, applies a liveness check + the same
+    guards as the live hook path (routers/hooks.py:1242-1318), and promotes
+    valid events into BACKUP_DIR/unlinked-sessions/ via the same
+    _write_unlinked_entry() used by the live path. Stash files are deleted
+    on success or skip.
+
+    Used by both the manual HTTP refresh path and the lifespan startup
+    handler in main.py — lets entries surface without a manual click after
+    a restart.
     """
     from agent_dispatcher import (
         _build_tmux_claude_map,
@@ -1570,6 +1573,12 @@ async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db
             replayed, rotated, skipped,
         )
     return {"ok": True, "replayed": replayed, "rotated": rotated, "skipped": skipped}
+
+
+@router.post("/api/unlinked-sessions/replay")
+async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db)):
+    """Manual replay endpoint — Agents page refresh button calls this."""
+    return _do_replay_pending_unlinked(db)
 
 
 @router.get("/api/agents", response_model=list[AgentBrief])

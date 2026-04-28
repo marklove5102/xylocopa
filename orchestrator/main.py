@@ -293,6 +293,14 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         load_registry(db)
+        # Auto-replay any SessionStart events the hook stashed while we were
+        # offline. Same logic the Agents page refresh button uses — surfaces
+        # unlinked entries on backend restart without requiring a manual click.
+        try:
+            from routers.agents import _do_replay_pending_unlinked
+            _do_replay_pending_unlinked(db)
+        except Exception:
+            logger.exception("startup replay_pending_unlinked failed (non-fatal)")
     finally:
         db.close()
 
