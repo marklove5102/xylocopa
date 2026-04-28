@@ -2493,6 +2493,12 @@ Here are the day's conversations (with timestamps):
         """
         if delay > 0:
             await asyncio.sleep(delay)
+        # Drain JSONL first so any in-flight turns (assistant text /
+        # tool_use / interrupt) get a display_seq before we allocate one
+        # for the promoted user message. Otherwise the escape-path dispatch
+        # can race ahead of sync_engine and the just-sent user bubble lands
+        # ABOVE earlier agent activity + the interrupt in the display.
+        await self._drain_session_sync(agent_id)
         db = SessionLocal()
         try:
             from display_writer import pre_sent_list
