@@ -1446,7 +1446,11 @@ async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db
     BACKUP_DIR/unlinked-sessions/ via the same _write_unlinked_entry()
     used by the live path. Stash files are deleted on success or skip.
     """
-    from agent_dispatcher import _write_unlinked_entry
+    from agent_dispatcher import (
+        _build_tmux_claude_map,
+        _detect_pid_session_jsonl,
+        _write_unlinked_entry,
+    )
     from routers.projects import active_projects
     from route_helpers import session_signal_path
 
@@ -1456,6 +1460,9 @@ async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db
 
     projects = active_projects(db)
     project_reals = [(p, os.path.realpath(p.path)) for p in projects]
+    # Build pane → live-claude map once. Used to drop stash entries whose
+    # pane is dead or whose session_id has rotated past the stashed value.
+    pane_map = _build_tmux_claude_map()
 
     replayed = rotated = skipped = 0
     for fname in os.listdir(stash_dir):
@@ -1480,6 +1487,26 @@ async def replay_pending_unlinked(request: Request, db: Session = Depends(get_db
                 os.unlink(fpath)
             except OSError:
                 pass
+            continue
+
+        # Liveness: pane must still be running a (non-orchestrator) claude
+        # whose currently-open JSONL matches the stashed session_id.
+        # Filters out: user killed claude before refresh; another /clear
+        # rotated the sid past what the stash captured.
+        info = pane_map.get(pane)
+        if not info or info["is_orchestrator"]:
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            skipped += 1
+            continue
+        if _detect_pid_session_jsonl(info["pid"]) != sid:
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+            skipped += 1
             continue
 
         # Guard A: session_id already owned by an agent
