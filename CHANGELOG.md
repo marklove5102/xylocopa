@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-04-28
+
+### Fixed
+
+- ESC-then-queued-dispatch race that put the just-sent user bubble *above* the assistant turns and the "Request interrupted by user" bubble in chat. `dispatch_pending_message` now drains pending JSONL turns synchronously before allocating `display_seq`, so the interrupt and any in-flight agent activity get their seq first and the promoted user message lands after them in chronological order.
+
 ## [0.7.1] - 2026-04-25
 
 ### Fixed
