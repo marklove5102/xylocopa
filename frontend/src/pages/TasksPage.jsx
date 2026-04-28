@@ -308,7 +308,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
         className="flex-1 overflow-y-auto overflow-x-hidden"
         onScroll={handleInboxScroll}
         onClick={(e) => {
-          if (expandedTaskId && !e.target.closest("[data-card]")) setExpandedTaskId(null);
+          if (expandedTaskId && !e.target.closest("[data-card]")) handleExpandTask(expandedTaskId);
         }}
       >
         <div className="max-w-2xl mx-auto w-full">
