@@ -32,6 +32,16 @@ export default defineConfig({
         // Import existing push notification handler into generated SW
         importScripts: ['/push-handler.js'],
         runtimeCaching: [
+          // Fluent UI emoji SVGs from jsdelivr — immutable assets, cache forever
+          {
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/gh\/microsoft\/fluentui-emoji.*\.svg$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'fluent-emoji-cache',
+              expiration: { maxEntries: 300, maxAgeSeconds: 365 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           // Thumbnails — cached aggressively (small files, rarely change)
           {
             urlPattern: /\.thumb\.jpg$/,
