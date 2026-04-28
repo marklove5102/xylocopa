@@ -37,13 +37,13 @@ function BookmarkRow({ item, onClick, onDelete, onRestore }) {
 
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
-              <h3 className={`text-[15px] leading-snug truncate ${isFile ? "font-mono text-body" : "font-medium text-heading"}`}>
-                {item.title || "(untitled)"}
-              </h3>
+              <p className="text-[15px] leading-snug truncate font-medium text-heading">
+                {item.body || (item.summary === null ? "Summarizing…" : "(no summary)")}
+              </p>
               <span className="text-[11px] text-faint shrink-0 mt-0.5">{meta}</span>
             </div>
-            <p className="text-sm text-dim truncate mt-0.5">
-              {item.body || (item.summary === null ? "Summarizing…" : "")}
+            <p className={`text-xs truncate mt-0.5 ${isFile ? "font-mono text-dim" : "text-dim"}`}>
+              {item.title || "(untitled)"}
             </p>
           </div>
 
