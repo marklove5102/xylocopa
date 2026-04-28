@@ -68,7 +68,7 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="bookmark-note-pill toast-enter pointer-events-auto inline-flex items-center gap-2"
+          className="bookmark-note-pill toast-enter pointer-events-auto inline-flex items-center gap-2 whitespace-nowrap"
         >
           <svg className="w-4 h-4 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24">
             <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
@@ -151,18 +151,22 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
           }
         }
         .bookmark-note-pill {
-          background: rgba(255, 248, 230, 0.96);
+          background: rgba(254, 243, 199, 0.96); /* amber-100-ish */
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
-          border: 0.5px solid rgba(245, 158, 11, 0.35);
-          border-radius: 14px;
-          padding: 10px 14px;
-          max-width: 300px;
-          box-shadow: 0 2px 16px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.04);
+          border: 1px solid rgba(245, 158, 11, 0.45);
+          border-radius: 9999px;
+          padding: 8px 14px;
+          box-shadow: 0 2px 16px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(245, 158, 11, 0.10);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .bookmark-note-pill:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 20px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(245, 158, 11, 0.15);
         }
         .dark .bookmark-note-pill {
-          background: rgba(60, 45, 20, 0.92);
-          border-color: rgba(245, 158, 11, 0.40);
+          background: rgba(75, 55, 25, 0.94);
+          border-color: rgba(245, 158, 11, 0.50);
           box-shadow: 0 2px 16px rgba(0,0,0,0.30), 0 0 0 0.5px rgba(255,255,255,0.06);
         }
         .bookmark-note-card {
