@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import InboxCard from "../../components/cards/InboxCard";
 import { reorderTasks } from "../../lib/api";
+import useDraft from "../../hooks/useDraft";
 
 /** Disable layout animation on drop to prevent snap-back */
 function noDropAnimation(args) {
@@ -35,7 +36,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
   // Optimistic order: local override until next props update (custom sort only)
   const [optimisticIds, setOptimisticIds] = useState(null);
   const prevTasksRef = useRef(tasks);
-  const [showDeferred, setShowDeferred] = useState(false);
+  const [showDeferred, setShowDeferred] = useDraft("ui:inbox:showDeferred", false);
 
   // Clear optimistic state when tasks prop changes (server data arrived)
   if (tasks !== prevTasksRef.current) {

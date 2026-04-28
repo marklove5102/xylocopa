@@ -239,7 +239,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     return { activeAgents: active, deferredAgents: deferred };
   }, [filtered]);
 
-  const [showDeferred, setShowDeferred] = useState(false);
+  const [showDeferred, setShowDeferred] = useDraft("ui:agents:showDeferred", false);
 
   const enterSelectMode = (preSelectId) => {
     setSelecting(true);
