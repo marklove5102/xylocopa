@@ -1,8 +1,8 @@
 """Tests for the pre-sent dispatch flow in agent_dispatcher.
 
-Covers dispatch_pending_message, redispatch_stuck_queued, and
-_dispatch_tmux_scheduled reading from the display_writer pre-sent
-index and promoting to DB sent rows via _promote_pre_sent_to_sent.
+Covers dispatch_pending_message and _dispatch_tmux_scheduled reading
+from the display_writer pre-sent index and promoting to DB sent rows
+via _promote_pre_sent_to_sent.
 
 These tests monkey-patch:
 - `agent_dispatcher.send_tmux_message` / `verify_tmux_pane` to avoid real tmux.
@@ -301,52 +301,6 @@ async def test_dispatch_scheduled_skips_future_entries(ad_env):
         d._dispatch_tmux_scheduled(db)
     finally:
         db.close()
-
-    assert ad_env["sent"] == []
-    assert pre_sent_get(agent_id, msg_id) is not None
-
-
-# ---------------------------------------------------------------------------
-# redispatch_stuck_queued
-# ---------------------------------------------------------------------------
-
-@pytest.mark.anyio
-async def test_redispatch_stuck_queued_retries_old_entries(ad_env):
-    """redispatch_stuck_queued re-sends queued entries older than the 10s grace."""
-    from display_writer import pre_sent_create, pre_sent_get
-
-    agent_id = ad_env["mk_agent"]()
-    msg_id = uuid.uuid4().hex[:12]
-    # Older than the 10s cutoff.
-    old = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-    pre_sent_create(
-        agent_id,
-        _mk_entry(msg_id, content="stuck", status="queued", created_at=old),
-    )
-
-    d = _make_dispatcher()
-    await d.redispatch_stuck_queued(agent_id)
-
-    assert ad_env["sent"] == [("%42", "stuck")]
-    db = ad_env["Session"]()
-    try:
-        assert db.get(Message, msg_id) is not None
-    finally:
-        db.close()
-    assert pre_sent_get(agent_id, msg_id) is None
-
-
-@pytest.mark.anyio
-async def test_redispatch_stuck_queued_skips_fresh_entries(ad_env):
-    """Entries newer than 10s are left for the normal dispatch path."""
-    from display_writer import pre_sent_create, pre_sent_get
-
-    agent_id = ad_env["mk_agent"]()
-    msg_id = uuid.uuid4().hex[:12]
-    pre_sent_create(agent_id, _mk_entry(msg_id))  # created_at=now
-
-    d = _make_dispatcher()
-    await d.redispatch_stuck_queued(agent_id)
 
     assert ad_env["sent"] == []
     assert pre_sent_get(agent_id, msg_id) is not None

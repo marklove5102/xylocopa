@@ -1186,10 +1186,9 @@ async def wake_all_agent_syncs(request: Request, db: Session = Depends(get_db)):
                 ad._emit(emit_agent_update(ag.id, "IDLE", ag.project))
         logger.info("wake-sync-all: recovered %d ERROR agents", len(recovered_ids))
 
-    # Phase 2: wake / restart sync loops + redispatch
+    # Phase 2: wake / restart sync loops + dispatch any queued messages
     woken = 0
     for agent in active:
-        asyncio.ensure_future(ad.redispatch_stuck_queued(agent.id))
         asyncio.ensure_future(ad.dispatch_pending_message(agent.id, delay=0))
         if ad.wake_sync(agent.id):
             woken += 1
@@ -2536,9 +2535,7 @@ async def wake_agent_sync(agent_id: str, request: Request, db: Session = Depends
         from websocket import emit_agent_update
         ad._emit(emit_agent_update(agent.id, "IDLE", agent.project))
         logger.info("wake-sync: recovered agent %s from ERROR → IDLE", agent_id[:8])
-    # Re-dispatch stuck QUEUED messages (sent to tmux but never confirmed in JSONL)
-    asyncio.ensure_future(ad.redispatch_stuck_queued(agent_id))
-    # Also dispatch any PENDING messages if agent is idle
+    # Dispatch any queued pre-sent messages if agent is idle
     asyncio.ensure_future(ad.dispatch_pending_message(agent_id, delay=0))
     if ad.wake_sync(agent_id):
         return {"status": "ok", "detail": "Sync woken"}
