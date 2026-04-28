@@ -325,13 +325,14 @@ body::after {
   }
 }
 
-/* Bookmark focus highlight — yellow background flash on the targeted message */
-@keyframes bookmarkFlash {
-  0%, 100% { background-color: rgba(250, 204, 21, 0); }
-  50%      { background-color: rgba(250, 204, 21, 0.30); }
+/* Bookmark focus highlight — bubble's own color breathes brighter (works for
+   any bubble role: USER cyan, AGENT neutral, SYSTEM, etc.) */
+@keyframes bookmarkBreath {
+  0%, 100% { filter: brightness(1) saturate(1); }
+  50%      { filter: brightness(1.20) saturate(1.30); }
 }
 .bookmark-flash {
-  animation: bookmarkFlash 0.9s ease-in-out 2;
+  animation: bookmarkBreath 1.0s ease-in-out 2;
   border-radius: 12px;
   scroll-margin-top: 88px;
   scroll-margin-bottom: 24px;

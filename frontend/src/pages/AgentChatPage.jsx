@@ -3193,7 +3193,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("bookmark-flash");
-      setTimeout(() => el.classList.remove("bookmark-flash"), 1900);
+      setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
       focusedMsgRef.current = true;
     });
     return () => cancelAnimationFrame(handle);
