@@ -62,6 +62,7 @@ class SafeMarkdown extends Component {
   }
 }
 import FileAttachments from "../components/FilePreview";
+import BookmarkNotePrompt from "../components/BookmarkNotePrompt";
 import ImageLightbox from "../components/ImageLightbox";
 import {
   AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, modelDisplayName,
@@ -1096,7 +1097,7 @@ function AgentTextSegment({ text, project }) {
   );
 }
 
-function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries, openMenuMsgId, setOpenMenuMsgId, bookmarkedSet }) {
+function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSendNow, agentId, onRefresh, queuePosition, queueTotal, contentOverride, toolEntries, openMenuMsgId, setOpenMenuMsgId, bookmarkedSet, onAfterBookmark }) {
   if (message.kind === "tool_activity") {
     return null;
   }
@@ -1221,7 +1222,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     try {
       await createBookmark(project, message.id);
       setJustBookmarked(true);
-      bubbleToast.success("Bookmarked");
+      onAfterBookmark?.(message.id);
     } catch (err) {
       bubbleToast.error(err?.message || "Failed to bookmark");
     }
@@ -1564,7 +1565,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         {userInsights && userInsights.length > 0 && (
           <InsightsBubble insights={userInsights} />
         )}
-        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} messageId={message.id} project={project} initialBookmarked={bookmarkActive} />}
+        {attachments.length > 0 && <FileAttachments attachments={attachments} compact={message.role === "USER"} messageId={message.id} project={project} initialBookmarked={bookmarkActive} onAfterBookmark={onAfterBookmark} />}
         {inlineLightbox && (
           <ImageLightbox
             media={inlineLightbox.media}
@@ -2413,6 +2414,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       .catch(() => { /* non-fatal */ });
     return () => { cancelled = true; };
   }, [agent?.project]);
+  // After a successful bookmark POST, prompt for an optional user note.
+  const [noteForBookmarkId, setNoteForBookmarkId] = useState(null);
+  const handleAfterBookmark = useCallback((messageId) => {
+    setBookmarkedSet((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev); next.add(messageId); return next;
+    });
+    setNoteForBookmarkId(messageId);
+  }, []);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(false);
@@ -4213,7 +4223,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
@@ -4224,17 +4234,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <div key={msg.id} data-msg-id={msg.id} data-msg-type="legacy_split">
                         {segments.map((seg, i) => {
                           if (seg.type === "tools") return <ToolLogBubble key={`${msg.id}-t${i}`} entries={seg.entries} />;
-                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} />;
+                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />;
                           return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent.project} />;
                         })}
                         {lastTextIdx === -1 && msg.metadata?.interactive?.length > 0 && (
-                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} />
+                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />
                         )}
                       </div>
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
               });
             })()}
 
@@ -4249,10 +4259,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               return (
                 <>
                   {queued.map((msg, idx) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
                   ))}
                   {scheduled.map((msg) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
                   ))}
                 </>
               );
@@ -4524,6 +4534,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           }}
         />
       )}
+      <BookmarkNotePrompt
+        project={agent?.project}
+        messageId={noteForBookmarkId}
+        onClose={() => setNoteForBookmarkId(null)}
+      />
     </div>
   );
 }
