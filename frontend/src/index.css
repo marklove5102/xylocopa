@@ -325,13 +325,13 @@ body::after {
   }
 }
 
-/* Bookmark focus highlight — soft gray breathing pulse on the targeted message */
-@keyframes bookmarkBreath {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(156, 163, 175, 0); }
-  50%      { box-shadow: 0 0 0 6px rgba(156, 163, 175, 0.35); }
+/* Bookmark focus highlight — yellow background flash on the targeted message */
+@keyframes bookmarkFlash {
+  0%, 100% { background-color: rgba(250, 204, 21, 0); }
+  50%      { background-color: rgba(250, 204, 21, 0.30); }
 }
 .bookmark-flash {
-  animation: bookmarkBreath 1.6s ease-in-out 3;
+  animation: bookmarkFlash 0.9s ease-in-out 2;
   border-radius: 12px;
   scroll-margin-top: 88px;
   scroll-margin-bottom: 24px;
