@@ -1027,7 +1027,14 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
         ]
         content_mismatches = []
         for t in turns:
-            content, uuid = t[1], t[3] if len(t) > 3 else None
+            role, content = t[0], t[1]
+            uuid = t[3] if len(t) > 3 else None
+            # Skip USER turns: DB stores the user-typed input (what the chat
+            # UI shows), JSONL records the dispatcher-wrapped prompt (with
+            # project context + "Leave a summary…" tail). The two are
+            # intentionally different and not a drift signal.
+            if role == "user":
+                continue
             if uuid and uuid in db_by_uuid:
                 db_msg = db_by_uuid[uuid]
                 if abs(len(db_msg.content or "") - len(content)) > 50:
