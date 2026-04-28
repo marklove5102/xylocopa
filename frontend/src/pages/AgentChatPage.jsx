@@ -1574,7 +1574,7 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
         )}
         {/* Action popover — gated by message status (two-stage delete model) */}
         {showActions && (
-          <div className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
+          <div data-action-menu className="absolute top-0 right-0 -translate-y-full mb-1 z-50">
             <div className="bg-surface border border-divider rounded-xl shadow-lg overflow-hidden flex">
               {canSendNow && (
                 <button
@@ -2394,6 +2394,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const toastCtx = useToast();
   // Only one chat-bubble action menu open at a time across the whole list.
   const [openMenuMsgId, setOpenMenuMsgId] = useState(null);
+  // Auto-close: any pointerdown / touchstart outside the menu closes it.
+  useEffect(() => {
+    if (!openMenuMsgId) return;
+    const closeIfOutside = (e) => {
+      if (e.target?.closest?.("[data-action-menu]")) return;
+      setOpenMenuMsgId(null);
+    };
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    return () => document.removeEventListener("pointerdown", closeIfOutside, true);
+  }, [openMenuMsgId]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(false);
