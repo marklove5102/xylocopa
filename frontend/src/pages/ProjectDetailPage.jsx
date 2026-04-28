@@ -12,6 +12,7 @@ import {
   starSession,
   unstarSession,
   fetchProjectBookmarks,
+  createBookmark,
   updateBookmark,
   deleteBookmark,
   scanAgents,
@@ -1460,6 +1461,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             await deleteBookmark(name, messageId);
           } catch (err) {
             showToast("Failed to remove bookmark: " + (err?.message || "unknown"), "error");
+          }
+        }}
+        onRestore={async (messageId) => {
+          // Re-bookmark a row the user just removed in this session.
+          try {
+            await createBookmark(name, messageId);
+          } catch (err) {
+            showToast("Failed to re-bookmark: " + (err?.message || "unknown"), "error");
           }
         }}
       />

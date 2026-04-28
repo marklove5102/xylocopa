@@ -21,7 +21,7 @@ function pickAgentLabel(item) {
   return item.agent_id ? `xy-${item.agent_id.slice(0, 8)}` : "";
 }
 
-function BookmarkRow({ item, onClick, onUpdateNote, onDelete }) {
+function BookmarkRow({ item, onClick, onUpdateNote, onDelete, onRestore }) {
   const isFile = item.kind === "file";
   const isImage = item.kind === "image";
   const [noteOpen, setNoteOpen] = useState(false);
@@ -109,21 +109,30 @@ function BookmarkRow({ item, onClick, onUpdateNote, onDelete }) {
               tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
-                if (locallyRemoved) return;
-                setLocallyRemoved(true);
-                onDelete(item.message_id);
-              }}
-              onKeyDown={(e) => {
-                if ((e.key === "Enter" || e.key === " ") && !locallyRemoved) {
-                  e.stopPropagation();
+                if (locallyRemoved) {
+                  setLocallyRemoved(false);
+                  onRestore?.(item.message_id);
+                } else {
                   setLocallyRemoved(true);
                   onDelete(item.message_id);
                 }
               }}
-              title={locallyRemoved ? "Removed — disappears on next refresh" : "Remove bookmark"}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  if (locallyRemoved) {
+                    setLocallyRemoved(false);
+                    onRestore?.(item.message_id);
+                  } else {
+                    setLocallyRemoved(true);
+                    onDelete(item.message_id);
+                  }
+                }
+              }}
+              title={locallyRemoved ? "Re-bookmark" : "Remove bookmark"}
               className={`shrink-0 self-center p-1 rounded-md transition-colors cursor-pointer ${
                 locallyRemoved
-                  ? "text-faint"
+                  ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
                   : "text-amber-500 hover:bg-amber-500/15"
               }`}
             >
@@ -186,7 +195,7 @@ function BookmarkRow({ item, onClick, onUpdateNote, onDelete }) {
   );
 }
 
-export default function BookmarksSection({ projectName, items, onUpdateNote, onDelete }) {
+export default function BookmarksSection({ projectName, items, onUpdateNote, onDelete, onRestore }) {
   const navigate = useNavigate();
   const bookmarks = items || [];
 
@@ -229,6 +238,7 @@ export default function BookmarksSection({ projectName, items, onUpdateNote, onD
             onClick={() => handleOpen(item)}
             onUpdateNote={onUpdateNote}
             onDelete={onDelete}
+            onRestore={onRestore}
           />
         ))}
       </div>
