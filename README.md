@@ -290,10 +290,6 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 - **Don't name tmux sessions with the `xy-` or `ah-` prefix** — those are Xylocopa's managed prefixes (`xy-{id}`; legacy `ah-{id}` still recognized). User-created sessions with those prefixes won't be detected.
 - **PWA stuck on a perpetual loading screen?** Stale Service Worker precache. Run `.venv/bin/python tools/push_reset.py` on the host for an interactive picker (lists devices with labels and last-ack times; `a` resets all, `q` quits). Then fully close the PWA on the device and reopen it. Direct forms `list`/`<sub_id>`/`all` are supported for scripting.
 
-## Known Issues
-
-- **CLI sessions started while backend is offline are silently missed**: adoption of externally-created `claude` CLI sessions relies on the `SessionStart` hook reaching the backend over HTTP. If the backend happens to be down at that moment (e.g. a crash, oomd kill, or manual restart window), the hook's offline fallback only persists managed-agent signal files, unmanaged session markers are dropped, and there is no startup rescan. The session will run normally but never appear in the "unlinked sessions" adoption UI. Workaround: after the backend is back, exit and re-launch `claude` in the same tmux pane so the hook fires again. Tracked in `TODO.md`.
-
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
