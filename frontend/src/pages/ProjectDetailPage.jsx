@@ -1454,9 +1454,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           }
         }}
         onDelete={async (messageId) => {
+          // Soft delete: backend only. The row stays visible in this session;
+          // the next loadData() poll will drop it from the list naturally.
           try {
             await deleteBookmark(name, messageId);
-            setBookmarks((prev) => prev.filter((b) => b.message_id !== messageId));
           } catch (err) {
             showToast("Failed to remove bookmark: " + (err?.message || "unknown"), "error");
           }

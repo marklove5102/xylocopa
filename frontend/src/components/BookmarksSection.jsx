@@ -27,6 +27,7 @@ function BookmarkRow({ item, onClick, onUpdateNote, onDelete }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftNote, setDraftNote] = useState(item.user_note || "");
+  const [locallyRemoved, setLocallyRemoved] = useState(false);
   const taRef = useRef(null);
 
   useEffect(() => {
@@ -100,6 +101,35 @@ function BookmarkRow({ item, onClick, onUpdateNote, onDelete }) {
               }`}
             >
               note
+            </span>
+          )}
+          {typeof onDelete === "function" && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (locallyRemoved) return;
+                setLocallyRemoved(true);
+                onDelete(item.message_id);
+              }}
+              onKeyDown={(e) => {
+                if ((e.key === "Enter" || e.key === " ") && !locallyRemoved) {
+                  e.stopPropagation();
+                  setLocallyRemoved(true);
+                  onDelete(item.message_id);
+                }
+              }}
+              title={locallyRemoved ? "Removed — disappears on next refresh" : "Remove bookmark"}
+              className={`shrink-0 self-center p-1 rounded-md transition-colors cursor-pointer ${
+                locallyRemoved
+                  ? "text-faint"
+                  : "text-amber-500 hover:bg-amber-500/15"
+              }`}
+            >
+              <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
             </span>
           )}
         </div>
