@@ -70,16 +70,15 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
           onClick={() => setExpanded(true)}
           className="bookmark-note-pill toast-enter pointer-events-auto inline-flex items-center gap-2 whitespace-nowrap"
         >
-          <svg className="w-4 h-4 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <svg className="w-[18px] h-[18px] text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24">
             <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
           </svg>
-          <span className="text-amber-700 dark:text-amber-300 font-semibold text-[13px]">Bookmarked</span>
-          <span className="text-amber-600/80 dark:text-amber-400/85 text-[13px]">· Add note</span>
+          <span className="bookmark-note-text">Bookmarked · Add note</span>
           <span
             role="button"
             tabIndex={-1}
             onClick={(e) => { e.stopPropagation(); skip(); }}
-            className="text-amber-600/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-300 ml-1 text-base leading-none"
+            className="bookmark-note-dismiss"
             title="Dismiss"
           >
             ×
@@ -88,13 +87,13 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
       ) : (
         <div className="bookmark-note-card toast-enter pointer-events-auto">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <p className="text-[13px] font-semibold text-label flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+            <p className="bookmark-note-text font-semibold flex items-center gap-1.5">
+              <svg className="w-[18px] h-[18px] text-amber-500" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
               </svg>
               Add a note
             </p>
-            <button type="button" onClick={skip} className="text-xs text-faint hover:text-dim">
+            <button type="button" onClick={skip} className="bookmark-note-skip">
               Skip
             </button>
           </div>
@@ -108,14 +107,14 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
             }}
             placeholder="Why this one? (⌘+Enter saves, Esc skips)"
             rows={2}
-            className="w-full rounded-xl bg-amber-500/[0.06] border border-amber-500/25 px-3 py-2 text-sm text-body placeholder-faint resize-y focus:outline-none focus:border-amber-500/50"
+            className="bookmark-note-textarea"
           />
           <div className="flex items-center justify-end gap-2 mt-2">
             <button
               type="button"
               onClick={skip}
               disabled={saving}
-              className="text-xs px-3 py-1 rounded-full text-dim hover:bg-input transition-colors"
+              className="bookmark-note-btn-skip"
             >
               Skip
             </button>
@@ -123,7 +122,7 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
               type="button"
               onClick={save}
               disabled={saving || !draft.trim()}
-              className="text-xs px-3 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bookmark-note-btn-save"
             >
               {saving ? "Saving…" : "Save"}
             </button>
@@ -150,38 +149,102 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
             align-items: flex-end;
           }
         }
-        .bookmark-note-pill {
-          background: rgba(254, 243, 199, 0.96); /* amber-100-ish */
+        /* Match ToastContext.jsx pill chrome — white, blur, 14px, soft shadow */
+        .bookmark-note-pill,
+        .bookmark-note-card {
+          background: rgba(255, 255, 255, 0.95);
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
-          border: 1px solid rgba(245, 158, 11, 0.45);
-          border-radius: 9999px;
-          padding: 8px 14px;
-          box-shadow: 0 2px 16px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(245, 158, 11, 0.10);
+          border-radius: 14px;
+          box-shadow: 0 2px 16px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.06);
+        }
+        .bookmark-note-pill {
+          padding: 10px 14px;
           transition: transform 0.15s ease, box-shadow 0.15s ease;
         }
         .bookmark-note-pill:hover {
           transform: translateY(-1px);
-          box-shadow: 0 4px 20px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(245, 158, 11, 0.15);
-        }
-        .dark .bookmark-note-pill {
-          background: rgba(75, 55, 25, 0.94);
-          border-color: rgba(245, 158, 11, 0.50);
-          box-shadow: 0 2px 16px rgba(0,0,0,0.30), 0 0 0 0.5px rgba(255,255,255,0.06);
         }
         .bookmark-note-card {
-          background: rgba(255,255,255,0.95);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border-radius: 14px;
           padding: 12px;
           width: min(360px, calc(100vw - 32px));
-          box-shadow: 0 2px 16px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.06);
         }
+        .dark .bookmark-note-pill,
         .dark .bookmark-note-card {
-          background: rgba(44,44,46,0.94);
+          background: rgba(44, 44, 46, 0.92);
           box-shadow: 0 2px 16px rgba(0,0,0,0.30), 0 0 0 0.5px rgba(255,255,255,0.08);
         }
+        .bookmark-note-text {
+          color: #1c1c1e;
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.3;
+        }
+        .dark .bookmark-note-text { color: #f5f5f7; }
+        .bookmark-note-dismiss {
+          margin-left: 4px;
+          color: rgba(28, 28, 30, 0.4);
+          font-size: 16px;
+          line-height: 1;
+          padding: 0 4px;
+          cursor: pointer;
+          transition: color 0.15s;
+        }
+        .bookmark-note-dismiss:hover { color: rgba(28, 28, 30, 0.85); }
+        .dark .bookmark-note-dismiss { color: rgba(245, 245, 247, 0.45); }
+        .dark .bookmark-note-dismiss:hover { color: rgba(245, 245, 247, 0.95); }
+        .bookmark-note-skip {
+          font-size: 12px;
+          color: rgba(28, 28, 30, 0.5);
+          transition: color 0.15s;
+        }
+        .bookmark-note-skip:hover { color: rgba(28, 28, 30, 0.85); }
+        .dark .bookmark-note-skip { color: rgba(245, 245, 247, 0.5); }
+        .dark .bookmark-note-skip:hover { color: rgba(245, 245, 247, 0.9); }
+        .bookmark-note-textarea {
+          width: 100%;
+          border-radius: 10px;
+          background: rgba(0, 0, 0, 0.03);
+          border: 0.5px solid rgba(0, 0, 0, 0.08);
+          padding: 8px 10px;
+          font-size: 13px;
+          color: #1c1c1e;
+          resize: vertical;
+          outline: none;
+          transition: border-color 0.15s;
+        }
+        .bookmark-note-textarea:focus { border-color: rgba(0, 0, 0, 0.20); }
+        .bookmark-note-textarea::placeholder { color: rgba(28, 28, 30, 0.35); }
+        .dark .bookmark-note-textarea {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.10);
+          color: #f5f5f7;
+        }
+        .dark .bookmark-note-textarea:focus { border-color: rgba(255, 255, 255, 0.25); }
+        .dark .bookmark-note-textarea::placeholder { color: rgba(245, 245, 247, 0.35); }
+        .bookmark-note-btn-skip {
+          font-size: 12px;
+          padding: 4px 12px;
+          border-radius: 9999px;
+          color: rgba(28, 28, 30, 0.55);
+          transition: background-color 0.15s;
+        }
+        .bookmark-note-btn-skip:hover { background-color: rgba(0, 0, 0, 0.05); }
+        .dark .bookmark-note-btn-skip { color: rgba(245, 245, 247, 0.55); }
+        .dark .bookmark-note-btn-skip:hover { background-color: rgba(255, 255, 255, 0.06); }
+        .bookmark-note-btn-save {
+          font-size: 12px;
+          padding: 4px 12px;
+          border-radius: 9999px;
+          background-color: rgba(28, 28, 30, 0.85);
+          color: #fff;
+          font-weight: 500;
+          transition: background-color 0.15s, opacity 0.15s;
+        }
+        .bookmark-note-btn-save:hover:not(:disabled) { background-color: #1c1c1e; }
+        .bookmark-note-btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+        .dark .bookmark-note-btn-save { background-color: rgba(245, 245, 247, 0.92); color: #1c1c1e; }
+        .dark .bookmark-note-btn-save:hover:not(:disabled) { background-color: #f5f5f7; }
       `}</style>
     </div>
   );
