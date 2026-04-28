@@ -44,11 +44,8 @@ function ActionButtons({ src, filename, originalPath, messageId, project, attach
       try {
         await deleteBookmark(project, messageId);
         setOptimisticOverride(false);
-        if (typeof onAfterBookmark === "function") {
-          onAfterBookmark(messageId, "removed");
-        } else {
-          toast.success("Bookmark removed");
-        }
+        onAfterBookmark?.(messageId, "removed");
+        toast.success("Bookmark removed");
       } catch (err) {
         toast.error(err?.message || "Failed to remove bookmark");
       }
