@@ -11,6 +11,9 @@ import {
   renameProject as renameProjectApi,
   starSession,
   unstarSession,
+  fetchProjectBookmarks,
+  updateBookmark,
+  deleteBookmark,
   scanAgents,
   fetchProjectFile,
   refreshClaudeMd,
@@ -39,6 +42,7 @@ import FilterTabs from "../components/FilterTabs";
 import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import ClaudeMdDiffModal from "../components/ClaudeMdDiffModal";
+import BookmarksSection from "../components/BookmarksSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
@@ -424,6 +428,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   const [project, setProject] = useState(null);
   const [agents, setAgents] = useState([]);
+  const [bookmarks, setBookmarks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
@@ -576,10 +581,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Fetch project + agents
   const loadData = useCallback(async () => {
     try {
-      const [folders, agentList, stats] = await Promise.all([
+      const [folders, agentList, stats, bookmarkList] = await Promise.all([
         fetchAllFolders(),
         fetchProjectAgents(name),
         fetchTaskCounts(name).catch(() => null),
+        fetchProjectBookmarks(name).catch(() => []),
       ]);
       const folder = folders.find((f) => f.name === name);
       if (!folder) {
@@ -589,6 +595,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       setProject(folder);
       setAgents(agentList);
       if (stats) setProjectStats(stats);
+      setBookmarks(bookmarkList || []);
       setLoadError(null);
     } catch (err) {
       console.error("Failed to load project data:", err);
@@ -1434,6 +1441,27 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           </div>
         )}
       </div>
+
+      <BookmarksSection
+        projectName={name}
+        items={bookmarks}
+        onUpdateNote={async (messageId, userNote) => {
+          try {
+            const updated = await updateBookmark(name, messageId, userNote);
+            setBookmarks((prev) => prev.map((b) => (b.message_id === messageId ? updated : b)));
+          } catch (err) {
+            showToast("Failed to save note: " + (err?.message || "unknown"), "error");
+          }
+        }}
+        onDelete={async (messageId) => {
+          try {
+            await deleteBookmark(name, messageId);
+            setBookmarks((prev) => prev.filter((b) => b.message_id !== messageId));
+          } catch (err) {
+            showToast("Failed to remove bookmark: " + (err?.message || "unknown"), "error");
+          }
+        }}
+      />
 
       {/* Project settings */}
       <div className="rounded-xl bg-surface shadow-card p-4 space-y-3">

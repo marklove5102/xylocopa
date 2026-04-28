@@ -198,6 +198,22 @@ export const starSession = (project, sessionId) =>
   request(`/api/projects/${e(project)}/sessions/${e(sessionId)}/star`, { method: "PUT" });
 export const unstarSession = (project, sessionId) =>
   request(`/api/projects/${e(project)}/sessions/${e(sessionId)}/star`, { method: "DELETE" });
+export const fetchProjectBookmarks = (project) =>
+  request(`/api/projects/${e(project)}/bookmarks`);
+export const createBookmark = (project, messageId, userNote = null) =>
+  request(`/api/projects/${e(project)}/messages/${e(messageId)}/bookmark`, {
+    method: "POST",
+    body: JSON.stringify({ user_note: userNote }),
+  });
+export const updateBookmark = (project, messageId, userNote) =>
+  request(`/api/projects/${e(project)}/bookmarks/${e(messageId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ user_note: userNote }),
+  });
+export const deleteBookmark = (project, messageId) =>
+  request(`/api/projects/${e(project)}/messages/${e(messageId)}/bookmark`, {
+    method: "DELETE",
+  });
 export const fetchProjectFile = (project, path) =>
   request(`/api/projects/${e(project)}/file?path=${e(path)}`);
 export const updateProjectFile = (project, path, content) =>

@@ -30,6 +30,7 @@ import {
   regenerateAgentInsights,
   fetchTaskV2,
   wakeSync,
+  createBookmark,
 } from "../lib/api";
 import ProjectFileModal from "../components/ProjectFileModal";
 import FloatingTaskCard from "../components/FloatingTaskCard";
@@ -1136,6 +1137,8 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const [editSchedule, setEditSchedule] = useState("");
   const [copied, setCopied] = useState(false);
   const [inlineLightbox, setInlineLightbox] = useState(null); // { media, initialIndex }
+  const [justBookmarked, setJustBookmarked] = useState(false);
+  const bubbleToast = useToast();
   const longPressTimer = useRef(null);
   const lastTapRef = useRef(0);
   const touchStartYRef = useRef(0);
@@ -1179,6 +1182,10 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
   const canEdit = isPreQueued || isScheduled; // controls Modify button
   const canDelete = isPreQueued || isScheduled || isCancelled;
   const canSendNow = isScheduled;
+  // Bookmark eligibility: any settled (delivered/executed) USER message or any
+  // AGENT message. Skip pre-delivery (queued/scheduled/cancelled) and SYSTEM/
+  // task-notification bubbles which already exited above.
+  const canBookmark = !isPreDelivery && !!message.id && (message.role === "USER" || message.role === "AGENT");
   // `canModify` gates the action popover opening at all — anything with
   // any action button (including Copy-only) should still show the menu,
   // but keeping the name for minimal diff: open the popover for any
@@ -1187,10 +1194,23 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
 
   const handleLongPressStart = (e) => {
     touchStartYRef.current = e.touches?.[0]?.clientY ?? 0;
-    if (!canEdit && !isCancelled) return;
+    if (!canEdit && !isCancelled && !canBookmark) return;
     longPressTimer.current = setTimeout(() => {
       setShowActions(true);
     }, LONG_PRESS_DELAY);
+  };
+
+  const handleBookmark = async (e) => {
+    e?.stopPropagation?.();
+    setShowActions(false);
+    if (!project || !message?.id) return;
+    try {
+      await createBookmark(project, message.id);
+      setJustBookmarked(true);
+      bubbleToast.success("Bookmarked");
+    } catch (err) {
+      bubbleToast.error(err?.message || "Failed to bookmark");
+    }
   };
   const handleLongPressEnd = (e) => {
     if (longPressTimer.current) {
@@ -1578,6 +1598,18 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </button>
+              {canBookmark && (
+                <button
+                  type="button"
+                  onClick={handleBookmark}
+                  title={justBookmarked ? "Bookmarked" : "Bookmark"}
+                  className="px-3 py-2 text-amber-500 hover:bg-amber-600/10 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill={justBookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  </svg>
+                </button>
+              )}
               {canEdit && (
                 <button
                   type="button"
@@ -3145,6 +3177,25 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       try { localStorage.setItem(scrollCountKey, String(messages.length)); } catch { /* ignore */ }
     }
   }, [loading, messages.length, scrollCountKey]);
+
+  // Focus + breathing-flash for bookmarked messages — `?focus=<message_id>` URL param
+  const focusedMsgRef = useRef(false);
+  useEffect(() => {
+    if (focusedMsgRef.current) return;
+    if (loading || !messages?.length) return;
+    const params = new URLSearchParams(location.search);
+    const focusId = params.get("focus");
+    if (!focusId) return;
+    const handle = requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("bookmark-flash");
+      setTimeout(() => el.classList.remove("bookmark-flash"), 5200);
+      focusedMsgRef.current = true;
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [loading, messages?.length, location.search]);
 
   // Auto-load older messages when content doesn't overflow the viewport
   // but has_earlier is true (scroll-based trigger can't fire without overflow)
