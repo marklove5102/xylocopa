@@ -93,9 +93,7 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
               </svg>
               Add a note
             </p>
-            <button type="button" onClick={skip} className="bookmark-note-skip">
-              Skip
-            </button>
+            <span className="bookmark-note-hint">AI summary fills in if you skip</span>
           </div>
           <textarea
             ref={taRef}
@@ -193,14 +191,12 @@ export default function BookmarkNotePrompt({ project, messageId, onClose, onSave
         .bookmark-note-dismiss:hover { color: rgba(28, 28, 30, 0.85); }
         .dark .bookmark-note-dismiss { color: rgba(245, 245, 247, 0.45); }
         .dark .bookmark-note-dismiss:hover { color: rgba(245, 245, 247, 0.95); }
-        .bookmark-note-skip {
-          font-size: 12px;
-          color: rgba(28, 28, 30, 0.5);
-          transition: color 0.15s;
+        .bookmark-note-hint {
+          font-size: 11px;
+          color: rgba(28, 28, 30, 0.45);
+          font-weight: 400;
         }
-        .bookmark-note-skip:hover { color: rgba(28, 28, 30, 0.85); }
-        .dark .bookmark-note-skip { color: rgba(245, 245, 247, 0.5); }
-        .dark .bookmark-note-skip:hover { color: rgba(245, 245, 247, 0.9); }
+        .dark .bookmark-note-hint { color: rgba(245, 245, 247, 0.45); }
         .bookmark-note-textarea {
           width: 100%;
           border-radius: 10px;
