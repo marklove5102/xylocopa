@@ -26,7 +26,9 @@ export default function TasksPage({ theme, onToggleTheme }) {
   // --- Multi-select state ---
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(new Set());
-  const [expandedTaskId, setExpandedTaskId] = useState(null);
+  const [expandedTaskId, setExpandedTaskId] = useState(() => {
+    try { return localStorage.getItem("inbox:expandedTaskId") || null; } catch { return null; }
+  });
   const [actionLoading, setActionLoading] = useState(false);
 
   // Scroll position persistence
@@ -67,7 +69,14 @@ export default function TasksPage({ theme, onToggleTheme }) {
   const allSelected = tasks.length > 0 && selected.size === tasks.length;
 
   const handleExpandTask = useCallback((taskId) => {
-    setExpandedTaskId((prev) => (prev === taskId ? null : taskId));
+    setExpandedTaskId((prev) => {
+      const next = prev === taskId ? null : taskId;
+      try {
+        if (next) localStorage.setItem("inbox:expandedTaskId", next);
+        else localStorage.removeItem("inbox:expandedTaskId");
+      } catch { /* ignore */ }
+      return next;
+    });
   }, []);
 
   // Fetch counts for all perspectives (server-side)
@@ -242,6 +251,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
   useEffect(() => {
     if (!loading && expandedTaskId && tasks.length > 0 && !tasks.some(t => t.id === expandedTaskId)) {
       setExpandedTaskId(null);
+      try { localStorage.removeItem("inbox:expandedTaskId"); } catch { /* ignore */ }
     }
   }, [loading, tasks, expandedTaskId]);
 
