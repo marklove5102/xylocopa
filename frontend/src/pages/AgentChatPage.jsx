@@ -1217,11 +1217,12 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
-    // Double-tap detection for touch (copy content)
-    // Skip if the finger moved significantly (scroll gesture, not a tap)
+    // Double-tap detection for touch — opens the action menu (Copy / Bookmark
+    // / Modify / Delete are all reachable from one tap inside the menu).
+    // Skip if the finger moved significantly (scroll gesture, not a tap).
     const endY = e.changedTouches?.[0]?.clientY ?? 0;
     const movedTooFar = Math.abs(endY - touchStartYRef.current) > 10;
-    if (!canModify && !movedTooFar) {
+    if (!movedTooFar) {
       const now = Date.now();
       if (now - lastTapRef.current < DOUBLE_TAP_WINDOW) {
         handleDoubleClick();
@@ -1230,18 +1231,11 @@ function ChatBubble({ message, project, onCancelMessage, onUpdateMessage, onSend
     }
   };
   const handleDoubleClick = () => {
-    // Pre-sent (queued/scheduled/cancelled): open the action menu so
-    // the user can Modify / Delete / Send Now / Copy. Post-send bubbles
-    // (sent/delivered/executed) get direct-copy — their only available
-    // action today is Copy, and an immediate copy is the snappier UX.
-    if (canEdit || isCancelled) {
+    // Double-tap / double-click always opens the action menu when any action
+    // is available. Direct-copy was removed — Copy lives inside the menu.
+    if (canEdit || isCancelled || canBookmark) {
       setShowActions(true);
-      return;
     }
-    navigator.clipboard.writeText(message.content || "").then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
-    }).catch(() => {});
   };
 
   const handleCopy = () => {
