@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import {
   fetchHealth as apiFetchHealth,
   fetchAgents as apiFetchAgents,
@@ -90,19 +90,16 @@ export function MonitorProvider({ children }) {
     ]);
   }, [fetchHealth, fetchAgents, fetchSysStats, fetchStorage, fetchTasks]);
 
-  // Warm-up: prefetch monitor data once after app mount so the first trip
-  // to MonitorPage shows everything instantly instead of empty placeholders.
-  // Deferred 2s so it doesn't compete with initial render / critical fetches.
-  const warmedUpRef = useRef(false);
+  // Background warm-up: prefetch monitor data shortly after app mount and
+  // keep it fresh every minute so the first/subsequent trips to MonitorPage
+  // show everything instantly. Active fast-polling (5s) takes over once
+  // MonitorPage mounts; this loop only runs while monitor is inactive.
   useEffect(() => {
-    if (warmedUpRef.current || !visible) return;
-    const id = setTimeout(() => {
-      warmedUpRef.current = true;
-      refreshAll();
-      fetchUsage();
-    }, 2000);
-    return () => clearTimeout(id);
-  }, [visible, refreshAll, fetchUsage]);
+    if (!visible || monitorActive) return;
+    const initial = setTimeout(() => { refreshAll(); fetchUsage(); }, 2000);
+    const id = setInterval(() => { refreshAll(); fetchUsage(); }, 60 * 1000);
+    return () => { clearTimeout(initial); clearInterval(id); };
+  }, [visible, monitorActive, refreshAll, fetchUsage]);
 
   // Initial fetch + background poll only when MonitorPage is active
   useEffect(() => {
