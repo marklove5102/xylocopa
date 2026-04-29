@@ -154,26 +154,33 @@ async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str
     from display_writer import write_retry_marker_for_agent
     write_retry_marker_for_agent(db, agent)
 
-    # Prepare prompt with insights via _prepare_dispatch
-    launch_prompt = None
+    # Schedule launch task EARLY with a prompt future, so its TUI polling
+    # (~1s of process-detect + REPL-ready + settle) overlaps with
+    # _prepare_dispatch (~1s of OpenAI translate + FTS5).  Without this
+    # parallelism the two phases run serially and double the launch latency.
     if prompt and ad:
-        msg, launch_prompt, _ = await ad._prepare_dispatch(
-            db, agent, proj, prompt,
-            source="task",
-            wrap_prompt=True,
-        )
-        msg.status = MessageStatus.COMPLETED
-        msg.completed_at = _utcnow()
-
-    # Schedule background task to send prompt to tmux
-    if ad and launch_prompt:
+        prompt_future: asyncio.Future = asyncio.get_running_loop().create_future()
         launch_task = asyncio.ensure_future(
             _launch_tmux_background(
-                ad, agent_hex, pane_id, launch_prompt, proj.path,
+                ad, agent_hex, pane_id, prompt_future, proj.path,
                 pre_session_id=pre_session_id,
             )
         )
         ad.track_launch_task(agent_hex, launch_task)
+
+        try:
+            msg, launch_prompt, _ = await ad._prepare_dispatch(
+                db, agent, proj, prompt,
+                source="task",
+                wrap_prompt=True,
+            )
+            msg.status = MessageStatus.COMPLETED
+            msg.completed_at = _utcnow()
+            prompt_future.set_result(launch_prompt)
+        except BaseException as e:
+            if not prompt_future.done():
+                prompt_future.set_exception(e)
+            raise
 
     return agent_hex
 

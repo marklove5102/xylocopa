@@ -650,15 +650,34 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         )
         agent.tmux_pane = pane_id
 
-        # Create the initial user message
+        # Create the initial user message.  Schedule the launch task FIRST
+        # with a prompt future so its TUI polling (~1s) overlaps with
+        # _prepare_dispatch (OpenAI translate + FTS5, ~1s).
         ad = getattr(request.app.state, "agent_dispatcher", None)
         launch_prompt = None
-        if ad:
-            msg, launch_prompt, _ = await ad._prepare_dispatch(
-                db, agent, project, body.prompt,
-                source="web",
-                wrap_prompt=True,
+        prompt_future: asyncio.Future | None = None
+        launch_task = None
+        if ad and body.prompt:
+            prompt_future = asyncio.get_running_loop().create_future()
+            launch_task = asyncio.ensure_future(
+                _launch_tmux_background(
+                    ad, agent.id, pane_id, prompt_future, project.path,
+                    pre_session_id=pre_session_id,
+                )
             )
+            ad.track_launch_task(agent.id, launch_task)
+
+        if ad:
+            try:
+                msg, launch_prompt, _ = await ad._prepare_dispatch(
+                    db, agent, project, body.prompt,
+                    source="web",
+                    wrap_prompt=True,
+                )
+            except BaseException as e:
+                if prompt_future is not None and not prompt_future.done():
+                    prompt_future.set_exception(e)
+                raise
         else:
             msg = Message(
                 agent_id=agent.id,
@@ -673,16 +692,9 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         db.commit()
         db.refresh(agent)
 
-        # Schedule background task: wait for Claude TUI to load, send prompt,
-        # detect session JSONL, and start sync.
-        if ad and launch_prompt:
-            launch_task = asyncio.ensure_future(
-                _launch_tmux_background(
-                    ad, agent.id, pane_id, launch_prompt, project.path,
-                    pre_session_id=pre_session_id,
-                )
-            )
-            ad.track_launch_task(agent.id, launch_task)
+        # Hand the prepared prompt off to the already-running launch task.
+        if prompt_future is not None and not prompt_future.done():
+            prompt_future.set_result(launch_prompt)
 
     logger.info("Agent %s created for project %s (mode %s, sync=%s, tmux=%s)",
                 agent.id, agent.project, agent.mode.value, is_sync, bool(agent.tmux_pane))
@@ -842,16 +854,35 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
                 _task.branch_name = _task.branch_name or f"worktree-{worktree}"
             _task_linked = True
 
-    # Save the initial prompt and prepare wrapped version for Claude
+    # Save the initial prompt and prepare wrapped version for Claude.
+    # Schedule the launch task FIRST with a prompt future so its TUI
+    # polling (~1s) overlaps with _prepare_dispatch (~1s).
     launch_prompt = None
     ad = getattr(request.app.state, "agent_dispatcher", None)
+    prompt_future: asyncio.Future | None = None
+    launch_task = None
+    if prompt and ad:
+        prompt_future = asyncio.get_running_loop().create_future()
+        launch_task = asyncio.ensure_future(
+            _launch_tmux_background(
+                ad, agent.id, pane_id, prompt_future, proj.path,
+                pre_session_id=pre_session_id,
+            )
+        )
+        ad.track_launch_task(agent.id, launch_task)
+
     if prompt:
         if ad:
-            msg, launch_prompt, _ = await ad._prepare_dispatch(
-                db, agent, proj, prompt,
-                source="web",
-                wrap_prompt=True,
-            )
+            try:
+                msg, launch_prompt, _ = await ad._prepare_dispatch(
+                    db, agent, proj, prompt,
+                    source="web",
+                    wrap_prompt=True,
+                )
+            except BaseException as e:
+                if prompt_future is not None and not prompt_future.done():
+                    prompt_future.set_exception(e)
+                raise
         else:
             msg = Message(
                 agent_id=agent.id,
@@ -873,16 +904,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
             title=_task.title,
         ))
 
-    # Schedule background task: wait for Claude TUI to load, send prompt,
-    # detect session JSONL, and start sync.
-    if ad and launch_prompt:
-        launch_task = asyncio.ensure_future(
-            _launch_tmux_background(
-                ad, agent.id, pane_id, launch_prompt, proj.path,
-                pre_session_id=pre_session_id,
-            )
-        )
-        ad.track_launch_task(agent.id, launch_task)
+    # Hand the prepared prompt off to the already-running launch task.
+    if prompt_future is not None and not prompt_future.done():
+        prompt_future.set_result(launch_prompt)
 
     logger.info(
         "Launched tmux claude session in pane %s for project %s (agent %s)",
@@ -892,7 +916,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
 
 
 async def _launch_tmux_background(
-    ad, agent_id: str, pane_id: str, prompt: str, project_path: str,
+    ad, agent_id: str, pane_id: str,
+    prompt: "str | asyncio.Future[str | None]",
+    project_path: str,
     pre_session_id: str | None = None,
 ):
     """Background task for tmux agent launch.
@@ -1057,6 +1083,20 @@ async def _launch_tmux_background(
         # within this window something is broken — surface that as a hard
         # error rather than silently stalling launch with a JSONL scan.
         _HOOK_TIMEOUT_SECS = 30.0
+
+        # Resolve the prompt. Callers schedule us with an asyncio.Future
+        # so prompt prep (query_insights translate + FTS5, ~1s) overlaps
+        # with TUI startup polling above; by the time we get here, prep
+        # is usually done and the await is instant.
+        if isinstance(prompt, asyncio.Future):
+            try:
+                prompt = await prompt
+            except Exception as e:
+                _mark_error(f"prompt preparation failed: {e}")
+                return
+        if not prompt:
+            logger.info("tmux launch agent %s: no prompt to send", agent_id)
+            return
 
         if not send_tmux_message(pane_id, prompt):
             _mark_error(
