@@ -111,6 +111,14 @@ function PaneShell({ theme, onToggleTheme, onPathChange, navigateRef }) {
     if (onPathChange) onPathChange(location.pathname);
   }, [location.pathname, onPathChange]);
 
+  // Pane-scoped (not global localStorage) so multiple panes viewing different
+  // projects don't bleed into each other when their Projects tabs are tapped.
+  const lastProjectSlugRef = useRef(null);
+  useEffect(() => {
+    const m = location.pathname.match(/^\/projects\/([^/]+)$/);
+    if (m) lastProjectSlugRef.current = m[1];
+  }, [location.pathname]);
+
   // Navigate to another agent within this pane's MemoryRouter
   const onNavigateAgent = useCallback((agentId) => {
     paneNav(`/agents/${agentId}`);
@@ -119,6 +127,20 @@ function PaneShell({ theme, onToggleTheme, onPathChange, navigateRef }) {
   const onCloseChat = useCallback(() => {
     paneNav("/agents");
   }, [paneNav]);
+
+  const onProjectsTap = useCallback((e) => {
+    e.preventDefault();
+    if (location.pathname.startsWith("/projects")) {
+      paneNav("/projects", { replace: true });
+      return;
+    }
+    const slug = lastProjectSlugRef.current;
+    if (slug) {
+      paneNav(`/projects/${slug}`, { replace: true });
+    } else {
+      paneNav("/projects", { replace: true });
+    }
+  }, [location.pathname, paneNav]);
 
   // Hide pane nav on detail pages (same logic as main App)
   const hideNav =
@@ -153,7 +175,10 @@ function PaneShell({ theme, onToggleTheme, onPathChange, navigateRef }) {
 
       {/* Pane bottom nav — floating overlay, same as single-screen */}
       {!hideNav && (
-        <BottomNavBar className="absolute bottom-[13px] left-0 right-0 z-40 flex justify-center px-4" />
+        <BottomNavBar
+          className="absolute bottom-[13px] left-0 right-0 z-40 flex justify-center px-4"
+          onProjectsTap={onProjectsTap}
+        />
       )}
     </div>
   );
