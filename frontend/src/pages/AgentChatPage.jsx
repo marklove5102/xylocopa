@@ -3177,6 +3177,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const scrollSaveTimer = useRef(null);
   const prevLastMsgId = useRef(null);
   const prevFirstMsgId = useRef(null);
+  const prevLastContentLen = useRef(0);
   const savedScrollHeight = useRef(null);
   const scrollKey = `scroll:chat:${id}`;
   const scrollCountKey = `scroll:chat:${id}:count`;
@@ -3218,14 +3219,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // useLayoutEffect so scroll adjustments happen before browser paint (no flicker)
   useLayoutEffect(() => {
     if (loading || !messages.length) return;
-    const lastId = messages[messages.length - 1]?.id;
+    const lastMsg = messages[messages.length - 1];
+    const lastId = lastMsg?.id;
     const firstId = messages[0]?.id;
+    const lastContentLen = (lastMsg?.content || "").length;
     const isFirstLoad = prevLastMsgId.current === null;
     const newMessagesAppended = !isFirstLoad && prevLastMsgId.current !== lastId;
     const olderMessagesPrepended = !isFirstLoad && prevFirstMsgId.current !== firstId && prevLastMsgId.current === lastId;
+    // Streaming: same lastId, but the last message's content grew (a new
+    // chunk landed). Distinct from the "snapshot replaced with same data"
+    // case where length is unchanged.
+    const lastContentGrew = !isFirstLoad && prevLastMsgId.current === lastId && lastContentLen > prevLastContentLen.current;
 
     prevLastMsgId.current = lastId;
     prevFirstMsgId.current = firstId;
+    prevLastContentLen.current = lastContentLen;
 
     if (isFirstLoad) {
       // Focus-slice mode: don't restore saved position or scroll to
@@ -3263,19 +3271,19 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       return;
     }
 
-    // New messages appended — clear saved position, auto-scroll
+    // New messages appended — clear saved position
     if (newMessagesAppended) {
       try {
         localStorage.removeItem(scrollKey);
         localStorage.setItem(scrollCountKey, String(messages.length));
       } catch { /* ignore */ }
     }
-    // Auto-pin to bottom only in tail mode. In focus-slice mode the user
-    // navigated to a specific old message; pulling them to the slice's
-    // bottom on every pre-sent snapshot replace causes continuous flicker.
-    // Once they scroll past the slice end via loadNewerMessages, hasLater
-    // flips false and auto-pin resumes normally.
-    if (!userScrolledUp.current && !hasLaterRef.current) {
+    // Auto-pin to bottom only when bottom-edge content actually changed:
+    // a new message arrived (newMessagesAppended) or the last message is
+    // streaming (lastContentGrew). Plain re-renders that swap messages
+    // identity without changing bottom content (e.g. WS-driven pre-sent
+    // snapshot replace with identical entries) are no-ops.
+    if ((newMessagesAppended || lastContentGrew) && !userScrolledUp.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [loading, messages, scrollKey, scrollCountKey]);
