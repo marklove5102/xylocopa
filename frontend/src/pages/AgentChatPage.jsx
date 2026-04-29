@@ -2398,6 +2398,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   );
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Focus-slice mode: when initial load was a focus_id slice, the right
+  // edge of the read window may be < EOF. hasLater reflects "more bytes
+  // past the slice"; loadNewerMessages closes the gap on scroll-down.
+  const [hasLater, setHasLater] = useState(false);
+  const [loadingLater, setLoadingLater] = useState(false);
   const [loading, setLoading] = useState(true);
   const toastCtx = useToast();
   // Only one chat-bubble action menu open at a time across the whole list.
@@ -2573,6 +2578,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Display API cursor tracking
   const nextOffsetRef = useRef(0);
   const hasEarlierRef = useRef(false);
+  const hasLaterRef = useRef(false);
 
   // Keep messagesRef in sync.
   useEffect(() => {
@@ -2590,6 +2596,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
     if (data.has_earlier != null) {
       hasEarlierRef.current = !!data.has_earlier;
+    }
+    if (data.has_later != null) {
+      hasLaterRef.current = !!data.has_later;
     }
 
     let newIds = null;
@@ -2639,14 +2648,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
       }
 
+      // Focus-id from URL: on first load, ask the backend for a slice
+      // centered on this message instead of the file tail. Falls back
+      // gracefully to a tail load if the id can't be located.
+      const focusId = new URLSearchParams(location.search).get("focus");
+      const initialParams = focusId
+        ? { tailBytes: 50000, focusId }
+        : { tailBytes: 50000 };
       const [sentData, preSentData] = await Promise.all([
-        fetchDisplaySent(id, { tailBytes: 50000 }),
+        fetchDisplaySent(id, initialParams),
         fetchDisplayPreSent(id),
       ]);
       if (controller.signal.aborted) return;
       applySentData(sentData, { initial: true });
       applyPreSentData(preSentData);
       setHasMore(!!sentData.has_earlier);
+      setHasLater(!!sentData.has_later);
 
       // Restore active tool state — check the last tool_activity in the
       // combined window for an unfinished one.
@@ -2676,7 +2693,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [id, showToast]);
+  }, [id, showToast, location.search]);
 
   // Load older sent messages (scroll-up pagination). Pre-sent state is
   // unaffected — it's a fixed-size snapshot, not paginated.
@@ -2710,9 +2727,40 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [id, loadingMore]);
 
+  // Load newer sent messages (scroll-down pagination). Only meaningful
+  // after a focus-slice initial load; in tail mode hasLaterRef is always
+  // false and this is a no-op. Suppresses the auto-bottom-scroll path
+  // by marking userScrolledUp, since we're appending below the
+  // already-anchored focus point.
+  const loadNewerMessages = useCallback(async () => {
+    if (loadingLater || !hasLaterRef.current) return;
+    setLoadingLater(true);
+    try {
+      const data = await fetchDisplaySent(id, { offset: nextOffsetRef.current });
+      const newer = Array.isArray(data?.messages) ? data.messages : [];
+      hasLaterRef.current = !!data?.has_later;
+      if (newer.length) {
+        userScrolledUp.current = true;
+        setSentMessages((prev) => {
+          const seenIds = new Set(prev.map((m) => m.id));
+          const unique = newer.filter((m) => !seenIds.has(m.id));
+          return unique.length ? [...prev, ...unique] : prev;
+        });
+      }
+      setHasLater(hasLaterRef.current);
+    } catch (err) {
+      console.warn("Failed to load newer messages:", err);
+    } finally {
+      setLoadingLater(false);
+    }
+  }, [id, loadingLater]);
+
   // Incremental refresh: refetch sent (byte-incremental) and pre-sent
   // (full snapshot). Both are cheap; refreshing both keeps any cross-bucket
   // promote transition consistent regardless of WS event arrival order.
+  // In focus-slice mode (hasLaterRef=true) we skip the sent fetch so a
+  // single WS event doesn't dump everything between the slice end and EOF
+  // into one render — the user advances the cursor via loadNewerMessages.
   const refreshMessages = useCallback(async () => {
     try {
       const agentData = await fetchAgent(id);
@@ -2720,15 +2768,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setAgent(agentData);
 
       const isInitial = nextOffsetRef.current === 0;
+      const skipSent = hasLaterRef.current;
       const sentParams = isInitial
         ? { tailBytes: 50000 }
         : { offset: nextOffsetRef.current };
 
       const [sentData, preSentData] = await Promise.all([
-        fetchDisplaySent(id, sentParams),
+        skipSent ? Promise.resolve(null) : fetchDisplaySent(id, sentParams),
         fetchDisplayPreSent(id),
       ]);
-      applySentData(sentData, { initial: isInitial });
+      if (sentData) applySentData(sentData, { initial: isInitial });
       applyPreSentData(preSentData);
     } catch {
       // Transient errors during polling — silently ignore
@@ -3145,11 +3194,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     if (el.scrollTop < 200 && hasMore && !loadingMore) {
       loadOlderMessages();
     }
+    // Scroll-down trigger — only fires in focus-slice mode (hasLater).
+    if (distFromBottom < 200 && hasLater && !loadingLater) {
+      loadNewerMessages();
+    }
     clearTimeout(scrollSaveTimer.current);
     scrollSaveTimer.current = setTimeout(() => {
       try { localStorage.setItem(scrollKey, String(el.scrollTop)); } catch { /* ignore */ }
     }, SCROLL_SAVE_DEBOUNCE);
-  }, [scrollKey, hasMore, loadingMore, loadOlderMessages]);
+  }, [scrollKey, hasMore, loadingMore, loadOlderMessages, hasLater, loadingLater, loadNewerMessages]);
 
   // Save scroll position on unmount
   useEffect(() => {
@@ -3175,6 +3228,14 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     prevFirstMsgId.current = firstId;
 
     if (isFirstLoad) {
+      // Focus-slice mode: don't restore saved position or scroll to
+      // bottom — the focus effect (below) will scrollIntoView the
+      // bookmarked message and own the initial position.
+      const hasFocus = !!new URLSearchParams(location.search).get("focus");
+      if (hasFocus) {
+        userScrolledUp.current = true;
+        return;
+      }
       // Restore saved position if message count matches (no new messages since last visit)
       try {
         const savedCount = localStorage.getItem(scrollCountKey);
@@ -3231,18 +3292,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     const params = new URLSearchParams(location.search);
     const focusId = params.get("focus");
     if (!focusId) return;
-    const handle = requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
-      if (!el) {
-        if (hasMore && !loadingMore) loadOlderMessages();
-        return;
-      }
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("bookmark-flash");
-      setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
-      focusedMsgRef.current = true;
-    });
-    return () => cancelAnimationFrame(handle);
+    const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
+    if (!el) {
+      if (hasMore && !loadingMore) loadOlderMessages();
+      return;
+    }
+    // "instant" + setting userScrolledUp before the scroll lands is
+    // critical: we start at scrollTop=0, and a smooth scroll would let
+    // handleScroll fire mid-flight (scrollTop<200 trips loadOlderMessages,
+    // which then prepends + adjusts scrollTop while the smooth scroll is
+    // still in motion — landing the page in an inconsistent spot).
+    userScrolledUp.current = true;
+    el.scrollIntoView({ behavior: "instant", block: "center" });
+    el.classList.add("bookmark-flash");
+    setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
+    focusedMsgRef.current = true;
   }, [loading, messages?.length, location.search, hasMore, loadingMore, loadOlderMessages]);
 
   // Auto-load older messages when content doesn't overflow the viewport
@@ -3279,6 +3343,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const debouncedRefreshSent = useCallback(() => {
     clearTimeout(refetchSentTimerRef.current);
     refetchSentTimerRef.current = setTimeout(async () => {
+      // In focus-slice mode, skip sent polls until the user advances
+      // past the slice via loadNewerMessages; otherwise a single WS
+      // event would pull everything between slice end and EOF in one
+      // render. Pre-sent state still flows through its own debouncer.
+      if (hasLaterRef.current) return;
       try {
         const isInitial = nextOffsetRef.current === 0;
         const params = isInitial ? { tailBytes: 50000 } : { offset: nextOffsetRef.current };

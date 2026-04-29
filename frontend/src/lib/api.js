@@ -323,10 +323,11 @@ export const resumeAgent = (id, body = null) =>
     method: "POST",
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-export const fetchDisplaySent = (agentId, { offset = 0, tailBytes = 0 } = {}) => {
+export const fetchDisplaySent = (agentId, { offset = 0, tailBytes = 0, focusId = null } = {}) => {
   const params = new URLSearchParams();
   if (offset) params.set("offset", String(offset));
   if (tailBytes) params.set("tail_bytes", String(tailBytes));
+  if (focusId) params.set("focus_id", String(focusId));
   return request(`/api/agents/${agentId}/display/sent?${params}`);
 };
 export const fetchDisplayPreSent = (agentId) =>

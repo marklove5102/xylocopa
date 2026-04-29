@@ -279,6 +279,9 @@ class SentDisplayResponse(BaseModel):
     messages: list[DisplayEntry]
     next_offset: int
     has_earlier: bool
+    # Only meaningful in focus mode (focus_id supplied). Tail/incremental
+    # reads always end at EOF and leave this False.
+    has_later: bool = False
 
 
 class PreSentDisplayResponse(BaseModel):
