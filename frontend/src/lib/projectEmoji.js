@@ -175,6 +175,108 @@ export const FLUENT_MAP = {
   "🧡": "Orange heart",
   "💙": "Blue heart",
   "💚": "Green heart",
+
+  // Science / research
+  "🔬": "Microscope",
+  "🔭": "Telescope",
+  "🧬": "Dna",
+  "🩺": "Stethoscope",
+  "💉": "Syringe",
+  "💊": "Pill",
+  "⚛️": "Atom symbol",
+  "🎓": "Graduation cap",
+  "📜": "Scroll",
+  "🥽": "Goggles",
+  "🦠": "Microbe",
+  "🧫": "Petri dish",
+
+  // Status / feedback
+  "✅": "Check mark button",
+  "❌": "Cross mark",
+  "⭕": "Hollow red circle",
+  "❓": "Red question mark",
+  "❗": "Red exclamation mark",
+  "⚠️": "Warning",
+  "💯": "Hundred points",
+  "🚧": "Construction",
+  "🛑": "Stop sign",
+  "✔️": "Check mark",
+
+  // Money / finance
+  "💰": "Money bag",
+  "💵": "Dollar banknote",
+  "💳": "Credit card",
+  "🧾": "Receipt",
+  "💸": "Money with wings",
+  "🪙": "Coin",
+
+  // Hands / gestures (skin-tone variants live under /Default/, not supported
+  // by fluentFlatUrl yet — only non-skin-tone hand emojis added)
+  "🤝": "Handshake",
+  "👀": "Eyes",
+
+  // Faces / reactions
+  "😀": "Grinning face",
+  "😄": "Grinning face with smiling eyes",
+  "😂": "Face with tears of joy",
+  "😉": "Winking face",
+  "🤓": "Nerd face",
+  "😢": "Crying face",
+  "😴": "Sleeping face",
+  "🥳": "Partying face",
+
+  // Tech extras
+  "🦾": "Mechanical arm",
+  "🦿": "Mechanical leg",
+  "⌚": "Watch",
+  "🎧": "Headphone",
+  "📞": "Telephone receiver",
+
+  // Animals
+  "🐶": "Dog face",
+  "🐱": "Cat face",
+  "🦊": "Fox",
+  "🐻": "Bear",
+  "🦉": "Owl",
+  "🐢": "Turtle",
+  "🐳": "Spouting whale",
+  "🐦": "Bird",
+  "🐧": "Penguin",
+
+  // Food / drink
+  "🍣": "Sushi",
+  "🍜": "Steaming bowl",
+  "🍞": "Bread",
+  "🥚": "Egg",
+  "🥤": "Cup with straw",
+  "🥃": "Tumbler glass",
+  "🍸": "Cocktail glass",
+
+  // Transport extras
+  "🚲": "Bicycle",
+  "🏍️": "Motorcycle",
+  "🚁": "Helicopter",
+  "⛵": "Sailboat",
+  "🚅": "Bullet train",
+  "🛸": "Flying saucer",
+  "🚌": "Bus",
+
+  // Building extras
+  "🏪": "Convenience store",
+  "🏨": "Hotel",
+
+  // Sports
+  "🏀": "Basketball",
+  "🏈": "American football",
+  "🎾": "Tennis",
+  "🎱": "Pool 8 ball",
+
+  // Misc
+  "🪐": "Ringed planet",
+  "🌌": "Milky way",
+  "🌟": "Glowing star",
+  "🪄": "Magic wand",
+  "☂️": "Umbrella",
 };
 
 // Emojis that represent the "folder" identity and should auto-flip
