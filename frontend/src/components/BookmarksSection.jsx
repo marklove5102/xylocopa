@@ -123,9 +123,9 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                   }
                 }}
                 placeholder="Title — leave empty to use AI summary"
-                rows={Math.min(6, Math.max(2, draft.split("\n").length))}
+                rows={Math.min(6, Math.max(1, draft.split("\n").length))}
                 disabled={saving}
-                className="w-full bg-input rounded-lg px-2.5 py-1.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
+                className="w-full bg-input rounded-md px-2 py-0.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
               />
             ) : (
               <p className="text-[13px] leading-snug font-medium text-heading truncate">
