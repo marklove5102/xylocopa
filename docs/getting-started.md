@@ -137,11 +137,30 @@ From here you can:
 - Read the agent's thinking and tool calls as they stream in.
 - Approve or deny tool calls (when Auto mode is off).
 - Send follow-ups, course-correct, or stop the agent.
-- **Double-tap a message** to open its action menu — Copy / Modify / Delete / **Bookmark**. Bookmark a standout turn to save it to the project's Bookmarks section (with an optional note plus an AI-generated summary + emoji); tapping the bookmark later jumps back here with a yellow focus-flash.
+- **Double-tap a message** to bookmark it (see [next section](#4-save-the-moments-worth-remembering-message-level-bookmarks)).
 
 On desktop, tap the split-screen button (bottom-right corner) to watch 2–4 agents at once:
 
 <p align="center"><img src="getting-started/09-desktop-inbox.png" alt="Desktop inbox view" width="640"></p>
+
+### 4. Save the moments worth remembering (message-level Bookmarks)
+
+A long agent run can be hundreds of turns. The one exchange you'll actually want again next month — the file path, the decision, the working command, the surprising result — is buried somewhere in the middle. **Bookmarks** are how you keep it.
+
+> **Two granularities, two buttons.** ⭐ **Starred** (top-right of the chat header) pins the **whole session** to the top of your project. 📑 **Bookmarks** (this section) pins **one specific message** inside a session. Use Starred for "this session is important", Bookmarks for "this _turn_ is the one I'll come back to."
+
+**Save a turn:** double-tap any chat bubble → tap **Bookmark** in the action menu. An inline note prompt appears — type a one-liner, or skip it and let `gpt-4o-mini` generate a short title + emoji from the message and its ±2 neighboring turns (media references included).
+
+**Find them again:** every project has a 📑 **Bookmarks** tab on its detail page, sitting next to ⭐ **Starred**. Each row shows the AI title, a one-line preview of the original message, the bookmark's age, and a pencil to edit your note. Tap a row and you jump back into the original chat with a yellow **focus-flash** on the bookmarked bubble.
+
+<p align="center"><img src="getting-started/13-bookmarks-list.png" alt="Project Bookmarks list — message-level saves with AI title + emoji" width="360"></p>
+
+When to reach for it:
+- The agent just printed the exact command / file path / function signature you'll need later.
+- A long debugging conversation produced **one** turn that finally explained the root cause.
+- You want a project-level "best-of" list of useful exchanges, not just a flat session archive.
+
+Empty note saves the AI summary as the title; ⌘/Ctrl+Enter or blur saves your edit, Esc cancels, saving an empty string reverts back to the AI summary.
 
 ---
 
