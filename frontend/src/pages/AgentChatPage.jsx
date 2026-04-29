@@ -84,6 +84,54 @@ import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 
 const ACTIVE_AGENT_STATUSES = new Set(["EXECUTING", "IDLE"]);
+
+// Walk text nodes under `root` and wrap case-insensitive occurrences of
+// `query` in <mark class="search-hit"> elements. Used by the search-result
+// focus path to give the matched text a yellow find-bar highlight in
+// addition to the bubble's breathing flash. Skips already-marked nodes
+// to keep re-runs idempotent. Browsers apply the mutation synchronously,
+// so calling this inside the focus useLayoutEffect lands the highlight
+// in the same paint as the scroll.
+function highlightTextMatches(root, query) {
+  if (!root || !query) return;
+  const needle = query.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.toLowerCase().includes(needle)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      // Skip text already inside a search-hit (idempotent re-runs)
+      if (node.parentElement?.closest(".search-hit")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  let n;
+  while ((n = walker.nextNode())) targets.push(n);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const lower = text.toLowerCase();
+    const frag = document.createDocumentFragment();
+    let i = 0;
+    while (i < text.length) {
+      const hit = lower.indexOf(needle, i);
+      if (hit < 0) {
+        frag.appendChild(document.createTextNode(text.slice(i)));
+        break;
+      }
+      if (hit > i) frag.appendChild(document.createTextNode(text.slice(i, hit)));
+      const mark = document.createElement("mark");
+      mark.className = "search-hit";
+      mark.textContent = text.slice(hit, hit + needle.length);
+      frag.appendChild(mark);
+      i = hit + needle.length;
+    }
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
 // --- Chat Bubble ---
 
 function SystemBubble({ message }) {
@@ -3327,6 +3375,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     el.scrollIntoView({ behavior: "instant", block: "center" });
     el.classList.add("bookmark-flash");
     setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
+    // Search-result text highlight: walk text nodes in the focused bubble
+    // and wrap occurrences of `q` in <mark class="search-hit"> spans.
+    // No teardown timer — DOM goes away on page switch, naturally cleared.
+    const q = (params.get("q") || "").trim();
+    if (q) highlightTextMatches(el, q);
     focusedMsgRef.current = true;
   }, [loading, messages?.length, location.search, hasMore, loadingMore, loadOlderMessages]);
 

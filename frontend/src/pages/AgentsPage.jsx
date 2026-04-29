@@ -499,7 +499,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
                       key={r.message_id}
                       type="button"
                       onClick={() => navigate(
-                        `/agents/${r.agent_id}?focus=${encodeURIComponent(r.message_id)}`,
+                        `/agents/${r.agent_id}?focus=${encodeURIComponent(r.message_id)}&q=${encodeURIComponent(search)}`,
                         { state: forwardState(location) },
                       )}
                       className="w-full text-left px-3 py-1.5 border-t border-divider hover:bg-hover transition-colors"

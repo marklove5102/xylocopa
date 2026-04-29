@@ -337,3 +337,14 @@ body::after {
   scroll-margin-top: 88px;
   scroll-margin-bottom: 24px;
 }
+
+/* Browser-find style yellow highlight on the matched query text inside
+   the focused bubble after a search-result click. Persists for the
+   duration of the page visit; cleared naturally when the page unmounts. */
+mark.search-hit {
+  background-color: #fde047;   /* tailwind yellow-300 */
+  color: #1f2937;               /* slate-800 — readable on yellow */
+  border-radius: 2px;
+  padding: 0 2px;
+  margin: 0 -1px;
+}
