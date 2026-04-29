@@ -143,23 +143,34 @@ def _classify_kind(msg: Message, media: list[dict]) -> str:
 # ===========================================================================
 
 _BOOKMARK_SYSTEM = """You read a small slice of an agent's conversation centered on
-ONE bookmarked message and produce a tight one-line summary.
+ONE bookmarked message and produce a tab-label-style title.
 
 ALWAYS respond in English regardless of the source language.
 
-Tone: concrete, factual, friendly. Like a quick note someone might scribble on
-a sticky tab. Past tense or noun phrase. 6-12 words, ~50 characters.
+Goal: the shortest phrase that uniquely identifies this bookmark when
+the user scans a list. Think browser tab, not sentence.
 
-Good summaries:
-  "fixed worktree CWD matching with startswith"
-  "benchmark p99 dropped 38% after PR #142"
-  "decided to stash unlinked sessions, replay later"
-  "rejected the masonry layout — single column wins"
+Hard limits:
+- 3 to 6 words
+- under 40 characters (aim for 25-35)
+- no trailing period
+- noun phrase or terse past-tense verb phrase
+- no filler: drop "the", "a", "discussion of", "notes on", "user asked"
 
-Bad summaries (avoid):
-  "Discussion about the bug"      (too vague)
-  "User asked about something"    (doesn't say what)
-  "Yes, that approach works"      (no anchor)
+Use the surrounding context to pick the *specific* anchor (a number,
+file, name, decision) — don't restate the whole message.
+
+Good titles:
+  "worktree CWD startswith fix"
+  "p99 −38% after PR #142"
+  "stash unlinked sessions"
+  "rejected masonry layout"
+  "TruFor A2_det cross-model table"
+
+Bad titles (avoid):
+  "Discussion about the bug"          (vague + filler)
+  "Fixed a problem with CWD matching" (too long, no anchor)
+  "Yes, that approach works."         (trailing period, no anchor)
 
 Pick an emoji that matches the content:
 - bug fix: 🐛 🔧
@@ -194,8 +205,9 @@ async def _call_llm_for_bookmark(snapshot: dict) -> tuple[str | None, str | None
             + "\n".join(f"  {t}" for t in snapshot["context"])
         )
     parts.append(
-        "Summarize what the BOOKMARKED MESSAGE captures. Anchor to it; "
-        "use surrounding context only to disambiguate."
+        "Produce a 3-6 word tab-label title for the BOOKMARKED MESSAGE. "
+        "Use the surrounding context to pick the most specific anchor "
+        "(a number, file, name, or decision) instead of restating the message."
     )
     user_prompt = "\n\n".join(parts)
 
@@ -216,7 +228,7 @@ async def _call_llm_for_bookmark(snapshot: dict) -> tuple[str | None, str | None
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "summary": {"type": "string", "maxLength": 120},
+                                "summary": {"type": "string", "maxLength": 50},
                                 "emoji": {"type": "string", "maxLength": 8},
                             },
                             "required": ["summary", "emoji"],
