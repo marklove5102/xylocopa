@@ -32,6 +32,7 @@ Query, Tailwind), SQLite, tmux.
 | `permissions.py` | In-memory permission manager for supervised (non-Auto) agents |
 | `notify.py` / `push.py` | Web Push (VAPID) notifications |
 | `mcp_server.py` | MCP server exposing cross-session reference tool |
+| `routers/bookmarks.py` | Bookmarked-message CRUD; spawns a `gpt-4o-mini` summary + emoji per bookmark and caches media refs from ±2 neighboring turns |
 
 ## Message sync pipeline
 

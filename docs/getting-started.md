@@ -137,7 +137,7 @@ From here you can:
 - Read the agent's thinking and tool calls as they stream in.
 - Approve or deny tool calls (when Auto mode is off).
 - Send follow-ups, course-correct, or stop the agent.
-- **Double-tap a message** to copy it.
+- **Double-tap a message** to open its action menu — Copy / Modify / Delete / **Bookmark**. Bookmark a standout turn to save it to the project's Bookmarks section (with an optional note plus an AI-generated summary + emoji); tapping the bookmark later jumps back here with a yellow focus-flash.
 
 On desktop, tap the split-screen button (bottom-right corner) to watch 2–4 agents at once:
 

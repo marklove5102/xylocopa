@@ -70,6 +70,7 @@ Knowledge compounds across sessions, projects, and time.
 
 - **Project memory**: per-project `PROGRESS.md`, fully UI-managed.
 - **Session archive**: every conversation persisted, searchable, starrable.
+- **Bookmark messages**: double-tap a chat bubble → **Bookmark** to save standout turns. Each bookmark stores your optional note plus an LLM-generated summary + emoji; a per-project **Bookmarks** section lists them, tap a row to jump back with a yellow focus-flash on the original turn.
 - **Resume anytime**: pick up any agent where it left off.
 - **Full-text search**: across tasks, messages, and sessions.
 - **Weekly progress stats**: see the trend, not just the backlog.
@@ -138,6 +139,7 @@ Nothing you run through Xylocopa is ephemeral. Every layer is designed to surviv
 | **CLI Session Sync** | Dual-directional: CLI sessions in the web app, web app sessions resumable from CLI. |
 | **Git Integration** | Commit history, diffs, branch status per project. Agents work in isolated worktrees. One-click cleanup and push. |
 | **Session History** | Every conversation persisted and searchable. Star sessions. Resume any agent anytime. Full-text search. |
+| **Bookmarks** | Double-tap a chat bubble → **Bookmark** to save standout turns. Each bookmark stores your optional note plus a `gpt-4o-mini`-generated summary + emoji, plus media references extracted from the bubble and ±2 neighboring turns. Per-project **Bookmarks** section, tap a row for focus-flash navigation back to the original turn. |
 | **Security** | Password auth with exponential-backoff rate limiting. Inactivity lock. HTTPS encryption. |
 | <a id="safety-guardrails"></a>**Safety Guardrails** | Deterministic `PreToolUse` hook hard-blocks destructive operations, `rm -rf`, `git push --force`, `git reset --hard` outside worktrees, `git clean -f`, `git checkout -- .` / `git restore .`, `DROP TABLE` / `TRUNCATE`, and any `Write`/`Edit` to paths outside the project directory. Enforced even when **Auto mode** (`--dangerously-skip-permissions`) is on. |
 | **Reliability & Recovery** | 30s incremental session JSONL cache (append-only, like git packfiles). **Unlimited retention**: `cleanupPeriodDays=36500` prevents Claude from deleting your history. Orchestrator-restart recovery re-links live tmux agents without interrupting them. Automatic periodic DB + config + session backups (runtime-configurable interval & retention). Truncated JSONL auto-repaired. Orphan worktree/tmux cleanup. See [Durable by Default](#durable-by-default) for source pointers. |
@@ -280,7 +282,7 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 - **Projects**: Activate / Archive / Delete; the Activate and Archive buttons light up only when the selection is uniformly archived or active, otherwise only Delete is available.
 - **Trash**: bulk Restore / permanently Delete deleted projects.
 - **ID pill** in the chat header (4-char monospace, row 2): hover or long-press for a `xylo id:` popover with a Copy button; double-click to copy directly. Same pattern on the **worktree pill**.
-- **Double-tap a message** in the chat view to quickly copy its content.
+- **Double-tap a message** in the chat view to open its action menu — Copy / Modify / Delete / Bookmark. Only one menu is open at a time; an outside tap dismisses. **Bookmark** opens an inline note prompt; skip it and the AI-generated summary is used as the title.
 - **Double-tap a tab** in the bottom nav to scroll to the first unread / pending item.
 
 ## Troubleshooting
