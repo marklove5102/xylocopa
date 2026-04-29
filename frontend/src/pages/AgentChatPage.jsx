@@ -3285,8 +3285,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // Focus + breathing-flash for bookmarked messages — `?focus=<message_id>` URL param.
   // If the bookmark targets a message older than the initial 50KB tail, keep
   // pulling older pages until it lands in the DOM (or there are no more).
+  // useLayoutEffect (not useEffect) so the scroll lands BEFORE the browser
+  // paints — otherwise the user sees a one-frame flash of "messages from
+  // top" before the centered scroll, which reads as a flicker.
   const focusedMsgRef = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (focusedMsgRef.current) return;
     if (loading || !messages?.length) return;
     const params = new URLSearchParams(location.search);
