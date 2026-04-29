@@ -277,6 +277,16 @@ export const FLUENT_MAP = {
   "🌟": "Glowing star",
   "🪄": "Magic wand",
   "☂️": "Umbrella",
+
+  // Polish / state (commonly picked by LLM for resume hints)
+  "💄": "Lipstick",
+  "🎀": "Ribbon",
+  "⛰️": "Mountain",
+  "🌋": "Volcano",
+  "🏝️": "Desert island",
+  "🎈": "Balloon",
+  "🧹": "Broom",
+  "🪵": "Wood",
 };
 
 // Emojis that represent the "folder" identity and should auto-flip
@@ -596,6 +606,16 @@ export const KEYWORDS = {
   "🌟": "star glow shine",
   "🪄": "magic wand wizard",
   "☂️": "umbrella rain",
+
+  // Polish / state
+  "💄": "lipstick polish makeup",
+  "🎀": "ribbon bow gift",
+  "⛰️": "mountain climb peak",
+  "🌋": "volcano eruption",
+  "🏝️": "desert island beach",
+  "🎈": "balloon party",
+  "🧹": "broom sweep clean",
+  "🪵": "wood log timber",
 };
 
 /**
