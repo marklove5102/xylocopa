@@ -3375,13 +3375,25 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     el.scrollIntoView({ behavior: "instant", block: "center" });
     el.classList.add("bookmark-flash");
     setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
-    // Search-result text highlight: walk text nodes in the focused bubble
-    // and wrap occurrences of `q` in <mark class="search-hit"> spans.
-    // No teardown timer — DOM goes away on page switch, naturally cleared.
-    const q = (params.get("q") || "").trim();
-    if (q) highlightTextMatches(el, q);
     focusedMsgRef.current = true;
   }, [loading, messages?.length, location.search, hasMore, loadingMore, loadOlderMessages]);
+
+  // Search-result text highlight — runs on every messages-identity change,
+  // not gated by focusedMsgRef. On busy agents (streaming / heavy WS),
+  // ChatBubble re-renders frequently and React's reconciliation strips the
+  // <mark> nodes we injected (they're outside React's virtual DOM). Re-
+  // apply each render so the highlight survives. highlightTextMatches is
+  // idempotent — text inside an existing .search-hit is skipped. Cleared
+  // naturally when the page unmounts.
+  useLayoutEffect(() => {
+    if (loading || !messages?.length) return;
+    const params = new URLSearchParams(location.search);
+    const focusId = params.get("focus");
+    const q = (params.get("q") || "").trim();
+    if (!focusId || !q) return;
+    const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
+    if (el) highlightTextMatches(el, q);
+  }, [loading, messages, location.search]);
 
   // Auto-load older messages when content doesn't overflow the viewport
   // but has_earlier is true (scroll-based trigger can't fire without overflow)
