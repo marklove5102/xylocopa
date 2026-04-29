@@ -132,7 +132,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
               </p>
             )}
             <p
-              className={`text-xs mt-0.5 break-words ${
+              className={`text-xs mt-0.5 truncate ${
                 isFile ? "font-mono text-dim" : "text-dim"
               }`}
             >
