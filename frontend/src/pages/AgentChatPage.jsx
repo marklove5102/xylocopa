@@ -3270,7 +3270,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         localStorage.setItem(scrollCountKey, String(messages.length));
       } catch { /* ignore */ }
     }
-    if (!userScrolledUp.current) {
+    // Auto-pin to bottom only in tail mode. In focus-slice mode the user
+    // navigated to a specific old message; pulling them to the slice's
+    // bottom on every pre-sent snapshot replace causes continuous flicker.
+    // Once they scroll past the slice end via loadNewerMessages, hasLater
+    // flips false and auto-pin resumes normally.
+    if (!userScrolledUp.current && !hasLaterRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [loading, messages, scrollKey, scrollCountKey]);
