@@ -294,13 +294,25 @@ export const CATEGORIES = [
     key: "tech",
     label: "Tech",
     anchor: "💻",
-    emojis: ["💻", "⌨️", "🖥️", "🖨️", "📱", "📺", "💾", "💿", "📀", "🖱️", "📡", "🛰️", "🔌", "🔋", "⚙️", "🔧", "🛠️", "🔨", "🧰", "🐛", "🤖", "🔐", "🔑", "🧪"],
+    emojis: ["💻", "⌨️", "🖥️", "🖨️", "📱", "📺", "💾", "💿", "📀", "🖱️", "📡", "🛰️", "🔌", "🔋", "⚙️", "🔧", "🛠️", "🔨", "🧰", "🐛", "🤖", "🦾", "🦿", "⌚", "🎧", "📞", "🔐", "🔑", "🧪"],
+  },
+  {
+    key: "science",
+    label: "Science",
+    anchor: "🔬",
+    emojis: ["🔬", "🔭", "🧬", "🩺", "💉", "💊", "⚛️", "🎓", "📜", "🥽", "🦠", "🧫"],
   },
   {
     key: "work",
     label: "Goals",
     anchor: "🎯",
     emojis: ["🎯", "🚀", "🏁", "🏆", "🎖️", "💡", "🧠", "💼", "📌", "📍", "🗓️", "📅", "⏰", "⏳", "🔔", "📢", "📣", "🗺️"],
+  },
+  {
+    key: "status",
+    label: "Status",
+    anchor: "✅",
+    emojis: ["✅", "✔️", "❌", "⭕", "❓", "❗", "⚠️", "💯", "🚧", "🛑", "💥", "🤔"],
   },
   {
     key: "creative",
@@ -312,25 +324,37 @@ export const CATEGORIES = [
     key: "nature",
     label: "Nature",
     anchor: "🌱",
-    emojis: ["🌱", "🌳", "🌲", "🌊", "🔥", "❄️", "⚡", "🌈", "🌞", "🌙", "⭐", "🍃", "🌸", "🌻", "🌷", "🪴", "🦋", "🐝"],
+    emojis: ["🌱", "🌳", "🌲", "🌊", "🔥", "❄️", "⚡", "🌈", "🌞", "🌙", "⭐", "🌟", "🍃", "🌸", "🌻", "🌷", "🪴", "🪐", "🌌", "☂️"],
+  },
+  {
+    key: "animals",
+    label: "Animals",
+    anchor: "🐶",
+    emojis: ["🦋", "🐝", "🐶", "🐱", "🦊", "🐻", "🦉", "🐢", "🐳", "🐦", "🐧"],
   },
   {
     key: "places",
     label: "Places",
     anchor: "🏠",
-    emojis: ["🏠", "🏢", "🏫", "🏥", "🏭", "🏛️", "🚗", "✈️", "🚢", "👤", "👥", "🌐", "🗺️"],
+    emojis: ["🏠", "🏢", "🏫", "🏥", "🏭", "🏛️", "🏪", "🏨", "🚗", "✈️", "🚢", "🚲", "🏍️", "🚁", "⛵", "🚅", "🛸", "🚌", "👤", "👥", "🌐", "🗺️"],
   },
   {
     key: "life",
     label: "Life",
     anchor: "☕",
-    emojis: ["☕", "🍵", "🍺", "🍷", "🍕", "🍔", "🍎", "🥗", "🍰", "🍪", "🎮", "🎲", "⚽", "🏃"],
+    emojis: ["☕", "🍵", "🍺", "🍷", "🍕", "🍔", "🍎", "🥗", "🍰", "🍪", "🍣", "🍜", "🍞", "🥚", "🥤", "🥃", "🍸", "🎮", "🎲", "⚽", "🏃", "🏀", "🏈", "🎾", "🎱"],
+  },
+  {
+    key: "money",
+    label: "Money",
+    anchor: "💰",
+    emojis: ["💰", "💵", "💳", "🧾", "💸", "🪙"],
   },
   {
     key: "symbols",
     label: "Symbols",
     anchor: "✨",
-    emojis: ["✨", "♻️", "💎", "🎁", "🧩", "♾️", "💬", "💭", "🔗", "🛡️", "🏷️", "📐", "❤️", "🧡", "💙", "💚"],
+    emojis: ["✨", "♻️", "💎", "🎁", "🧩", "♾️", "💬", "💭", "🔗", "🛡️", "🏷️", "📐", "🪄", "❤️", "🧡", "💙", "💚"],
   },
 ];
 
@@ -471,6 +495,107 @@ export const KEYWORDS = {
   "🛡️": "shield protect",
   "🏷️": "label tag",
   "📐": "ruler measure",
+
+  // Science / research
+  "🔬": "microscope science research lab",
+  "🔭": "telescope astronomy stars",
+  "🧬": "dna genetics biology",
+  "🩺": "stethoscope medical health",
+  "💉": "syringe injection medicine vaccine",
+  "💊": "pill medicine drug",
+  "⚛️": "atom physics chemistry",
+  "🎓": "graduation cap academic education degree",
+  "📜": "scroll document parchment",
+  "🥽": "goggles lab safety",
+  "🦠": "microbe virus bacteria germ",
+  "🧫": "petri dish biology lab",
+
+  // Status / feedback
+  "✅": "check ok done complete success",
+  "✔️": "check tick done",
+  "❌": "cross fail wrong reject",
+  "⭕": "circle round",
+  "❓": "question unknown help",
+  "❗": "exclamation important alert",
+  "⚠️": "warning caution",
+  "💯": "hundred perfect score",
+  "🚧": "construction wip in progress",
+  "🛑": "stop block halt",
+  "💥": "collision boom impact crash bug",
+  "🤔": "thinking ponder consider",
+
+  // Money / finance
+  "💰": "money cash bag finance",
+  "💵": "dollar bill cash usd",
+  "💳": "credit card payment",
+  "🧾": "receipt invoice bill",
+  "💸": "money flying spend expense",
+  "🪙": "coin currency",
+
+  // Tech extras
+  "🦾": "robot arm prosthetic mechanical",
+  "🦿": "leg prosthetic mechanical",
+  "⌚": "watch wrist time",
+  "🎧": "headphone audio listen",
+  "📞": "phone call telephone",
+
+  // Animals
+  "🐶": "dog puppy pet",
+  "🐱": "cat kitten pet",
+  "🦊": "fox cunning",
+  "🐻": "bear wild",
+  "🦉": "owl wisdom night",
+  "🐢": "turtle slow",
+  "🐳": "whale ocean",
+  "🐦": "bird wing",
+  "🐧": "penguin antarctic",
+
+  // Food / drink
+  "🍣": "sushi japanese food",
+  "🍜": "ramen noodle soup",
+  "🍞": "bread loaf",
+  "🥚": "egg",
+  "🥤": "cup drink straw",
+  "🥃": "tumbler whiskey glass",
+  "🍸": "cocktail martini",
+
+  // Transport
+  "🚲": "bike bicycle cycle",
+  "🏍️": "motorcycle bike",
+  "🚁": "helicopter heli",
+  "⛵": "sailboat sailing",
+  "🚅": "bullet train high speed",
+  "🛸": "ufo flying saucer alien",
+  "🚌": "bus transit",
+
+  // Buildings
+  "🏪": "store shop convenience",
+  "🏨": "hotel accommodation",
+
+  // Sports
+  "🏀": "basketball ball sport",
+  "🏈": "football american sport",
+  "🎾": "tennis ball sport",
+  "🎱": "pool billiards 8 ball",
+
+  // Faces / reactions
+  "😀": "smile happy grin",
+  "😄": "smile happy joy",
+  "😂": "laugh tears joy lol",
+  "😉": "wink",
+  "🤓": "nerd glasses smart",
+  "😢": "cry sad tear",
+  "😴": "sleep tired zzz",
+  "🥳": "party celebrate",
+  "🤝": "handshake deal agreement",
+  "👀": "eyes look watch",
+
+  // Misc
+  "🪐": "planet saturn space",
+  "🌌": "galaxy milky way space stars",
+  "🌟": "star glow shine",
+  "🪄": "magic wand wizard",
+  "☂️": "umbrella rain",
 };
 
 /**
