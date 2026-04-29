@@ -12,6 +12,7 @@ import usePageVisible from "../hooks/usePageVisible";
 const MonitorContext = createContext(null);
 
 const BG_INTERVAL = 5 * 60 * 1000; // 5-minute background refresh
+const TOKEN_USAGE_INTERVAL = 30 * 60 * 1000; // 30-min — independent of monitor active state
 
 export function MonitorProvider({ children }) {
   const visible = usePageVisible();
@@ -96,18 +97,18 @@ export function MonitorProvider({ children }) {
   // MonitorPage mounts; this loop only runs while monitor is inactive.
   useEffect(() => {
     if (!visible || monitorActive) return;
-    const initial = setTimeout(() => { refreshAll(); fetchUsage(); }, 2000);
-    const id = setInterval(() => { refreshAll(); fetchUsage(); }, 60 * 1000);
+    const initial = setTimeout(() => { refreshAll(); }, 2000);
+    const id = setInterval(() => { refreshAll(); }, 60 * 1000);
     return () => { clearTimeout(initial); clearInterval(id); };
-  }, [visible, monitorActive, refreshAll, fetchUsage]);
+  }, [visible, monitorActive, refreshAll]);
 
   // Initial fetch + background poll only when MonitorPage is active
   useEffect(() => {
     if (!visible || !monitorActive) return;
-    refreshAll(); fetchUsage();
+    refreshAll();
     const id = setInterval(refreshAll, BG_INTERVAL);
     return () => clearInterval(id);
-  }, [visible, monitorActive, refreshAll, fetchUsage]);
+  }, [visible, monitorActive, refreshAll]);
 
   // Fast polling when MonitorPage is active and tab is visible
   useEffect(() => {
@@ -122,15 +123,21 @@ export function MonitorProvider({ children }) {
     const slowId = setInterval(() => {
       fetchStorage(); fetchTasks();
     }, 30000);
-    // Token usage: every 10 minutes
-    const usageId = setInterval(fetchUsage, 10 * 60 * 1000);
     return () => {
       clearInterval(fastId);
       clearInterval(healthId);
       clearInterval(slowId);
-      clearInterval(usageId);
     };
-  }, [visible, monitorActive, fetchAgents, fetchSysStats, fetchHealth, fetchStorage, fetchTasks, fetchUsage]);
+  }, [visible, monitorActive, fetchAgents, fetchSysStats, fetchHealth, fetchStorage, fetchTasks]);
+
+  // Token usage: fully decoupled — fires once on mount and every 30 min,
+  // regardless of monitor active state or page visibility. Backend caches
+  // for 2 min so the cost is one Anthropic API call per 30 min per session.
+  useEffect(() => {
+    const initial = setTimeout(fetchUsage, 2000);
+    const id = setInterval(fetchUsage, TOKEN_USAGE_INTERVAL);
+    return () => { clearTimeout(initial); clearInterval(id); };
+  }, [fetchUsage]);
 
   const activate = useCallback(() => setMonitorActive(true), []);
   const deactivate = useCallback(() => setMonitorActive(false), []);
