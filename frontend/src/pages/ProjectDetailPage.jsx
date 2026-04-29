@@ -1486,6 +1486,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
             showToast("Failed to re-bookmark: " + (err?.message || "unknown"), "error");
           }
         }}
+        onPatched={(messageId, updated) => {
+          setBookmarks((prev) =>
+            prev.map((b) => (b.message_id === messageId ? { ...b, ...updated } : b)),
+          );
+        }}
       />
 
       {/* Project settings */}
