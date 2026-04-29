@@ -654,7 +654,7 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         ad = getattr(request.app.state, "agent_dispatcher", None)
         launch_prompt = None
         if ad:
-            msg, launch_prompt, _ = ad._prepare_dispatch(
+            msg, launch_prompt, _ = await ad._prepare_dispatch(
                 db, agent, project, body.prompt,
                 source="web",
                 wrap_prompt=True,
@@ -847,7 +847,7 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if prompt:
         if ad:
-            msg, launch_prompt, _ = ad._prepare_dispatch(
+            msg, launch_prompt, _ = await ad._prepare_dispatch(
                 db, agent, proj, prompt,
                 source="web",
                 wrap_prompt=True,
@@ -2700,7 +2700,7 @@ async def send_agent_message(
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
-        entry, _prompt, insights_list = ad._prepare_pre_sent_entry(
+        entry, _prompt, insights_list = await ad._prepare_pre_sent_entry(
             db, agent, project, body.content,
             source="web",
             status=status,

@@ -10,12 +10,18 @@ Covers:
 - State machine edge cases
 """
 
+import asyncio
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def _run_dispatch_pending(dispatcher, db):
+    """Test helper: run the now-async _dispatch_pending_tasks synchronously."""
+    return asyncio.run(dispatcher._dispatch_pending_tasks(db))
 
 from models import (
     Agent,
@@ -313,8 +319,8 @@ def test_dispatch_picks_up_pending_tasks(db_session, proj, dispatcher):
     db_session.add(agent)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux", return_value="aabbccdd1122"):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock, return_value="aabbccdd1122"):
+        _run_dispatch_pending(dispatcher, db_session)
 
     db_session.refresh(t)
     assert t.status == TaskStatus.EXECUTING
@@ -328,8 +334,8 @@ def test_dispatch_skips_missing_project(db_session, dispatcher):
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux") as mock_tmux:
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock) as mock_tmux:
+        _run_dispatch_pending(dispatcher, db_session)
         mock_tmux.assert_not_called()
 
     db_session.refresh(t)
@@ -351,10 +357,10 @@ def test_dispatch_ignores_concurrency_limits(db_session, proj, dispatcher):
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux", return_value="exec0000000099"):
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock, return_value="exec0000000099"):
         db_session.add(Agent(id="exec0000000099", project=proj.name, name="New Agent", status=AgentStatus.IDLE))
         db_session.commit()
-        dispatcher._dispatch_pending_tasks(db_session)
+        _run_dispatch_pending(dispatcher, db_session)
 
     db_session.refresh(t)
     assert t.status == TaskStatus.EXECUTING
@@ -371,8 +377,8 @@ def test_dispatch_idle_agents_dont_count(db_session, proj, dispatcher):
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux", return_value="new000000001"):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock, return_value="new000000001"):
+        _run_dispatch_pending(dispatcher, db_session)
 
     db_session.refresh(t)
     assert t.status == TaskStatus.EXECUTING
@@ -396,12 +402,12 @@ def test_dispatch_ordering_by_created_at(db_session, proj, dispatcher):
     dispatched_order = []
     agent_ids = iter(["agent_000001", "agent_000002"])
 
-    def mock_tmux(db, task, proj_obj, ad):
+    async def mock_tmux(db, task, proj_obj, ad):
         dispatched_order.append(task.title)
         return next(agent_ids)
 
-    with patch("routers.tasks._dispatch_task_tmux", side_effect=mock_tmux):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new=mock_tmux):
+        _run_dispatch_pending(dispatcher, db_session)
 
     assert dispatched_order[0] == "First task"
     assert dispatched_order[1] == "Second task"
@@ -413,8 +419,8 @@ def test_dispatch_handles_tmux_failure(db_session, proj, dispatcher):
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux", side_effect=Exception("tmux launch failed")):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock, side_effect=Exception("tmux launch failed")):
+        _run_dispatch_pending(dispatcher, db_session)
 
     db_session.refresh(t)
     assert t.status == TaskStatus.PENDING
@@ -426,8 +432,8 @@ def test_dispatch_tmux_returns_none(db_session, proj, dispatcher):
     db_session.add(t)
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux", return_value=None):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock, return_value=None):
+        _run_dispatch_pending(dispatcher, db_session)
 
     db_session.refresh(t)
     assert t.status == TaskStatus.PENDING
@@ -447,12 +453,12 @@ def test_dispatch_cross_project_all_dispatch(db_session, proj, proj2, dispatcher
     dispatched = []
     agent_ids = iter(["p1new0000001", "p2exec000001"])
 
-    def mock_tmux(db, task, proj_obj, ad):
+    async def mock_tmux(db, task, proj_obj, ad):
         dispatched.append(task.title)
         return next(agent_ids)
 
-    with patch("routers.tasks._dispatch_task_tmux", side_effect=mock_tmux):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new=mock_tmux):
+        _run_dispatch_pending(dispatcher, db_session)
 
     # Both projects dispatch (no concurrency limit enforcement)
     assert "Proj1 task" in dispatched
@@ -478,13 +484,13 @@ def test_dispatch_limit_5_per_tick(db_session, proj, dispatcher):
 
     call_count = 0
 
-    def mock_tmux(db, task, proj_obj, ad):
+    async def mock_tmux(db, task, proj_obj, ad):
         nonlocal call_count
         call_count += 1
         return f"lim{call_count - 1:09d}"
 
-    with patch("routers.tasks._dispatch_task_tmux", side_effect=mock_tmux):
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new=mock_tmux):
+        _run_dispatch_pending(dispatcher, db_session)
 
     assert call_count == 5
 
@@ -693,8 +699,8 @@ def test_dispatch_no_pending_tasks_noop(db_session, proj, dispatcher):
     db_session.add(Task(title="Executing", project_name=proj.name, status=TaskStatus.EXECUTING))
     db_session.commit()
 
-    with patch("routers.tasks._dispatch_task_tmux") as mock_tmux:
-        dispatcher._dispatch_pending_tasks(db_session)
+    with patch("routers.tasks._dispatch_task_tmux", new_callable=AsyncMock) as mock_tmux:
+        _run_dispatch_pending(dispatcher, db_session)
         mock_tmux.assert_not_called()
 
 

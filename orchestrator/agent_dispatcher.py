@@ -1818,7 +1818,7 @@ class AgentDispatcher:
 
                 db = SessionLocal()
                 try:
-                    self._tick(db)
+                    await self._tick(db)
 
                     # Daily PROGRESS.md summary auto-trigger — disabled
                     # (kept for reference; manual & per-agent summaries still work)
@@ -2715,7 +2715,7 @@ Here are the day's conversations (with timestamps):
             from notify import notify
             notify("notify_at", "", action, task.title or "Untitled task", url=f"/tasks/{task.id}")
 
-    def _dispatch_pending_tasks(self, db: Session):
+    async def _dispatch_pending_tasks(self, db: Session):
         """Pick up PENDING v2 tasks and create tmux agents for them."""
         import secrets
         import subprocess
@@ -2741,7 +2741,7 @@ Here are the day's conversations (with timestamps):
             # All tasks dispatch via tmux
             from routers.tasks import _dispatch_task_tmux
             try:
-                agent_id = _dispatch_task_tmux(db, task, proj, self)
+                agent_id = await _dispatch_task_tmux(db, task, proj, self)
             except Exception:
                 logger.exception("Task %s: tmux dispatch failed", task.id)
                 continue
@@ -2844,7 +2844,7 @@ Here are the day's conversations (with timestamps):
         parts.append("- Leave a summary of what was done as your final message")
         return "\n".join(parts), insights_list
 
-    def _tick(self, db: Session):
+    async def _tick(self, db: Session):
         # Invalidate per-tick tmux map cache
         self._tmux_map_cache = None
 
@@ -2855,7 +2855,7 @@ Here are the day's conversations (with timestamps):
         self._check_scheduled_tasks(db)
 
         # 0a. Dispatch PENDING v2 tasks → create execution agents
-        self._dispatch_pending_tasks(db)
+        await self._dispatch_pending_tasks(db)
 
         # 3. Start new agents
         self._start_new_agents(db)
@@ -3020,7 +3020,7 @@ Here are the day's conversations (with timestamps):
             Message.status.in_([MessageStatus.COMPLETED, MessageStatus.EXECUTING]),
         ).first() is None
 
-    def _prepare_pre_sent_entry(
+    async def _prepare_pre_sent_entry(
         self,
         db: Session,
         agent: Agent,
@@ -3058,13 +3058,17 @@ Here are the day's conversations (with timestamps):
         if content and self._is_first_user_message(db, agent.id):
             if task:
                 query_text = f"{task.title} {task.description or ''}"
-                insights_list = query_insights(
-                    db, project.name, query_text, limit=15, pad_recent=True,
+                insights_list = await asyncio.to_thread(
+                    query_insights, db, project.name, query_text, 15, 7, True,
                 )
             elif project.ai_insights:
-                insights_list = query_insights_ai(db, project.name, content)
+                insights_list = await asyncio.to_thread(
+                    query_insights_ai, db, project.name, content,
+                )
             else:
-                insights_list = query_insights(db, project.name, content, limit=10)
+                insights_list = await asyncio.to_thread(
+                    query_insights, db, project.name, content, 10,
+                )
 
         # 2. Build metadata dict (same shape as DB meta_json would hold).
         metadata: dict = {}
@@ -3115,7 +3119,7 @@ Here are the day's conversations (with timestamps):
         }
         return entry, prompt, insights_list
 
-    def _prepare_dispatch(
+    async def _prepare_dispatch(
         self,
         db: Session,
         agent: Agent,
@@ -3149,11 +3153,17 @@ Here are the day's conversations (with timestamps):
             if task:
                 # Task agents: use task-specific query with higher limit
                 query_text = f"{task.title} {task.description or ''}"
-                insights_list = query_insights(db, project.name, query_text, limit=15, pad_recent=True)
+                insights_list = await asyncio.to_thread(
+                    query_insights, db, project.name, query_text, 15, 7, True,
+                )
             elif project.ai_insights:
-                insights_list = query_insights_ai(db, project.name, content)
+                insights_list = await asyncio.to_thread(
+                    query_insights_ai, db, project.name, content,
+                )
             else:
-                insights_list = query_insights(db, project.name, content, limit=10)
+                insights_list = await asyncio.to_thread(
+                    query_insights, db, project.name, content, 10,
+                )
 
         # 2. Create or reuse message
         if existing_message:

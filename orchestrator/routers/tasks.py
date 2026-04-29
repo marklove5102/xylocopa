@@ -58,7 +58,7 @@ def _stop_task_agents(db: Session, task, ad, reason, *, emit=True, add_message=F
 _generate_worktree_name_local = generate_worktree_name_local
 
 
-def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | None:
+async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | None:
     """Create a tmux agent for a task. Returns agent_id or None.
 
     Extracted from launch_tmux_agent endpoint so dispatch_task_v2 can
@@ -157,7 +157,7 @@ def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str | Non
     # Prepare prompt with insights via _prepare_dispatch
     launch_prompt = None
     if prompt and ad:
-        msg, launch_prompt, _ = ad._prepare_dispatch(
+        msg, launch_prompt, _ = await ad._prepare_dispatch(
             db, agent, proj, prompt,
             source="task",
             wrap_prompt=True,
@@ -761,7 +761,7 @@ async def dispatch_task_v2(task_id: str, request: Request, db: Session = Depends
     ad = getattr(request.app.state, "agent_dispatcher", None)
 
     # All tasks dispatch via tmux
-    agent_id = _dispatch_task_tmux(db, task, proj, ad)
+    agent_id = await _dispatch_task_tmux(db, task, proj, ad)
 
     if not agent_id:
         raise HTTPException(500, "Failed to create agent for task")
