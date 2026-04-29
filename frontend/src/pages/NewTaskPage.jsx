@@ -13,7 +13,6 @@ import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import { useToast } from "../contexts/ToastContext";
 import { uploadUrl } from "../lib/urls";
-import { forwardState } from "../lib/nav";
 
 function deriveTitle(description) {
   if (!description) return "";
@@ -313,49 +312,57 @@ export default function NewTaskPage({ embedded = false }) {
   };
 
   // ---- Launch agent (when project is selected) ----
-  // Unified pipeline: create task → dispatch → navigate to agent
-  const launchAgent = async () => {
+  // Optimistic: dismiss sheet immediately, run create+dispatch in background.
+  const launchAgent = () => {
     if (submittingRef.current || !project) return;
     const hasText = description.trim() || title.trim() || attachments.some((a) => a.uploadedPath);
     if (!hasText || attachments.some((a) => a.uploading)) return;
     submittingRef.current = true;
     setSubmitting(true);
-    try {
-      const uploaded = attachments.filter((a) => a.uploadedPath);
-      const fullPrompt = buildDescriptionText(description.trim() || title.trim(), uploaded);
-      let finalTitle = title.trim() || deriveTitle(description);
-      if (!finalTitle && uploaded.length > 0) finalTitle = "Untitled task";
-      // Unified pipeline: create task → dispatch → navigate to agent
-      const task = await createTaskV2({
-        title: finalTitle,
-        description: fullPrompt || undefined,
-        project_name: project,
-        priority,
-        model: model || undefined,
-        effort: effort || undefined,
-        skip_permissions: skipPermissions,
-        use_worktree: !!worktree,
-        use_tmux: true,
-        auto_dispatch: false,
-      });
-      // Dispatch creates agent synchronously — returns task with agent_id
-      const dispatched = await dispatchTask(task.id);
-      clearAllDrafts();
-      clearAttachments();
-      setNotifyAt(null);
-      setIsClosing(true);
-      const el = sheetRef.current;
-      if (el) {
-        el.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)';
-        el.style.transform = 'translateY(100%)';
-      }
-      setTimeout(() => navigate(`/agents/${dispatched.agent_id}`, { state: forwardState(location) }), 250);
-    } catch (err) {
-      showToast("Launch failed: " + err.message, "error");
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+
+    const uploaded = attachments.filter((a) => a.uploadedPath);
+    const fullPrompt = buildDescriptionText(description.trim() || title.trim(), uploaded);
+    let finalTitle = title.trim() || deriveTitle(description);
+    if (!finalTitle && uploaded.length > 0) finalTitle = "Untitled task";
+
+    // Snapshot payload, then clear drafts/UI synchronously.
+    const payload = {
+      title: finalTitle,
+      description: fullPrompt || undefined,
+      project_name: project,
+      priority,
+      model: model || undefined,
+      effort: effort || undefined,
+      skip_permissions: skipPermissions,
+      use_worktree: !!worktree,
+      use_tmux: true,
+      auto_dispatch: false,
+    };
+    clearAllDrafts();
+    clearAttachments();
+    setNotifyAt(null);
+
+    // Dismiss sheet immediately + return to previous page.
+    setIsClosing(true);
+    const el = sheetRef.current;
+    if (el) {
+      el.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)';
+      el.style.transform = 'translateY(100%)';
     }
+    setTimeout(() => hasBackground ? navigate(-1) : navigate("/tasks", { replace: true }), 250);
+
+    // Background: create + dispatch. Toast on failure only.
+    (async () => {
+      try {
+        const task = await createTaskV2(payload);
+        await dispatchTask(task.id);
+      } catch (err) {
+        showToast("Launch failed: " + err.message, "error");
+      } finally {
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
+    })();
   };
 
   // ---- Attach/detach notify_at reminder time ----
