@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-04-29
+
+### Changed
+
+- BookmarksSection rows: title editing now via an explicit pencil icon (replaces the long-press gesture); pencil and time both pinned to the top-right of the row.
+- Title clamps to a single line (truncate); the original-message line below also clamps to a single line so rows stay uniform height.
+- 4o-mini bookmark-title summarizer prompt tightened to 3–6 words, ≤40 chars for cleaner row display.
+- Split-screen Projects tab: pane restores the last-opened project on re-entry instead of resetting to the project list.
+
 ## [0.9.2] - 2026-04-28
 
 ### Changed
