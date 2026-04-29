@@ -154,6 +154,13 @@ async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str
     from display_writer import write_retry_marker_for_agent
     write_retry_marker_for_agent(db, agent)
 
+    # Commit the agent row NOW so we release SQLite's exclusive write lock
+    # before the ~1s _prepare_dispatch (OpenAI translate + FTS5).  Otherwise
+    # any other writer (e.g. sync_loop processing JSONL deltas) blocks for
+    # up to busy_timeout=5s and crashes with "database is locked".
+    db.commit()
+    db.refresh(agent)
+
     # Schedule launch task EARLY with a prompt future, so its TUI polling
     # (~1s of process-detect + REPL-ready + settle) overlaps with
     # _prepare_dispatch (~1s of OpenAI translate + FTS5).  Without this
@@ -176,6 +183,7 @@ async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str
             )
             msg.status = MessageStatus.COMPLETED
             msg.completed_at = _utcnow()
+            db.commit()
             prompt_future.set_result(launch_prompt)
         except BaseException as e:
             if not prompt_future.done():

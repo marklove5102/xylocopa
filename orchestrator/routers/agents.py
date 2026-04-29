@@ -650,6 +650,13 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         )
         agent.tmux_pane = pane_id
 
+        # Commit the agent row NOW so we release SQLite's exclusive write lock
+        # before the ~1s _prepare_dispatch (OpenAI translate + FTS5).  Otherwise
+        # any other writer (e.g. sync_loop processing JSONL deltas) blocks for
+        # up to busy_timeout=5s and crashes with "database is locked".
+        db.commit()
+        db.refresh(agent)
+
         # Create the initial user message.  Schedule the launch task FIRST
         # with a prompt future so its TUI polling (~1s) overlaps with
         # _prepare_dispatch (OpenAI translate + FTS5, ~1s).
@@ -853,6 +860,15 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
             if worktree:
                 _task.branch_name = _task.branch_name or f"worktree-{worktree}"
             _task_linked = True
+
+    # Commit the agent row NOW so we release SQLite's exclusive write lock
+    # before the ~1s _prepare_dispatch (OpenAI translate + FTS5).  Otherwise
+    # any other writer (e.g. sync_loop processing JSONL deltas) blocks for
+    # up to busy_timeout=5s and crashes with "database is locked".
+    db.commit()
+    db.refresh(agent)
+    if _task_linked:
+        db.refresh(_task)
 
     # Save the initial prompt and prepare wrapped version for Claude.
     # Schedule the launch task FIRST with a prompt future so its TUI
@@ -2474,14 +2490,20 @@ async def get_agent_display_sent(
     agent_id: str,
     offset: int = Query(0, ge=0),
     tail_bytes: int = Query(0, ge=0),
+    focus_id: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
     """Read sent (delivered) messages from the per-agent JSONL file.
 
-    Two modes:
+    Three modes:
       - Initial load: tail_bytes > 0 and offset == 0 → read the last
         tail_bytes of the file, aligned to a line boundary.
       - Incremental poll: offset > 0 → read from offset to end of file.
+      - Focus-centered slice: focus_id supplied → locate the line whose
+        id matches focus_id, return ~tail_bytes/2 before and after it
+        (line-aligned). Falls back to tail mode if the id isn't found.
+        next_offset still points at the read window's right edge so a
+        subsequent incremental poll keeps working unchanged.
 
     Returns only entries with `seq != null` (sent messages). Pre-sent
     entries (queued / scheduled / cancelled) are exposed by the separate
@@ -2496,16 +2518,54 @@ async def get_agent_display_sent(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     display_path = os.path.join(DISPLAY_DIR, f"{agent_id}.jsonl")
-    empty = SentDisplayResponse(messages=[], next_offset=0, has_earlier=False)
+    empty = SentDisplayResponse(messages=[], next_offset=0, has_earlier=False, has_later=False)
 
     if not os.path.isfile(display_path):
         return empty
 
-    is_initial = tail_bytes > 0 and offset == 0
+    is_focus = bool(focus_id) and tail_bytes > 0 and offset == 0
+    is_initial = (not is_focus) and tail_bytes > 0 and offset == 0
     has_earlier = False
+    has_later = False
     try:
         with open(display_path, "r", encoding="utf-8") as f:
             file_size = f.seek(0, 2)
+
+            if is_focus:
+                # Locate the byte offset of the line containing focus_id.
+                # Cheap substring scan: a quoted id is unique enough in the
+                # JSONL stream (ids are 12-hex tokens, no false-positive risk
+                # at the call sites that produce display lines).
+                # Match both compact and pretty JSON spacing variants of the
+                # id field (json.dump default vs json.dumps default differ).
+                f.seek(0)
+                blob = f.read()
+                anchor = -1
+                for needle in (f'"id":"{focus_id}"', f'"id": "{focus_id}"'):
+                    anchor = blob.find(needle)
+                    if anchor >= 0:
+                        break
+                if anchor < 0:
+                    # Fallback: behave like a regular tail load when the id
+                    # is not present in this file (deleted, wrong agent, etc.).
+                    is_focus = False
+                    is_initial = True
+                else:
+                    half = max(1024, tail_bytes // 2)
+                    start = max(0, anchor - half)
+                    end = min(file_size, anchor + half)
+                    # Snap to line boundaries: drop a partial leading line, and
+                    # extend the tail to include the rest of the trailing line.
+                    if start > 0:
+                        nl = blob.find("\n", start)
+                        start = (nl + 1) if nl >= 0 else file_size
+                    if end < file_size:
+                        nl = blob.find("\n", end)
+                        end = (nl + 1) if nl >= 0 else file_size
+                    raw = blob[start:end]
+                    next_offset = end
+                    has_earlier = start > 0
+                    has_later = end < file_size
 
             if is_initial:
                 start = max(0, file_size - tail_bytes)
@@ -2513,14 +2573,17 @@ async def get_agent_display_sent(
                 if start > 0:
                     f.readline()  # discard partial line
                 has_earlier = f.tell() > 0 and start > 0
-            elif offset > 0:
+                raw = f.read()
+                next_offset = f.tell()
+            elif not is_focus and offset > 0:
                 f.seek(min(offset, file_size))
                 has_earlier = True
-            else:
+                raw = f.read()
+                next_offset = f.tell()
+            elif not is_focus and not is_initial:
                 f.seek(0)
-
-            raw = f.read()
-            next_offset = f.tell()
+                raw = f.read()
+                next_offset = f.tell()
     except OSError:
         return empty
 
@@ -2557,6 +2620,7 @@ async def get_agent_display_sent(
         messages=displayed,
         next_offset=next_offset,
         has_earlier=has_earlier,
+        has_later=has_later,
     )
 
 
