@@ -128,7 +128,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                   className="flex-1 bg-input rounded-lg px-2.5 py-1.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
                 />
               ) : (
-                <p className="text-[13px] leading-snug font-medium text-heading whitespace-pre-wrap break-words">
+                <p className="text-[13px] leading-snug font-medium text-heading truncate">
                   {topText}
                 </p>
               )}
