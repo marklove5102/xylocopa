@@ -99,41 +99,38 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             : "active:bg-input hover:bg-input/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         }`}
       >
-        <div className={`flex items-start gap-3 px-5 ${editing ? "py-3" : "py-3 min-h-[68px] items-center"}`}>
+        <div className={`flex items-stretch gap-3 px-5 ${editing ? "py-3" : "py-3 min-h-[72px]"}`}>
           <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1 mt-0.5">
             <FluentEmoji char={pickEmoji(item)} size={22} />
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              {editing ? (
-                <textarea
-                  ref={taRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={saveEditing}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      cancelEditing();
-                    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      taRef.current?.blur();
-                    }
-                  }}
-                  placeholder="Title — leave empty to use AI summary"
-                  rows={Math.min(6, Math.max(2, draft.split("\n").length))}
-                  disabled={saving}
-                  className="flex-1 bg-input rounded-lg px-2.5 py-1.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
-                />
-              ) : (
-                <p className="text-[13px] leading-snug font-medium text-heading truncate">
-                  {topText}
-                </p>
-              )}
-              <span className="text-[11px] text-faint shrink-0 mt-0.5">{meta}</span>
-            </div>
+          <div className="min-w-0 flex-1 flex flex-col justify-center">
+            {editing ? (
+              <textarea
+                ref={taRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={saveEditing}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelEditing();
+                  } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    taRef.current?.blur();
+                  }
+                }}
+                placeholder="Title — leave empty to use AI summary"
+                rows={Math.min(6, Math.max(2, draft.split("\n").length))}
+                disabled={saving}
+                className="w-full bg-input rounded-lg px-2.5 py-1.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
+              />
+            ) : (
+              <p className="text-[13px] leading-snug font-medium text-heading truncate">
+                {topText}
+              </p>
+            )}
             <p
               className={`text-xs mt-0.5 break-words ${
                 isFile ? "font-mono text-dim" : "text-dim"
@@ -143,37 +140,29 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             </p>
           </div>
 
-          <div className="shrink-0 self-center flex items-center gap-0.5">
-            {!editing && !locallyRemoved && (
-              <button
-                type="button"
-                onClick={startEditing}
-                title="Edit title"
-                aria-label="Edit bookmark title"
-                className="p-1 rounded-md text-faint hover:text-heading hover:bg-input transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414c0-.53.21-1.04.586-1.414z" />
-                </svg>
-              </button>
-            )}
+          <div className="shrink-0 flex flex-col items-end justify-between -my-0.5">
+            <span className="text-[11px] text-faint leading-none">{meta}</span>
+            <div className="flex items-center gap-0.5 -mr-1">
+              {!editing && !locallyRemoved && (
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  title="Edit title"
+                  aria-label="Edit bookmark title"
+                  className="p-1 rounded-md text-faint hover:text-heading hover:bg-input transition-colors"
+                >
+                  {/* Heroicons v2 pencil — single clean diagonal stroke */}
+                  <svg className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                  </svg>
+                </button>
+              )}
 
-            {typeof onDelete === "function" && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (locallyRemoved) {
-                    setLocallyRemoved(false);
-                    onRestore?.(item.message_id);
-                  } else {
-                    setLocallyRemoved(true);
-                    onDelete(item.message_id);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
+              {typeof onDelete === "function" && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
                     e.stopPropagation();
                     if (locallyRemoved) {
                       setLocallyRemoved(false);
@@ -182,20 +171,32 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                       setLocallyRemoved(true);
                       onDelete(item.message_id);
                     }
-                  }
-                }}
-                title={locallyRemoved ? "Re-bookmark" : "Remove bookmark"}
-                className={`p-1 rounded-md transition-colors cursor-pointer ${
-                  locallyRemoved
-                    ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
-                    : "text-amber-500 hover:bg-amber-500/15"
-                }`}
-              >
-                <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                </svg>
-              </span>
-            )}
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation();
+                      if (locallyRemoved) {
+                        setLocallyRemoved(false);
+                        onRestore?.(item.message_id);
+                      } else {
+                        setLocallyRemoved(true);
+                        onDelete(item.message_id);
+                      }
+                    }
+                  }}
+                  title={locallyRemoved ? "Re-bookmark" : "Remove bookmark"}
+                  className={`p-1 rounded-md transition-colors cursor-pointer ${
+                    locallyRemoved
+                      ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
+                      : "text-amber-500 hover:bg-amber-500/15"
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  </svg>
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
