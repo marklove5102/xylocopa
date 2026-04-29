@@ -3182,13 +3182,18 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const scrollKey = `scroll:chat:${id}`;
   const scrollCountKey = `scroll:chat:${id}:count`;
 
-  // Detect if user has scrolled up (to avoid forcing scroll during streaming)
-  // and persist scroll position (debounced) for restore on navigate-back
+  // userScrolledUp = "user is NOT at the live tail" — true while they're
+  // reading older content, so auto-pin-to-bottom skips. Two ways to be
+  // off-tail: (a) physically scrolled up >100px from the bottom of the
+  // loaded window, or (b) the loaded window doesn't reach EOF (focus-slice
+  // mode), in which case even sitting at the slice's bottom edge isn't
+  // "the tail". Without (b), focus-slice mode mistook a short slice for
+  // tail and re-pinned on every WS event.
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    userScrolledUp.current = distFromBottom > 100;
+    userScrolledUp.current = distFromBottom > 100 || hasLaterRef.current;
     const shouldShow = distFromBottom > 300;
     setShowScrollToBottom(shouldShow);
     // Scroll-up trigger for lazy loading
