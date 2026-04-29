@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import FluentEmoji from "./FluentEmoji";
 import { relativeTime } from "../lib/formatters";
-import useLongPress from "../hooks/useLongPress";
 import { updateBookmark } from "../lib/api";
 import { useToast } from "../contexts/ToastContext";
 
@@ -30,7 +29,6 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
   const taRef = useRef(null);
   const toast = useToast();
 
-  // Current top text shown when not editing: prefer item.body (user_note || summary).
   const topText =
     item.body || (item.summary === null ? "Summarizing…" : "(no summary)");
 
@@ -43,8 +41,9 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
     el.setSelectionRange(len, len);
   }, [editing]);
 
-  const startEditing = () => {
-    if (locallyRemoved) return;
+  const startEditing = (e) => {
+    e?.stopPropagation();
+    if (locallyRemoved || editing) return;
     setDraft(item.body || "");
     setEditing(true);
   };
@@ -58,7 +57,6 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
     if (saving) return;
     const next = draft.trim();
     const original = (item.body || "").trim();
-    // Empty string clears user_note (back to AI summary). Skip the call if unchanged.
     if (next === original) {
       cancelEditing();
       return;
@@ -76,31 +74,17 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
     }
   };
 
-  // Long-press → enter edit mode. Tap → open chat at this message.
-  const isInteractive = (e) =>
-    !!e?.target?.closest?.(
-      "textarea, input, button, [data-no-longpress]",
-    );
-  const longPressHandlers = useLongPress(
-    (e) => {
-      if (editing) return;
-      if (isInteractive(e)) return;
-      if (navigator.vibrate) navigator.vibrate(15);
-      startEditing();
-    },
-    (e) => {
-      if (editing) return;
-      if (isInteractive(e)) return;
-      onOpen?.();
-    },
-  );
+  const handleRowClick = () => {
+    if (editing) return;
+    onOpen?.();
+  };
 
   return (
     <div className="rounded-2xl bg-surface shadow-card overflow-hidden">
       <div
-        {...(editing ? {} : longPressHandlers)}
         role={editing ? undefined : "button"}
         tabIndex={editing ? -1 : 0}
+        onClick={handleRowClick}
         onKeyDown={(e) => {
           if (editing) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -125,9 +109,9 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
               {editing ? (
                 <textarea
                   ref={taRef}
-                  data-no-longpress
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
                   onBlur={saveEditing}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
@@ -159,23 +143,26 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             </p>
           </div>
 
-          {typeof onDelete === "function" && (
-            <span
-              role="button"
-              tabIndex={0}
-              data-no-longpress
-              onClick={(e) => {
-                e.stopPropagation();
-                if (locallyRemoved) {
-                  setLocallyRemoved(false);
-                  onRestore?.(item.message_id);
-                } else {
-                  setLocallyRemoved(true);
-                  onDelete(item.message_id);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
+          <div className="shrink-0 self-center flex items-center gap-0.5">
+            {!editing && !locallyRemoved && (
+              <button
+                type="button"
+                onClick={startEditing}
+                title="Edit title"
+                aria-label="Edit bookmark title"
+                className="p-1 rounded-md text-faint hover:text-heading hover:bg-input transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414c0-.53.21-1.04.586-1.414z" />
+                </svg>
+              </button>
+            )}
+
+            {typeof onDelete === "function" && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
                   e.stopPropagation();
                   if (locallyRemoved) {
                     setLocallyRemoved(false);
@@ -184,19 +171,32 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                     setLocallyRemoved(true);
                     onDelete(item.message_id);
                   }
-                }
-              }}
-              className={`shrink-0 self-center p-1 rounded-md transition-colors cursor-pointer ${
-                locallyRemoved
-                  ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
-                  : "text-amber-500 hover:bg-amber-500/15"
-              }`}
-            >
-              <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-              </svg>
-            </span>
-          )}
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    if (locallyRemoved) {
+                      setLocallyRemoved(false);
+                      onRestore?.(item.message_id);
+                    } else {
+                      setLocallyRemoved(true);
+                      onDelete(item.message_id);
+                    }
+                  }
+                }}
+                title={locallyRemoved ? "Re-bookmark" : "Remove bookmark"}
+                className={`p-1 rounded-md transition-colors cursor-pointer ${
+                  locallyRemoved
+                    ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
+                    : "text-amber-500 hover:bg-amber-500/15"
+                }`}
+              >
+                <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -248,9 +248,6 @@ export default function BookmarksSection({ projectName, items, onDelete, onResto
           />
         ))}
       </div>
-      <p className="text-xs text-faint pt-3 px-1">
-        Long-press a row to edit the title.
-      </p>
     </div>
   );
 }
