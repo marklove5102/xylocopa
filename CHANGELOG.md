@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-04-28
+
+### Changed
+
+- Split-screen pane chat header: replace the X (close) icon with the chevron-left back arrow and switch to `resolveBack()` logic so the pane respects the navigation state chain (e.g. A→B→back goes to A) instead of always returning to `/agents`.
+
 ## [0.9.1] - 2026-04-28
 
 ### Changed
