@@ -429,6 +429,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [project, setProject] = useState(null);
   const [agents, setAgents] = useState([]);
   const [bookmarks, setBookmarks] = useState([]);
+  // Rows the user removed in this mount session. We re-inject them into the
+  // displayed list after every poll so they don't vanish under their finger
+  // when the 5s loadData() refresh comes back without them. Cleared on
+  // navigate-away (component unmount) or full page reload.
+  const removedTombstonesRef = useRef(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
@@ -595,7 +600,19 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       setProject(folder);
       setAgents(agentList);
       if (stats) setProjectStats(stats);
-      setBookmarks(bookmarkList || []);
+      // Merge in tombstones (locally-removed rows the backend has already
+      // dropped) so they stay visible until next mount.
+      const fresh = bookmarkList || [];
+      const freshIds = new Set(fresh.map((b) => b.message_id));
+      const ghosts = [];
+      for (const [id, snap] of removedTombstonesRef.current) {
+        if (!freshIds.has(id)) ghosts.push(snap);
+      }
+      const merged = ghosts.length
+        ? [...fresh, ...ghosts].sort((a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        : fresh;
+      setBookmarks(merged);
       setLoadError(null);
     } catch (err) {
       console.error("Failed to load project data:", err);
@@ -1446,16 +1463,23 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         projectName={name}
         items={bookmarks}
         onDelete={async (messageId) => {
-          // Soft delete: backend only. The row stays visible in this session;
-          // the next loadData() poll will drop it from the list naturally.
+          // Soft delete: snapshot the row into tombstones BEFORE backend call
+          // so the next poll re-injects it. Stays visible until the user
+          // navigates away (or hard-refreshes), at which point the ref is
+          // wiped and the now-deleted row genuinely disappears.
+          const snapshot = bookmarks.find((b) => b.message_id === messageId);
+          if (snapshot) removedTombstonesRef.current.set(messageId, snapshot);
           try {
             await deleteBookmark(name, messageId);
           } catch (err) {
+            removedTombstonesRef.current.delete(messageId); // rollback
             showToast("Failed to remove bookmark: " + (err?.message || "unknown"), "error");
           }
         }}
         onRestore={async (messageId) => {
-          // Re-bookmark a row the user just removed in this session.
+          // Re-bookmark a row the user just removed in this session: drop the
+          // tombstone so the live row from the next poll is the source of truth.
+          removedTombstonesRef.current.delete(messageId);
           try {
             await createBookmark(name, messageId);
           } catch (err) {
