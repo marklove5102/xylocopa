@@ -915,7 +915,11 @@ async def token_usage():
         # On rate-limit, return stale cache if available instead of failing
         if exc.code == 429 and _token_usage_cache["data"] is not None:
             return _token_usage_cache["data"]
-        raise HTTPException(status_code=exc.code, detail=f"Anthropic API error: {body}")
+        # Remap upstream auth errors (401/403) to 502 so the frontend doesn't
+        # conflate an expired Anthropic OAuth token with the user's Xylocopa
+        # session expiring — otherwise a 401 here triggers handle401 → logout.
+        status = 502 if exc.code in (401, 403) else exc.code
+        raise HTTPException(status_code=status, detail=f"Anthropic API error: {body}")
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         if _token_usage_cache["data"] is not None:
             return _token_usage_cache["data"]
