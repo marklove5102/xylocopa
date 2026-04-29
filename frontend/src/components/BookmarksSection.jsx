@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import FluentEmoji from "./FluentEmoji";
 import { relativeTime } from "../lib/formatters";
 import { updateBookmark } from "../lib/api";
+import { forwardState } from "../lib/nav";
 import { useToast } from "../contexts/ToastContext";
 
 // Map backend `kind` → fallback emoji when AI summary_emoji is missing.
@@ -206,11 +207,15 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
 
 export default function BookmarksSection({ projectName, items, onDelete, onRestore, onPatched }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const bookmarks = items || [];
 
   const handleOpen = (item) => {
     if (item?.agent_id && item?.message_id) {
-      navigate(`/agents/${item.agent_id}?focus=${encodeURIComponent(item.message_id)}`);
+      navigate(
+        `/agents/${item.agent_id}?focus=${encodeURIComponent(item.message_id)}`,
+        { state: forwardState(location) },
+      );
     }
   };
 

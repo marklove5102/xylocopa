@@ -3221,7 +3221,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [loading, messages.length, scrollCountKey]);
 
-  // Focus + breathing-flash for bookmarked messages — `?focus=<message_id>` URL param
+  // Focus + breathing-flash for bookmarked messages — `?focus=<message_id>` URL param.
+  // If the bookmark targets a message older than the initial 50KB tail, keep
+  // pulling older pages until it lands in the DOM (or there are no more).
   const focusedMsgRef = useRef(false);
   useEffect(() => {
     if (focusedMsgRef.current) return;
@@ -3231,14 +3233,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     if (!focusId) return;
     const handle = requestAnimationFrame(() => {
       const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
-      if (!el) return;
+      if (!el) {
+        if (hasMore && !loadingMore) loadOlderMessages();
+        return;
+      }
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("bookmark-flash");
       setTimeout(() => el.classList.remove("bookmark-flash"), 2100);
       focusedMsgRef.current = true;
     });
     return () => cancelAnimationFrame(handle);
-  }, [loading, messages?.length, location.search]);
+  }, [loading, messages?.length, location.search, hasMore, loadingMore, loadOlderMessages]);
 
   // Auto-load older messages when content doesn't overflow the viewport
   // but has_earlier is true (scroll-based trigger can't fire without overflow)
