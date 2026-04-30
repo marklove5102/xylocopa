@@ -15,8 +15,8 @@ import { forwardState } from "../lib/nav";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
-  { key: "ACTIVE", label: "Active" },
   { key: "STARRED", label: "Starred" },
+  { key: "ACTIVE", label: "Active" },
   { key: "INSIGHTS", label: "Insights" },
   { key: "STOPPED", label: "Stopped" },
 ];
