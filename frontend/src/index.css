@@ -62,7 +62,10 @@
 
 /* Opt-in to translucent glass only when the browser actually supports
    backdrop-filter. Browsers without support keep the opaque defaults
-   above, so content underneath never bleeds through. */
+   above, so content underneath never bleeds through.
+   `html.no-glass` (set in main.jsx for Linux desktop, where the GPU
+   compositor frequently fails to render the blur even though the CSS
+   property parses) wins over this @supports block via specificity. */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
     --color-glass:     rgba(230,233,238,0.68);
@@ -72,6 +75,15 @@
     --color-glass:     rgba(30,41,59,0.7);
     --color-glass-nav: rgba(40,50,70,0.45);
   }
+}
+
+html.no-glass {
+  --color-glass:     #e6e9ee;
+  --color-glass-nav: #f0f2f5;
+}
+html.no-glass.dark {
+  --color-glass:     #1e293b;
+  --color-glass-nav: #283246;
 }
 
 /* SVG <text> doesn't inherit font-family by default in several browsers

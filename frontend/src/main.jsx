@@ -6,6 +6,22 @@ import "./index.css";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 
+// Mark non-mobile Linux as glass-incapable: backdrop-filter parses on
+// Linux Chrome/Firefox so @supports reports true, but the GPU compositor
+// frequently fails to actually render the blur (X11 + lots of driver
+// combos), so chat history bleeds through translucent surfaces. Mobile
+// platforms (iOS, Android) and macOS/Windows render glass correctly.
+(function tagGlassCapability() {
+  try {
+    const ua = navigator.userAgent || "";
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+    const isLinux = /Linux/i.test(ua) && !/Android/i.test(ua);
+    if (isLinux && !isMobile) {
+      document.documentElement.classList.add("no-glass");
+    }
+  } catch { /* best-effort */ }
+})();
+
 // --- Reload tracing probe (event listeners only) ---------------------------
 // The location.reload() monkey-patch lives in index.html so it installs
 // before any ES module (including vite client) loads.  Here we add the
