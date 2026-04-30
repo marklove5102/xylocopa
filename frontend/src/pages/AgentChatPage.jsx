@@ -4499,7 +4499,16 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <button
             type="button"
             onPointerDown={(e) => e.preventDefault()}
-            onClick={() => {
+            onClick={async () => {
+              // In focus-slice mode the bottom of the loaded window is
+              // the slice's right edge, not the file's EOF — pull the
+              // gap first, then wait one frame for React to render the
+              // appended messages so messagesEndRef is at its new
+              // position before scrollIntoView locks in a target.
+              if (hasLaterRef.current) {
+                await loadNewerMessages();
+                await new Promise((r) => requestAnimationFrame(r));
+              }
               messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
               setShowScrollToBottom(false);
             }}
