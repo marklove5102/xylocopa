@@ -74,7 +74,7 @@ const FolderCard = memo(function FolderCard({ folder, onClick, dragHandleProps, 
     <button
       type="button"
       {...longPressHandlers}
-      style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
+      style={{ WebkitTapHighlightColor: "transparent" }}
       data-project-name={folder.name}
       data-claudemd-pending={hasPendingClaudeMd ? "1" : undefined}
       className={`relative w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transform-gpu transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${

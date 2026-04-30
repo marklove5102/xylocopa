@@ -24,7 +24,7 @@ const TrashRow = memo(function TrashRow({ folder, busy, onRestore, onDelete, sel
     <button
       type="button"
       {...longPressHandlers}
-      style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}
+      style={{ WebkitTapHighlightColor: "transparent" }}
       className={`w-full text-left flex items-center justify-between rounded-xl bg-surface shadow-card overflow-hidden px-5 py-4 transform-gpu transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
         selecting && selected ? "ring-2 ring-cyan-500/50 brightness-[0.88]" : ""
       }`}

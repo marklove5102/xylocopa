@@ -104,6 +104,19 @@ svg text { font-family: inherit; }
     box-shadow: 0 4px 20px rgba(0,0,0,0.14), 0 -1px 6px rgba(0,0,0,0.06);
   }
 
+  /* Long-press containers (anything that uses the useLongPress hook):
+     disable iOS native text-selection menu and word-selection handles on
+     the element itself AND every descendant. iOS Safari does not always
+     inherit user-select:none from a parent onto inner text nodes, so the
+     rule must hit children explicitly. Auto-applied via the
+     `data-longpress="true"` attribute returned by useLongPress. */
+  [data-longpress],
+  [data-longpress] * {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
   /* Glass bar */
   .glass-bar {
     background: var(--color-glass);

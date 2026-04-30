@@ -77,5 +77,8 @@ export default function useLongPress(onLongPress, onTap, delay = 500) {
     onPointerLeave,
     onPointerCancel,
     onContextMenu,
+    // Marker for the global `[data-longpress]` CSS rule that disables iOS
+    // long-press text selection on the element + every descendant.
+    "data-longpress": "true",
   };
 }
