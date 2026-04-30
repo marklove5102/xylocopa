@@ -285,6 +285,16 @@ Client: [`orchestrator/telemetry.py`](orchestrator/telemetry.py) — sends to a 
 - **Double-tap a message** in the chat view to open its action menu — Copy / Modify / Delete / Bookmark. Only one menu is open at a time; an outside tap dismisses. **Bookmark** opens an inline note prompt; skip it and the AI-generated summary is used as the title.
 - **Double-tap a tab** in the bottom nav to scroll to the first unread / pending item.
 
+## Agent control plane
+
+Xylocopa-managed agents can call back into the orchestrator via a built-in
+MCP server — list/create/dispatch tasks, read each other's sessions,
+scaffold projects, check health. The surface is deliberately
+non-destructive (verb whitelist + blacklist).
+
+See **[docs/agent-mcp-tools.md](docs/agent-mcp-tools.md)** for the full
+tool list, safety model, and what's intentionally not exposed.
+
 ## Troubleshooting
 
 - **Conversation stuck or not updating?** Click the **refresh button** at the top of the chat view to re-sync the session from the CLI.
