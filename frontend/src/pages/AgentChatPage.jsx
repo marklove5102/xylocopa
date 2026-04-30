@@ -2787,6 +2787,13 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const data = await fetchDisplaySent(id, { offset: nextOffsetRef.current });
       const newer = Array.isArray(data?.messages) ? data.messages : [];
       hasLaterRef.current = !!data?.has_later;
+      // Advance the read cursor so subsequent incremental polls
+      // (debouncedRefreshSent / refreshMessages, no longer gated once
+      // hasLater flips false) start from EOF instead of re-fetching the
+      // slice→EOF range we just appended.
+      if (data?.next_offset != null) {
+        nextOffsetRef.current = data.next_offset;
+      }
       if (newer.length) {
         userScrolledUp.current = true;
         setSentMessages((prev) => {
