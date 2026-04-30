@@ -100,7 +100,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             : "active:bg-input hover:bg-input/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         }`}
       >
-        <div className={`flex items-center gap-3 px-5 ${editing ? "py-3" : "py-3 min-h-[72px]"}`}>
+        <div className="flex items-center gap-3 px-5 py-3 min-h-[72px]">
           <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1">
             <FluentEmoji char={pickEmoji(item)} size={22} />
           </div>
@@ -144,20 +144,25 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
           <div className="shrink-0 flex flex-col items-end justify-between -my-0.5">
             <span className="text-[11px] text-faint leading-none">{meta}</span>
             <div className="flex items-center gap-0.5 -mr-1">
-              {!editing && !locallyRemoved && (
+              {!locallyRemoved ? (
                 <button
                   type="button"
                   onClick={startEditing}
+                  disabled={editing}
                   title="Edit title"
                   aria-label="Edit bookmark title"
-                  className="p-1 rounded-md text-faint hover:text-heading hover:bg-input transition-colors"
+                  className={`p-1 rounded-md transition-colors ${
+                    editing
+                      ? "text-faint/40 cursor-default"
+                      : "text-faint hover:text-heading hover:bg-input"
+                  }`}
                 >
                   {/* Heroicons v2 pencil — single clean diagonal stroke */}
                   <svg className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
                   </svg>
                 </button>
-              )}
+              ) : null}
 
               {typeof onDelete === "function" && (
                 <span
