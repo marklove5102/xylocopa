@@ -1246,6 +1246,139 @@ def project_regenerate_claude_md(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Agent tools
+# ---------------------------------------------------------------------------
+
+@server.tool()
+def agent_list(project: str = "", status: str = "", limit: int = 30) -> str:
+    """List xylocopa agents, optionally filtered by project and status.
+
+    Results are ordered by last_message_at DESC (most recently active first).
+
+    Args:
+        project: Filter by project name (optional).
+        status: Filter by status (e.g. STARTING, RUNNING, WAITING, STOPPED,
+            ERROR, COMPLETE), case-insensitive. Empty = all statuses.
+        limit: Max results (default 30, capped at 100).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    if limit < 1:
+        limit = 1
+    elif limit > 100:
+        limit = 100
+
+    try:
+        clauses: list[str] = []
+        params: list = []
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if status:
+            clauses.append("UPPER(status) = ?")
+            params.append(status.strip().upper())
+
+        query = (
+            "SELECT id, name, project, status, session_id, model, effort, "
+            "       last_message_preview, last_message_at, created_at "
+            "FROM agents"
+        )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += (
+            " ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?"
+        )
+        params.append(limit)
+
+        rows = db.execute(query, tuple(params)).fetchall()
+    finally:
+        db.close()
+
+    if not rows:
+        filters = []
+        if project:
+            filters.append(f"project={project}")
+        if status:
+            filters.append(f"status={status}")
+        suffix = f" ({', '.join(filters)})" if filters else ""
+        return f"No agents found.{suffix}"
+
+    lines = [f"Found {len(rows)} agent(s):\n"]
+    for r in rows:
+        ts = (r["last_message_at"] or r["created_at"] or "")[:19]
+        preview = (r["last_message_preview"] or "")[:80]
+        lines.append(
+            f"- **{r['name']}** [{r['status']}] — {r['project']}\n"
+            f"  id: `{r['id']}`  session: `{r['session_id'] or '(none)'}`\n"
+            f"  model: {r['model'] or '(default)'}  "
+            f"effort: {r['effort'] or '(default)'}  last: {ts}\n"
+            f"  {preview}"
+        )
+    return "\n".join(lines)
+
+
+@server.tool()
+def agent_get(agent_id: str) -> str:
+    """Get full detail for a single agent.
+
+    Accepts agent ID, session ID, or a prefix of either (uses the same
+    lookup logic as session_read).
+
+    Args:
+        agent_id: Agent ID, session ID, or prefix.
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        row = _lookup_agent(db, agent_id)
+        if row is None:
+            return f"No agent found matching: {agent_id}"
+
+        # Fetch the full row for the matched agent
+        full = db.execute(
+            "SELECT id, name, project, status, session_id, mode, model, effort, "
+            "       branch, worktree, tmux_pane, last_message_preview, "
+            "       last_message_at, unread_count, created_at, muted, "
+            "       parent_id, task_id, is_subagent, has_pending_suggestions "
+            "FROM agents WHERE id = ?",
+            (row["id"],),
+        ).fetchone()
+    finally:
+        db.close()
+
+    if full is None:
+        return f"No agent found matching: {agent_id}"
+
+    preview = (full["last_message_preview"] or "(no messages)")[:200]
+
+    lines = [
+        f"# Agent: {full['name']}",
+        f"- id: `{full['id']}`",
+        f"- project: {full['project']}",
+        f"- status: {full['status']}",
+        f"- mode: {full['mode']}",
+        f"- session_id: `{full['session_id'] or '(none)'}`",
+        f"- model: {full['model'] or '(default)'}  effort: {full['effort'] or '(default)'}",
+        f"- branch: {full['branch'] or '(none)'}  worktree: {full['worktree'] or '(none)'}",
+        f"- tmux_pane: {full['tmux_pane'] or '(none)'}",
+        f"- task_id: {full['task_id'] or '(none)'}",
+        f"- parent_id: {full['parent_id'] or '(none)'}  is_subagent: {bool(full['is_subagent'])}",
+        f"- unread: {full['unread_count']}  muted: {bool(full['muted'])}  "
+        f"pending_suggestions: {bool(full['has_pending_suggestions'])}",
+        f"- created: {(full['created_at'] or '')[:19]}",
+        f"- last_message_at: {(full['last_message_at'] or '(never)')[:19] if full['last_message_at'] else '(never)'}",
+        "",
+        "## Last message preview",
+        preview,
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Existing helpers (used by older tools below)
 # ---------------------------------------------------------------------------
 
