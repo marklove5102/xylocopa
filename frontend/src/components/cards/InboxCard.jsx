@@ -399,7 +399,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
-          style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent" }}
+          style={{ WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}
         >
           {dragHandleProps && (
             <button
