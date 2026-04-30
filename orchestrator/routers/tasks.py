@@ -125,9 +125,11 @@ async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str
 
     from routers.agents import _preflight_claude_project, _launch_tmux_background
     _preflight_claude_project(proj.path)
-    pane_id = create_tmux_claude_session(
-        tmux_session, proj.path, claude_cmd,
-        agent_id=agent_hex,
+    # 5 sync `tmux` subprocess calls (kill/new-session/display-message/send-keys×2)
+    # would otherwise stall the event loop ~150-300ms during dispatch.
+    pane_id = await asyncio.to_thread(
+        create_tmux_claude_session,
+        tmux_session, proj.path, claude_cmd, agent_hex,
     )
 
     # Create Agent record

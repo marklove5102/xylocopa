@@ -644,9 +644,9 @@ async def create_agent(body: AgentCreate, request: Request, db: Session = Depend
         claude_cmd = " ".join(shlex.quote(p) for p in cmd_parts)
 
         _preflight_claude_project(project.path)
-        pane_id = _create_tmux_claude_session(
-            tmux_session, project.path, claude_cmd,
-            agent_id=agent_id,
+        pane_id = await asyncio.to_thread(
+            _create_tmux_claude_session,
+            tmux_session, project.path, claude_cmd, agent_id,
         )
         agent.tmux_pane = pane_id
 
@@ -816,9 +816,9 @@ async def launch_tmux_agent(request: Request, db: Session = Depends(get_db)):
     # directory that hasn't been explicitly trusted yet.
     _preflight_claude_project(proj.path)
 
-    pane_id = _create_tmux_claude_session(
-        tmux_session, proj.path, claude_cmd,
-        agent_id=agent_hex,
+    pane_id = await asyncio.to_thread(
+        _create_tmux_claude_session,
+        tmux_session, proj.path, claude_cmd, agent_hex,
     )
 
     # Create Agent record immediately so the frontend can navigate to it.
@@ -2346,9 +2346,9 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
                 if os.path.isdir(wt_path):
                     launch_cwd = wt_path
 
-            pane_id = _create_tmux_claude_session(
-                tmux_session, launch_cwd, claude_cmd,
-                agent_id=agent.id,
+            pane_id = await asyncio.to_thread(
+                _create_tmux_claude_session,
+                tmux_session, launch_cwd, claude_cmd, agent.id,
             )
 
             agent.tmux_pane = pane_id
