@@ -99,10 +99,44 @@ const AgentRow = memo(function AgentRow({
         }`} />
 
         <div className="min-w-0 flex-1">
-          {/* Title */}
-          <h3 className="text-base font-medium leading-snug text-heading truncate">
-            {agent.name}
-          </h3>
+          {/* Title + time (+ star inline, when starred) */}
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="text-base font-medium leading-snug text-heading truncate">
+              {agent.name}
+            </h3>
+            <div className="shrink-0 flex items-center gap-1 mt-0.5">
+              {agent.starred && (
+                <span
+                  data-no-longpress
+                  role="button"
+                  tabIndex={0}
+                  onClick={handleStarClick}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") handleStarClick(e);
+                  }}
+                  title={softUnstarred ? "Re-star" : "Unstar"}
+                  className={`p-0.5 -my-0.5 rounded transition-colors cursor-pointer ${
+                    softUnstarred
+                      ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
+                      : "text-amber-500 hover:bg-amber-500/15"
+                  }`}
+                >
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill={softUnstarred ? "none" : "currentColor"}
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </span>
+              )}
+              <span className="text-[11px] text-faint">
+                {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
+              </span>
+            </div>
+          </div>
           {/* Preview + unread badge */}
           <div className="flex items-center gap-2 mt-1">
             <p className="text-sm text-dim truncate min-w-0 flex-1">
@@ -163,39 +197,6 @@ const AgentRow = memo(function AgentRow({
             insights
           </span>
         )}
-        {/* Right column: time on top, star on bottom (mirrors BookmarksSection) */}
-        <div className="shrink-0 flex flex-col items-end gap-1 -my-0.5">
-          <span className="text-[11px] text-faint leading-none">
-            {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
-          </span>
-          {agent.starred && (
-            <span
-              data-no-longpress
-              role="button"
-              tabIndex={0}
-              onClick={handleStarClick}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") handleStarClick(e);
-              }}
-              title={softUnstarred ? "Re-star" : "Unstar"}
-              className={`p-1 -mr-1 rounded-md transition-colors cursor-pointer ${
-                softUnstarred
-                  ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
-                  : "text-amber-500 hover:bg-amber-500/15"
-              }`}
-            >
-              <svg
-                className="w-4 h-4"
-                fill={softUnstarred ? "none" : "currentColor"}
-                stroke="currentColor"
-                strokeWidth={2}
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-              </svg>
-            </span>
-          )}
-        </div>
       </div>
     </button>
   );
