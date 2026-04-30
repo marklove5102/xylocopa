@@ -13,6 +13,8 @@
 - Do not refactor or rename files unless the task explicitly requires it
 - Do not delete or modify tests unless asked
 - Do not change dependencies/package versions without explicit approval
+- Do not modify CLAUDE.md
+- Do not write to memory files (.claude/memory/, MEMORY.md) — only the orchestrator manages persistent memory
 
 ## Output Rules
 - Keep responses concise — no long explanations unless asked
@@ -23,21 +25,6 @@
 - Commit message format: `[scope] brief description` (e.g. `[frontend] fix image zoom gesture`)
 - Commit frequently — small atomic commits, not one giant commit at the end
 - Commit to master directly when appropriate
-
-## Release Conventions
-- Tag format: `v<major>.<minor>.<patch>`
-- Release notes: overview paragraph + categorized changelists with context
-- Tone: factual changelog style — describe what changed, no adjectives or selling language
-- Use `gh release create` with `--notes` — include `Full Changelog` compare link at the bottom
-- Only create releases when explicitly asked by the user
-
-## Commit Safety (public repo)
-- **No secrets**: never commit API keys, tokens, passwords, or private keys — even as "examples". Use empty values in `.env.example` (e.g. `OPENAI_API_KEY=`), not fake-looking placeholder strings
-- **No certificates**: `.pem`, `.crt`, `.key`, `.p12` etc. are gitignored — never force-add them
-- **No personal paths**: use `~/`, `/home/YOUR_USERNAME/`, or relative paths in committed files — never hardcode real user home paths
-- **No internal docs**: don't commit audit reports, release strategy, or internal planning docs — they expose security details and roadmap
-- **No database files**: `.db`, `.sqlite3`, `:memory:` stubs are gitignored — never force-add them
-- **Before committing new config/example files**: verify they contain only placeholders or empty values
 
 ## Concurrency Rules
 - Check which files other agents are currently modifying before editing shared files
@@ -59,6 +46,11 @@
 - Restart: `./run.sh` or POST `/api/system/restart` (both auto-rebuild stale frontend before restart)
 - Logs: `logs/server.log`, `logs/orchestrator.log`
 
+## Xylocopa context
+- This project is managed by xylocopa. The orchestrator MCP server is auto-registered via `.mcp.json`.
+- Available tools: `project_*`, `task_*`, `session_*`, `agent_*`, `system_health` — list/get/read/create/update/dispatch/scaffold only, no destructive verbs.
+- Full reference: xylocopa repo `docs/agent-mcp-tools.md`.
+
 ## Project-Specific Rules
 See README.md for detailed project documentation.
 - Worktree sessions: always use `_resolve_session_jsonl()`, never bare `session_source_dir()`
@@ -67,3 +59,18 @@ See README.md for detailed project documentation.
 - SQLAlchemy: `metadata` is reserved — use alt attr name with explicit column
 - When fixing a helper, grep ALL call sites — don't assume you found them all
 - Queued messages use stop-hook dispatch: PENDING in DB → stop hook fires → send via tmux → UserPromptSubmit confirms delivery
+
+### Release conventions
+- Tag format: `v<major>.<minor>.<patch>`
+- Release notes: overview paragraph + categorized changelists with context
+- Tone: factual changelog style — describe what changed, no adjectives or selling language
+- Use `gh release create` with `--notes` — include `Full Changelog` compare link at the bottom
+- Only create releases when explicitly asked by the user
+
+### Commit safety (public repo)
+- **No secrets**: never commit API keys, tokens, passwords, or private keys — even as "examples". Use empty values in `.env.example` (e.g. `OPENAI_API_KEY=`), not fake-looking placeholder strings
+- **No certificates**: `.pem`, `.crt`, `.key`, `.p12` etc. are gitignored — never force-add them
+- **No personal paths**: use `~/`, `/home/YOUR_USERNAME/`, or relative paths in committed files — never hardcode real user home paths
+- **No internal docs**: don't commit audit reports, release strategy, or internal planning docs — they expose security details and roadmap
+- **No database files**: `.db`, `.sqlite3`, `:memory:` stubs are gitignored — never force-add them
+- **Before committing new config/example files**: verify they contain only placeholders or empty values

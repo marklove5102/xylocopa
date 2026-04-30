@@ -16,8 +16,8 @@ logger = logging.getLogger("orchestrator.scaffolder")
 
 TEMPLATE_HEADER = "> Read this file at the start of every task"
 
-MAX_CLAUDE_LINES = 60  # warn if generated CLAUDE.md exceeds this
-MAX_PROJECT_RULES_LINES = 20  # overflow to README.md if exceeded
+MAX_CLAUDE_LINES = 80  # warn if generated CLAUDE.md exceeds this
+MAX_PROJECT_RULES_LINES = 40  # overflow to README.md if exceeded
 
 IGNORED_DIRS = {
     "node_modules", ".git", ".venv", "venv", "__pycache__", ".next",
@@ -563,6 +563,14 @@ def backfill_all_projects(registry_path: str) -> list[dict]:
     projects = data.get("projects", []) or []
     results = []
 
+    # Don't auto-scaffold the host project — its CLAUDE.md is hand-curated
+    # and the auto-detector mis-classifies it (e.g. picks up the frontend
+    # package.json and labels it JavaScript/Node.js, dropping the bespoke
+    # build/test/restart commands).
+    xy_root = os.path.realpath(
+        os.environ.get("XYLOCOPA_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+
     for proj in projects:
         name = proj.get("name", "")
         path = proj.get("path", "")
@@ -570,6 +578,10 @@ def backfill_all_projects(registry_path: str) -> list[dict]:
             continue
         if not os.path.isdir(path):
             logger.info("Skipping '%s' — path does not exist: %s", name, path)
+            continue
+        if os.path.realpath(path) == xy_root:
+            logger.info("Skipping host project '%s' — hand-curated CLAUDE.md", name)
+            results.append({"project": name, "claude_md": False, "progress_md": False, "skipped": "host"})
             continue
 
         # Force-regenerate all CLAUDE.md to use new compact template
