@@ -356,6 +356,8 @@ def _summarize_progress_background(project_name: str, project_path: str,
 
     prompt = f"""You are a project analyst. Read ALL the following conversations from {today} thoroughly. Extract every meaningful insight, decision, bug fix, design choice, and lesson learned.
 
+ALWAYS respond in English regardless of the source language.
+
 STRICT RULES:
 1. Output ONLY the summary section — no preamble, no explanation, no markdown fences.
 2. Use EXACTLY this format:
@@ -371,6 +373,7 @@ STRICT RULES:
 7. Max 25 numbered items. Be concise but specific — include file names, function names, and concrete details.
 8. Do NOT output anything before the ## heading or after the last numbered item. If there are no new insights, output only the heading with a single item "No new insights today."
 9. CRITICAL — each insight must be PARALLEL and INDEPENDENT, not sequential. Do NOT write narrative steps like "First did X, then Y, finally Z". Each numbered item should be an atomic, standalone fact or lesson that can be retrieved individually. Bad: "Refactored auth module, then updated tests, then fixed CI". Good: separate items — "Auth module refactored to use middleware pattern (`auth.py`)" / "Auth test suite updated for new middleware API" / "CI config fixed: missing env var `AUTH_SECRET`".
+10. Write insights in English even if the source conversation is in another language.
 
 Here are today's conversations (with timestamps):
 
@@ -509,6 +512,8 @@ def _run_agent_summary_background(agent_id: str, agent_name: str,
 
     prompt = f"""You are a project analyst. Read the following agent conversation and extract insights worth remembering for PROGRESS.md.
 
+ALWAYS respond in English regardless of the source language.
+
 STRICT RULES:
 1. Output ONLY numbered insights — no preamble, no explanation, no markdown fences.
 2. Focus on: architectural decisions, bug root causes & fixes, design choices, gotchas, and lessons learned.
@@ -516,6 +521,7 @@ STRICT RULES:
 4. Each insight must be self-contained — readable without the original conversation.
 5. Max 15 items. Be concise but specific — include file names, function names, concrete details.
 6. CRITICAL — each insight must be PARALLEL and INDEPENDENT, not sequential. Do NOT write narrative steps like "First did X, then Y, finally Z". Each numbered item should be an atomic, standalone fact or lesson that can be retrieved individually. Bad: "Refactored auth module, then updated tests, then fixed CI". Good: separate items — "Auth module refactored to use middleware pattern (`auth.py`)" / "Auth test suite updated for new middleware API" / "CI config fixed: missing env var `AUTH_SECRET`".
+7. Write insights in English even if the source conversation is in another language.
 
 Agent: {agent_name} | Task: {task_title}
 

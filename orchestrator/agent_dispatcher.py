@@ -1943,6 +1943,8 @@ class AgentDispatcher:
 
         prompt = f"""You are a project analyst. Read ALL the following conversations from {summary_date} thoroughly. Extract every meaningful insight, decision, bug fix, design choice, and lesson learned.
 
+ALWAYS respond in English regardless of the source language.
+
 STRICT RULES:
 1. Output ONLY the summary section — no preamble, no explanation, no markdown fences.
 2. Use EXACTLY this format:
@@ -1957,6 +1959,7 @@ STRICT RULES:
 6. Each insight must be self-contained — readable without context of the original conversation.
 7. Max 25 numbered items. Be concise but specific — include file names, function names, and concrete details.
 8. Do NOT output anything before the ## heading or after the last numbered item. If there are no new insights, output only the heading with a single item "No new insights."
+9. Write insights in English even if the source conversation is in another language.
 
 Here are the day's conversations (with timestamps):
 
