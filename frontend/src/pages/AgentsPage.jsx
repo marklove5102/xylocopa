@@ -189,6 +189,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     if (event.type !== "agent_created") return;
     const newAgent = event.data;
     if (!newAgent?.id) return;
+    console.log('[ws] agent_created', newAgent.id?.slice(0, 8), newAgent.status, newAgent.project);
     setAgents((prev) => {
       if (prev.some((a) => a.id === newAgent.id)) return prev;
       return [newAgent, ...prev];

@@ -274,8 +274,15 @@ async def emit_agent_created(agent) -> None:
     server-default fields (e.g. created_at) are populated on the instance.
     """
     from schemas import AgentBrief
-    payload = AgentBrief.model_validate(agent).model_dump(mode="json")
-    await ws_manager.broadcast("agent_created", payload)
+    try:
+        payload = AgentBrief.model_validate(agent).model_dump(mode="json")
+    except Exception:
+        logger.warning("emit_agent_created: serialize failed for %s",
+                       getattr(agent, "id", "?")[:8], exc_info=True)
+        return
+    sent = await ws_manager.broadcast("agent_created", payload)
+    logger.info("emit_agent_created: agent=%s status=%s sent_to=%d clients",
+                payload.get("id", "?")[:8], payload.get("status"), sent)
 
 
 async def emit_new_message(agent_id: str, message_id: str,
