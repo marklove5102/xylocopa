@@ -706,6 +706,34 @@ def query_insights_ai(db, project: str, user_message: str, limit: int = 50) -> l
         return query_insights(db, project, user_message)
 
 
+def _query_insights_threadsafe(
+    project: str, query: str, limit: int = 15,
+    recent_days: int = 7, pad_recent: bool = False,
+) -> list[str]:
+    """Worker-thread wrapper around query_insights with its own SessionLocal.
+
+    SQLAlchemy sessions are not thread-safe; the request-scoped session must
+    not leak into asyncio.to_thread workers.  This wrapper opens a short-lived
+    read-only session inside the worker, so the request session stays on its
+    own thread.
+    """
+    db = SessionLocal()
+    try:
+        return query_insights(db, project, query, limit, recent_days, pad_recent)
+    finally:
+        db.close()
+
+
+def _query_insights_ai_threadsafe(
+    project: str, user_message: str, limit: int = 50,
+) -> list[str]:
+    db = SessionLocal()
+    try:
+        return query_insights_ai(db, project, user_message, limit)
+    finally:
+        db.close()
+
+
 _DAILY_SUMMARY_MAX_CONTEXT = 500_000  # chars — stay well within Claude context window
 _DAILY_SUMMARY_MAX_MSG = 4000  # per-message truncation (tool outputs can be huge)
 
@@ -3059,15 +3087,17 @@ Here are the day's conversations (with timestamps):
             if task:
                 query_text = f"{task.title} {task.description or ''}"
                 insights_list = await asyncio.to_thread(
-                    query_insights, db, project.name, query_text, 15, 7, True,
+                    _query_insights_threadsafe,
+                    project.name, query_text, 15, 7, True,
                 )
             elif project.ai_insights:
                 insights_list = await asyncio.to_thread(
-                    query_insights_ai, db, project.name, content,
+                    _query_insights_ai_threadsafe, project.name, content,
                 )
             else:
                 insights_list = await asyncio.to_thread(
-                    query_insights, db, project.name, content, 10,
+                    _query_insights_threadsafe,
+                    project.name, content, 10,
                 )
 
         # 2. Build metadata dict (same shape as DB meta_json would hold).
@@ -3154,15 +3184,17 @@ Here are the day's conversations (with timestamps):
                 # Task agents: use task-specific query with higher limit
                 query_text = f"{task.title} {task.description or ''}"
                 insights_list = await asyncio.to_thread(
-                    query_insights, db, project.name, query_text, 15, 7, True,
+                    _query_insights_threadsafe,
+                    project.name, query_text, 15, 7, True,
                 )
             elif project.ai_insights:
                 insights_list = await asyncio.to_thread(
-                    query_insights_ai, db, project.name, content,
+                    _query_insights_ai_threadsafe, project.name, content,
                 )
             else:
                 insights_list = await asyncio.to_thread(
-                    query_insights, db, project.name, content, 10,
+                    _query_insights_threadsafe,
+                    project.name, content, 10,
                 )
 
         # 2. Create or reuse message
