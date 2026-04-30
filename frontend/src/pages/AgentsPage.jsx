@@ -251,9 +251,13 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   }, [statusFiltered, search]);
 
   // Split filtered into active vs deferred (deferred_to in the future).
-  // Deferred agents are hidden from the main list and shown in a collapsible
-  // section at the bottom — mirrors InboxView's pattern for deferred tasks.
+  // Only group deferred separately on Starred/Active — those tabs are
+  // "what's live" views where snoozed agents would be noise. On All /
+  // Insights / Stopped, deferred agents render inline.
   const { activeAgents, deferredAgents } = useMemo(() => {
+    if (filter !== "STARRED" && filter !== "ACTIVE") {
+      return { activeAgents: filtered, deferredAgents: [] };
+    }
     const now = new Date();
     const active = [];
     const deferred = [];
@@ -263,7 +267,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     }
     deferred.sort((a, b) => new Date(a.deferred_to) - new Date(b.deferred_to));
     return { activeAgents: active, deferredAgents: deferred };
-  }, [filtered]);
+  }, [filtered, filter]);
 
   const [showDeferred, setShowDeferred] = useDraft("ui:agents:showDeferred", false);
 

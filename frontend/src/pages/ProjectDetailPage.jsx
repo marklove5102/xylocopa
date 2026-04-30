@@ -699,6 +699,26 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     );
   }, [tabFiltered, search]);
 
+  // Split filtered into active vs deferred (deferred_to in the future) on the
+  // Starred/Active tabs only — same rule as AgentsPage so snoozed agents
+  // collapse out of the "what's live" views.
+  const { activeAgents, deferredAgents } = useMemo(() => {
+    if (agentTab !== "starred" && agentTab !== "active") {
+      return { activeAgents: filtered, deferredAgents: [] };
+    }
+    const now = new Date();
+    const active = [];
+    const deferred = [];
+    for (const a of filtered) {
+      if (a.deferred_to && new Date(a.deferred_to) > now) deferred.push(a);
+      else active.push(a);
+    }
+    deferred.sort((a, b) => new Date(a.deferred_to) - new Date(b.deferred_to));
+    return { activeAgents: active, deferredAgents: deferred };
+  }, [filtered, agentTab]);
+
+  const [showDeferred, setShowDeferred] = useDraft(`ui:project:${name}:showDeferred`, false);
+
   // Selection partition for the bulk action bar
   const stoppableSelected = useMemo(
     () => filtered.filter((a) => selected.has(a.id) && a.status !== "STOPPED"),
@@ -1181,7 +1201,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 </button>
               </div>
             )}
-            {filtered.map((agent) => (
+            {activeAgents.map((agent) => (
               <AgentRow
                 key={agent.id}
                 agent={agent}
@@ -1193,6 +1213,41 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 onEnterSelect={enterSelectMode}
               />
             ))}
+            {deferredAgents.length > 0 && (
+              <div className="mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowDeferred(v => !v)}
+                  className="flex items-center justify-center w-full text-sm text-faint hover:text-dim transition-colors"
+                >
+                  <span className="relative">
+                    <svg
+                      className={`absolute right-full top-1/2 -translate-y-1/2 mr-1.5 w-3.5 h-3.5 transition-transform ${showDeferred ? "rotate-90" : ""}`}
+                      fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    Deferred ({deferredAgents.length})
+                  </span>
+                </button>
+                {showDeferred && (
+                  <div className="space-y-3 mt-3">
+                    {deferredAgents.map((agent) => (
+                      <AgentRow
+                        key={agent.id}
+                        agent={agent}
+                        hideProjectTag
+                        onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
+                        selecting={selecting}
+                        selected={selected.has(agent.id)}
+                        onToggle={toggleOne}
+                        onEnterSelect={enterSelectMode}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
