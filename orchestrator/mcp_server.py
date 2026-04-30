@@ -682,6 +682,375 @@ def list_tasks(project: str = "", status: str = "", limit: int = 30) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Project tools
+# ---------------------------------------------------------------------------
+
+def _project_row(db: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    """Look up a project row by exact name."""
+    return db.execute(
+        "SELECT name, display_name, path, git_remote, description, archived, "
+        "       default_model, max_concurrent, emoji "
+        "FROM projects WHERE name = ?",
+        (name,),
+    ).fetchone()
+
+
+def _registry_path() -> str:
+    return os.path.join(XYLOCOPA_ROOT, "project-configs", "registry.yaml")
+
+
+def _read_registry() -> dict:
+    """Read registry.yaml. Returns {} on missing/empty."""
+    import yaml
+    path = _registry_path()
+    if not os.path.isfile(path):
+        return {}
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _write_registry(data: dict) -> None:
+    import yaml
+    path = _registry_path()
+    with open(path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False)
+
+
+def _registry_has(name: str) -> bool:
+    data = _read_registry()
+    return any(p.get("name") == name for p in (data.get("projects") or []))
+
+
+def _registry_append(entry: dict) -> None:
+    """Append a project entry to registry.yaml. Idempotent on name."""
+    data = _read_registry()
+    if "projects" not in data or data["projects"] is None:
+        data["projects"] = []
+    if any(p.get("name") == entry["name"] for p in data["projects"]):
+        return  # already present, no-op
+    data["projects"].append(entry)
+    _write_registry(data)
+
+
+def _registry_remove(name: str) -> None:
+    """Remove a project entry from registry.yaml. No-op if absent."""
+    data = _read_registry()
+    projects = data.get("projects") or []
+    filtered = [p for p in projects if p.get("name") != name]
+    if len(filtered) != len(projects):
+        data["projects"] = filtered
+        _write_registry(data)
+
+
+@server.tool()
+def project_list(include_archived: bool = False) -> str:
+    """List all xylocopa projects.
+
+    Args:
+        include_archived: If True, include archived (soft-deleted) projects too.
+            Default False shows only active projects.
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        if include_archived:
+            rows = db.execute(
+                "SELECT name, path, git_remote, description, archived, default_model "
+                "FROM projects ORDER BY archived ASC, name ASC"
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT name, path, git_remote, description, archived, default_model "
+                "FROM projects WHERE archived = 0 ORDER BY name ASC"
+            ).fetchall()
+    finally:
+        db.close()
+
+    if not rows:
+        return "No projects found."
+
+    lines = [f"Found {len(rows)} project(s):\n"]
+    for r in rows:
+        archived_tag = " [ARCHIVED]" if r["archived"] else ""
+        lines.append(
+            f"- **{r['name']}**{archived_tag} — `{r['path']}`\n"
+            f"  model: {r['default_model'] or '(default)'}  "
+            f"git: {r['git_remote'] or '(local)'}\n"
+            f"  {r['description'] or ''}"
+        )
+    return "\n".join(lines)
+
+
+@server.tool()
+def project_get(name: str) -> str:
+    """Get detailed info for a single project by name.
+
+    Returns: path, archived flag, default model, agent count, task count by
+    status, recent session count.
+
+    Args:
+        name: Project name (required).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        row = _project_row(db, name)
+        if row is None:
+            available = sorted(
+                r["name"] for r in db.execute(
+                    "SELECT name FROM projects WHERE archived = 0"
+                ).fetchall()
+            )
+            return (
+                f"Project `{name}` not found.\n"
+                f"Available: {', '.join(available)}"
+            )
+
+        agent_total = db.execute(
+            "SELECT COUNT(*) FROM agents WHERE project = ?", (name,)
+        ).fetchone()[0]
+        agent_active = db.execute(
+            "SELECT COUNT(*) FROM agents WHERE project = ? "
+            "AND status IN ('STARTING','RUNNING','WAITING')",
+            (name,),
+        ).fetchone()[0]
+        task_counts = db.execute(
+            "SELECT status, COUNT(*) FROM tasks WHERE project_name = ? GROUP BY status",
+            (name,),
+        ).fetchall()
+        session_total = db.execute(
+            "SELECT COUNT(*) FROM agents WHERE project = ? AND session_id IS NOT NULL",
+            (name,),
+        ).fetchone()[0]
+    finally:
+        db.close()
+
+    archived_tag = " [ARCHIVED]" if row["archived"] else ""
+    task_breakdown = ", ".join(f"{r[0]}={r[1]}" for r in task_counts) or "(none)"
+
+    lines = [
+        f"# Project: {row['name']}{archived_tag}",
+        f"- display_name: {row['display_name']}",
+        f"- path: `{row['path']}`",
+        f"- git_remote: {row['git_remote'] or '(local)'}",
+        f"- default_model: {row['default_model']}",
+        f"- max_concurrent: {row['max_concurrent']}",
+        f"- emoji: {row['emoji'] or '(none)'}",
+        f"- description: {row['description'] or '(none)'}",
+        "",
+        "## Stats",
+        f"- agents: {agent_total} total, {agent_active} active",
+        f"- sessions: {session_total}",
+        f"- tasks: {task_breakdown}",
+    ]
+    return "\n".join(lines)
+
+
+@server.tool()
+def project_create(
+    name: str,
+    path: str = "",
+    git_url: str = "",
+    description: str = "",
+) -> str:
+    """Register a new project in xylocopa.
+
+    The project's directory must already exist (or be safely creatable).
+    MCP does NOT clone git repos — clone yourself first, then call this.
+    `git_url` is recorded as metadata only.
+
+    Idempotent:
+      - If a project with this name already exists and is active, returns
+        existing info unchanged.
+      - If a project with this name exists but is archived, re-activates it
+        (matches the web UI's "create twice" semantics).
+
+    Rolls back DB insert if registry write fails.
+
+    Args:
+        name: Project name (required, alphanumeric + . _ -).
+        path: Filesystem path. Defaults to ~/xylocopa-projects/{name}.
+        git_url: Optional git remote URL (recorded as metadata).
+        description: Optional project description.
+    """
+    import re as _re
+
+    if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", name):
+        return (
+            f"Invalid project name `{name}`. Must start with alphanumeric "
+            f"and contain only [a-zA-Z0-9._-]."
+        )
+    if len(name) > 100:
+        return f"Project name too long: {len(name)} chars (max 100)."
+
+    if not path:
+        path = os.path.expanduser(f"~/xylocopa-projects/{name}")
+    path = os.path.abspath(path)
+
+    from models import Project
+    from project_scaffolder import scaffold_project
+
+    with _get_write_session() as db:
+        existing = db.get(Project, name)
+        if existing is not None:
+            if existing.archived:
+                existing.archived = False
+                if git_url and not existing.git_remote:
+                    existing.git_remote = git_url
+                if description and not existing.description:
+                    existing.description = description
+                db.commit()
+                # Ensure registry has the entry
+                entry = {"name": name, "path": existing.path}
+                if existing.git_remote:
+                    entry["git_remote"] = existing.git_remote
+                if existing.description:
+                    entry["description"] = existing.description
+                _registry_append(entry)
+                return (
+                    f"Project `{name}` re-activated from archive.\n"
+                    f"Path: {existing.path}"
+                )
+            # Active project with same name — idempotent return
+            return (
+                f"Project `{name}` already exists (active).\n"
+                f"Path: {existing.path}\n"
+                f"No changes made."
+            )
+
+        # Create the directory if missing
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            return f"Could not create directory {path}: {e}"
+
+        # Insert into DB
+        proj = Project(
+            name=name,
+            display_name=name,
+            path=path,
+            git_remote=git_url or None,
+            description=description or None,
+        )
+        db.add(proj)
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            return f"DB insert failed: {e}"
+
+        # Append to registry — rollback DB on failure
+        entry = {"name": name, "path": path}
+        if git_url:
+            entry["git_remote"] = git_url
+        if description:
+            entry["description"] = description
+        try:
+            _registry_append(entry)
+        except Exception as e:
+            db.delete(proj)
+            db.commit()
+            return f"Registry write failed (DB rolled back): {e}"
+
+    # Scaffold (best-effort; don't roll back on failure)
+    try:
+        scaffold_project(name, path)
+    except Exception as e:
+        logger.warning("scaffold_project failed for %s: %s", name, e)
+
+    return (
+        f"Created project `{name}`.\n"
+        f"Path: {path}\n"
+        f"Git: {git_url or '(local)'}\n"
+        f"Scaffolded CLAUDE.md and PROGRESS.md if missing."
+    )
+
+
+@server.tool()
+def project_scaffold(name: str) -> str:
+    """Generate CLAUDE.md and PROGRESS.md for a project if missing.
+
+    Idempotent: existing scaffolded files (containing the template header)
+    are left untouched. Use project_regenerate_claude_md to force a rewrite.
+
+    Args:
+        name: Project name (must exist in xylocopa).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        row = _project_row(db, name)
+    finally:
+        db.close()
+
+    if row is None:
+        return f"Project `{name}` not found."
+    if not os.path.isdir(row["path"]):
+        return f"Project `{name}` path does not exist on disk: {row['path']}"
+
+    from project_scaffolder import scaffold_project
+    try:
+        result = scaffold_project(name, row["path"], force=False)
+    except Exception as e:
+        return f"Scaffold failed for `{name}`: {e}"
+
+    parts = []
+    if result.get("claude_md"):
+        parts.append("CLAUDE.md created")
+    if result.get("progress_md"):
+        parts.append("PROGRESS.md created")
+    if not parts:
+        parts.append("no changes (files already present)")
+    return f"Project `{name}`: {', '.join(parts)}."
+
+
+@server.tool()
+def project_regenerate_claude_md(name: str) -> str:
+    """Regenerate CLAUDE.md for a project from the deterministic scaffolder.
+
+    This re-runs the template scaffolder with force=True, preserving the
+    project-specific rules section. Synchronous and predictable — does NOT
+    use the AI-powered async refresh used by the web UI.
+
+    Args:
+        name: Project name (must exist in xylocopa).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        row = _project_row(db, name)
+    finally:
+        db.close()
+
+    if row is None:
+        return f"Project `{name}` not found."
+    if not os.path.isdir(row["path"]):
+        return f"Project `{name}` path does not exist on disk: {row['path']}"
+
+    from project_scaffolder import scaffold_project
+    try:
+        result = scaffold_project(name, row["path"], force=True)
+    except Exception as e:
+        return f"Regenerate failed for `{name}`: {e}"
+
+    if result.get("claude_md"):
+        return f"Regenerated CLAUDE.md for `{name}` (project-specific rules preserved)."
+    return f"Project `{name}`: no changes (scaffolder reported no update)."
+
+
+# ---------------------------------------------------------------------------
+# Existing helpers (used by older tools below)
+# ---------------------------------------------------------------------------
+
 def _lookup_agent(db: sqlite3.Connection, identifier: str) -> dict | None:
     """Look up an agent by session_id, agent_id, or prefix match.
 
