@@ -2811,16 +2811,20 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [id, loadingLater]);
 
   // "Go to live tail" — used by the scroll-to-bottom button. In tail
-  // mode this is just a scroll; in focus-slice mode the loaded window
-  // doesn't reach EOF, so we extend it first (loadNewerMessages reads
-  // slice-end → EOF in one shot) and wait one frame for React to commit
-  // the appended messages before scrollIntoView locks in its target —
-  // otherwise the smooth scroll lands on the OLD slice-end position
-  // before the new bottom renders.
+  // mode this is just a scroll. In focus-slice mode the loaded window
+  // stops short of EOF, so we extend it first (loadNewerMessages reads
+  // slice-end → EOF in one shot). The actual scrollIntoView is deferred
+  // to a useLayoutEffect that fires AFTER React commits the appended
+  // messages — awaiting `requestAnimationFrame` directly was unreliable
+  // under React 18 concurrent rendering: rAF could fire before commit,
+  // landing scrollIntoView on the OLD messagesEndRef position.
+  const pendingTailScrollRef = useRef(false);
   const scrollToLiveTail = useCallback(async () => {
     if (hasLaterRef.current) {
+      pendingTailScrollRef.current = true;
       await loadNewerMessages();
-      await new Promise((r) => requestAnimationFrame(r));
+      // Don't scroll here — let the layoutEffect run after commit.
+      return;
     }
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [loadNewerMessages]);
@@ -3416,6 +3420,19 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     const el = document.querySelector(`[data-msg-id="${CSS.escape(focusId)}"]`);
     if (el) highlightTextMatches(el, q);
   }, [loading, messages, location.search]);
+
+  // Flush a deferred "go to live tail" scroll. scrollToLiveTail sets the
+  // pending flag and awaits loadNewerMessages; this layoutEffect runs
+  // synchronously after React commits the appended messages (when the
+  // `messages` dep updates), at which point messagesEndRef is at the
+  // new bottom and scrollIntoView lands on EOF reliably — independent
+  // of any rAF / scheduler timing.
+  useLayoutEffect(() => {
+    if (!pendingTailScrollRef.current) return;
+    if (hasLaterRef.current) return;  // loadNewer hasn't completed
+    pendingTailScrollRef.current = false;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   // Auto-load older messages when content doesn't overflow the viewport
   // but has_earlier is true (scroll-based trigger can't fire without overflow)
