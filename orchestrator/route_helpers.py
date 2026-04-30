@@ -31,10 +31,13 @@ TUI_STARTUP_TIMEOUT = 30
 
 # Seconds to settle after TUI REPL mount before sending prompt.
 # The status bar detection in _launch_tmux_background is the
-# "REPL fully mounted" signal; showSetupScreens finishes ~200ms
-# earlier, so a small buffer here is enough to be sure the input
-# handler is wired up. Larger values just pad first-prompt latency.
-TUI_SETTLE_DELAY = 0.5
+# "REPL fully mounted" signal; the React input handler wires up
+# in the next 1-2 frames after status-bar render, so this buffer
+# only needs to cover that gap.  Larger values just pad first-prompt
+# latency.  Was 3.0 → 0.5 (commit 03285cb) → 0.3 here.  If prompts
+# start dropping characters or Enter doesn't fire onSubmit, raise
+# back to 0.5.
+TUI_SETTLE_DELAY = 0.3
 
 # Max file size for project browser (bytes)
 BROWSE_MAX_FILE_SIZE = 512 * 1024  # 512 KB
