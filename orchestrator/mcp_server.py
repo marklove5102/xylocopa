@@ -379,7 +379,7 @@ def _read_from_jsonl(
 
 
 @server.tool()
-def create_task(
+def task_create(
     title: str,
     project: str = "",
     description: str = "",
@@ -478,7 +478,7 @@ def create_task(
 
 
 @server.tool()
-def update_task(
+def task_update(
     task_id: str,
     title: str = "",
     description: str = "",
@@ -490,7 +490,7 @@ def update_task(
     """Update fields on an existing Xylocopa task.
 
     Only fields you pass (non-empty for strings, non-None for priority) are
-    updated. Status is intentionally NOT mutable here — use dispatch_task to
+    updated. Status is intentionally NOT mutable here — use task_dispatch to
     queue a task, or other dedicated tools for status changes.
 
     Args:
@@ -559,13 +559,13 @@ def update_task(
 
 
 @server.tool()
-def dispatch_task(task_id: str) -> str:
+def task_dispatch(task_id: str) -> str:
     """Queue a task for execution by transitioning it to PENDING.
 
     The orchestrator's background poller picks up PENDING tasks within a
     few seconds and spawns a tmux agent to run them. Use this after a task
     has been created (INBOX) and fully specified, or to retry a FAILED/
-    TIMEOUT task.
+    TIMEOUT task (the state machine permits FAILED/TIMEOUT → PENDING).
 
     Prerequisites:
         - task must exist
@@ -619,7 +619,7 @@ def dispatch_task(task_id: str) -> str:
 
 
 @server.tool()
-def list_tasks(project: str = "", status: str = "", limit: int = 30) -> str:
+def task_list(project: str = "", status: str = "", limit: int = 30) -> str:
     """List Xylocopa tasks, optionally filtered by project and status.
 
     Results are ordered by created_at DESC.
@@ -680,6 +680,168 @@ def list_tasks(project: str = "", status: str = "", limit: int = 30) -> str:
             f"  id: `{r['id']}`  priority: {r['priority']}  created: {ts}"
         )
     return "\n".join(lines)
+
+
+@server.tool()
+def task_get(task_id: str) -> str:
+    """Get full detail for a single task by ID.
+
+    Includes title, description, status, project, model, effort, priority,
+    timestamps, attempt count, error message (if any), and worktree info.
+
+    Args:
+        task_id: Task ID (required).
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        row = db.execute(
+            "SELECT id, title, description, project_name, status, priority, "
+            "       model, effort, attempt_number, agent_id, worktree_name, "
+            "       branch_name, created_at, started_at, completed_at, "
+            "       error_message, agent_summary "
+            "FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        db.close()
+
+    if row is None:
+        return f"Task `{task_id}` not found."
+
+    desc = row["description"] or "(no description)"
+    if len(desc) > 1000:
+        desc = desc[:1000] + "\n... (truncated)"
+    summary = row["agent_summary"] or ""
+    if summary and len(summary) > 1000:
+        summary = summary[:1000] + "\n... (truncated)"
+
+    lines = [
+        f"# Task: {row['title']}",
+        f"- id: `{row['id']}`",
+        f"- status: {row['status']}",
+        f"- project: {row['project_name'] or '(none)'}",
+        f"- model: {row['model'] or '(default)'}  effort: {row['effort'] or '(default)'}  priority: {row['priority']}",
+        f"- attempt: {row['attempt_number']}",
+        f"- agent_id: {row['agent_id'] or '(none)'}",
+        f"- worktree: {row['worktree_name'] or '(none)'}  branch: {row['branch_name'] or '(none)'}",
+        f"- created: {(row['created_at'] or '')[:19]}",
+        f"- started: {(row['started_at'] or '(not started)')[:19] if row['started_at'] else '(not started)'}",
+        f"- completed: {(row['completed_at'] or '(not completed)')[:19] if row['completed_at'] else '(not completed)'}",
+        "",
+        "## Description",
+        desc,
+    ]
+    if row["error_message"]:
+        err = row["error_message"]
+        if len(err) > 500:
+            err = err[:500] + "\n... (truncated)"
+        lines += ["", "## Error", err]
+    if summary:
+        lines += ["", "## Agent summary", summary]
+    return "\n".join(lines)
+
+
+@server.tool()
+def task_counts(project: str = "") -> str:
+    """Get task counts grouped by status, optionally filtered by project.
+
+    Cheaper than task_list when you only need backlog totals.
+
+    Args:
+        project: Filter by project name (optional). Empty = all projects.
+    """
+    db = _get_db()
+    if db is None:
+        return "Xylocopa database not found. Is the orchestrator running?"
+
+    try:
+        if project:
+            rows = db.execute(
+                "SELECT status, COUNT(*) FROM tasks WHERE project_name = ? "
+                "GROUP BY status ORDER BY status",
+                (project,),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status ORDER BY status"
+            ).fetchall()
+    finally:
+        db.close()
+
+    if not rows:
+        suffix = f" (project={project})" if project else ""
+        return f"No tasks found.{suffix}"
+
+    total = sum(r[1] for r in rows)
+    scope = f"project `{project}`" if project else "all projects"
+    lines = [f"Task counts for {scope} (total: {total}):"]
+    for status, count in rows:
+        lines.append(f"  {status}: {count}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Old-name aliases (task domain) — preserved for backward compatibility
+# ---------------------------------------------------------------------------
+
+@server.tool()
+def create_task(
+    title: str,
+    project: str = "",
+    description: str = "",
+    model: str = "",
+    effort: str = "",
+    priority: int = 0,
+) -> str:
+    """[Alias for task_create — kept for backward compatibility.]
+
+    Output format is byte-identical to task_create. See task_create for full docs.
+    """
+    return task_create(
+        title=title, project=project, description=description,
+        model=model, effort=effort, priority=priority,
+    )
+
+
+@server.tool()
+def update_task(
+    task_id: str,
+    title: str = "",
+    description: str = "",
+    project: str = "",
+    model: str = "",
+    effort: str = "",
+    priority: int | None = None,
+) -> str:
+    """[Alias for task_update — kept for backward compatibility.]
+
+    See task_update for full docs.
+    """
+    return task_update(
+        task_id=task_id, title=title, description=description, project=project,
+        model=model, effort=effort, priority=priority,
+    )
+
+
+@server.tool()
+def dispatch_task(task_id: str) -> str:
+    """[Alias for task_dispatch — kept for backward compatibility.]
+
+    See task_dispatch for full docs.
+    """
+    return task_dispatch(task_id=task_id)
+
+
+@server.tool()
+def list_tasks(project: str = "", status: str = "", limit: int = 30) -> str:
+    """[Alias for task_list — kept for backward compatibility.]
+
+    See task_list for full docs.
+    """
+    return task_list(project=project, status=status, limit=limit)
 
 
 # ---------------------------------------------------------------------------
