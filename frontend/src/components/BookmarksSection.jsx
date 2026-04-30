@@ -159,7 +159,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                   }`}
                 >
                   {/* Heroicons v2 pencil — single clean diagonal stroke */}
-                  <svg className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
                   </svg>
                 </button>
