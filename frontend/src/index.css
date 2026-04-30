@@ -338,11 +338,11 @@ body::after {
   }
 }
 
-/* Bookmark focus highlight — bubble's own color breathes brighter (works for
+/* Bookmark focus highlight — bubble's own color breathes darker (works for
    any bubble role: USER cyan, AGENT neutral, SYSTEM, etc.) */
 @keyframes bookmarkBreath {
   0%, 100% { filter: brightness(1) saturate(1); }
-  50%      { filter: brightness(1.20) saturate(1.30); }
+  50%      { filter: brightness(0.75) saturate(0.85); }
 }
 .bookmark-flash {
   animation: bookmarkBreath 1.0s ease-in-out 2;
