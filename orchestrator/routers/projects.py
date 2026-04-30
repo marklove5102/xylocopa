@@ -1670,7 +1670,7 @@ async def list_project_agents(
     request: Request,
     name: str,
     status: AgentStatus | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     db: Session = Depends(get_db),
 ):
     """List agents for a project (works for active, archived, and unregistered projects)."""
@@ -1680,8 +1680,10 @@ async def list_project_agents(
     )
     if status:
         q = q.filter(Agent.status == status)
-    rows = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc()).limit(limit).all()
-    return _enrich_agent_briefs(rows, request, db)
+    q = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())
+    if limit:
+        q = q.limit(limit)
+    return _enrich_agent_briefs(q.all(), request, db)
 
 
 # ---- Sessions (from ~/.claude/history.jsonl) ----

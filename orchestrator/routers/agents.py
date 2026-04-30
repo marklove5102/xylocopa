@@ -1642,7 +1642,7 @@ async def list_agents(
     request: Request,
     project: str | None = None,
     status: AgentStatus | None = None,
-    limit: int = 500,
+    limit: int | None = None,
     db: Session = Depends(get_db),
 ):
     """List agents with optional filters."""
@@ -1651,12 +1651,10 @@ async def list_agents(
         q = q.filter(Agent.project == project)
     if status:
         q = q.filter(Agent.status == status)
-    rows = (
-        q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-    return _enrich_agent_briefs(rows, request, db)
+    q = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())
+    if limit:
+        q = q.limit(limit)
+    return _enrich_agent_briefs(q.all(), request, db)
 
 
 @router.get("/api/agents/unread")
