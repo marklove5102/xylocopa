@@ -11,6 +11,7 @@ import { useRef, useCallback } from "react";
 export default function useLongPress(onLongPress, onTap, delay = 500) {
   const timerRef = useRef(null);
   const firedRef = useRef(false);
+  const movedRef = useRef(false);
   const startPos = useRef(null);
 
   const clear = useCallback(() => {
@@ -23,6 +24,7 @@ export default function useLongPress(onLongPress, onTap, delay = 500) {
   const onPointerDown = useCallback(
     (e) => {
       firedRef.current = false;
+      movedRef.current = false;
       startPos.current = { x: e.clientX, y: e.clientY };
       clear();
       timerRef.current = setTimeout(() => {
@@ -37,7 +39,10 @@ export default function useLongPress(onLongPress, onTap, delay = 500) {
   const onPointerUp = useCallback(
     (e) => {
       clear();
-      if (!firedRef.current) {
+      // Skip tap if the pointer moved past the slop threshold — that was a
+      // scroll/swipe, not a tap. Without this, vertical list scrolling on
+      // touch devices fires tap on release and opens the wrong page.
+      if (!firedRef.current && !movedRef.current) {
         onTap?.(e);
       }
     },
@@ -46,13 +51,14 @@ export default function useLongPress(onLongPress, onTap, delay = 500) {
 
   const onPointerMove = useCallback(
     (e) => {
-      // Cancel if finger/cursor moved more than 10px
-      if (startPos.current && timerRef.current) {
-        const dx = e.clientX - startPos.current.x;
-        const dy = e.clientY - startPos.current.y;
-        if (dx * dx + dy * dy > 100) {
-          clear();
-        }
+      if (!startPos.current) return;
+      const dx = e.clientX - startPos.current.x;
+      const dy = e.clientY - startPos.current.y;
+      // 12px slop — generous enough for finger jitter, tight enough that a
+      // deliberate tap stays a tap.
+      if (dx * dx + dy * dy > 144) {
+        movedRef.current = true;
+        clear();
       }
     },
     [clear],
