@@ -182,6 +182,12 @@ async def hook_agent_user_prompt(request: Request):
 
     ad = getattr(request.app.state, "agent_dispatcher", None)
     if ad:
+        # GHOST_DELIVERED probe: ack the most recent un-acked promote
+        # so we can correlate hook-arrival to send-keys.
+        try:
+            ad._ack_promote_on_user_prompt(agent_id)
+        except Exception:
+            logger.exception("GHOST_PROBE ack_on_user_prompt failed")
         # Hook only wakes sync — sync_engine reads the new user turn from
         # JSONL and writes EXECUTING via _infer_status_from_signals. No
         # direct DB write here under the state-machine refactor.

@@ -1556,6 +1556,19 @@ class AgentDispatcher:
         from sync_engine import SyncContext
         self._sync_contexts: dict[str, SyncContext] = {}
 
+        # GHOST_DELIVERED instrumentation (added 2026-04-30):
+        # Track every promote-to-sent so we can verify whether a
+        # corresponding UserPromptSubmit hook arrives within the deadline.
+        # If not, the send-keys was likely eaten by an unsettled TUI.
+        # Schema: msg_id_short -> {ts, agent_id, agent_status_at_promote,
+        #                          generating_at_promote, content_preview,
+        #                          pane_before_send, send_path,
+        #                          deadline_seconds, ack_received}
+        self._promote_ack_pending: dict[str, dict] = {}
+        # When the next user-prompt hook for an agent arrives, we close
+        # out the most recent un-acked promote for that agent.
+        self._promote_ack_by_agent: dict[str, list[str]] = {}
+
         # Tmux launch background tasks: agent_id -> asyncio.Task
         self._launch_tasks: dict[str, asyncio.Task] = {}
 
@@ -2424,6 +2437,79 @@ Here are the day's conversations (with timestamps):
         self._generating_agents.add(agent_id)
         return gid
 
+    # ---- GHOST_DELIVERED instrumentation helpers ----
+
+    def _record_promote_for_ack(self, msg_id: str, agent_id: str, agent_status: str | None,
+                                  generating: bool, content: str, pane_before: str | None,
+                                  send_path: str, deadline: float = 30.0) -> None:
+        """Register a just-promoted message for UserPromptSubmit ack tracking.
+
+        Spawns a deadline task that warns if no hook arrives within `deadline`s.
+        """
+        import time as _t
+        short = msg_id[:8]
+        rec = {
+            "msg_id": msg_id,
+            "agent_id": agent_id,
+            "ts": _t.monotonic(),
+            "agent_status_at_promote": agent_status,
+            "generating_at_promote": generating,
+            "content_preview": (content or "")[:60].replace("\n", " "),
+            "pane_before_send_tail": (pane_before or "")[-300:] if pane_before else None,
+            "send_path": send_path,
+            "deadline": deadline,
+            "ack_received": False,
+        }
+        self._promote_ack_pending[short] = rec
+        self._promote_ack_by_agent.setdefault(agent_id, []).append(short)
+        logger.info(
+            "GHOST_PROBE promote msg=%s agent=%s status=%s gen=%s send_path=%s "
+            "content=%r pane_tail=%r",
+            short, agent_id[:8], agent_status, generating, send_path,
+            rec["content_preview"], rec["pane_before_send_tail"],
+        )
+        asyncio.ensure_future(self._promote_ack_deadline(short))
+
+    async def _promote_ack_deadline(self, msg_short: str) -> None:
+        """If no UserPromptSubmit hook acks the promote within deadline, warn."""
+        rec = self._promote_ack_pending.get(msg_short)
+        if not rec:
+            return
+        await asyncio.sleep(rec["deadline"])
+        rec_now = self._promote_ack_pending.get(msg_short)
+        if rec_now and not rec_now.get("ack_received"):
+            logger.warning(
+                "GHOST_PROBE ack_missing msg=%s agent=%s after=%.1fs "
+                "status_at_promote=%s gen=%s send_path=%s content=%r pane_tail=%r",
+                msg_short, rec_now["agent_id"][:8], rec_now["deadline"],
+                rec_now["agent_status_at_promote"], rec_now["generating_at_promote"],
+                rec_now["send_path"], rec_now["content_preview"],
+                rec_now["pane_before_send_tail"],
+            )
+            # leave it in the dict so a late hook can still ack it (still useful info)
+
+    def _ack_promote_on_user_prompt(self, agent_id: str) -> None:
+        """Mark the oldest pending promote for this agent as ack'd."""
+        import time as _t
+        queue = self._promote_ack_by_agent.get(agent_id, [])
+        while queue:
+            short = queue[0]
+            rec = self._promote_ack_pending.get(short)
+            if rec is None:
+                queue.pop(0)
+                continue
+            if rec.get("ack_received"):
+                queue.pop(0)
+                continue
+            rec["ack_received"] = True
+            elapsed = _t.monotonic() - rec["ts"]
+            queue.pop(0)
+            logger.info(
+                "GHOST_PROBE ack_received msg=%s agent=%s elapsed=%.3fs",
+                short, agent_id[:8], elapsed,
+            )
+            return
+
     def wake_sync(self, agent_id: str) -> bool:
         """Wake the sync loop for an agent immediately (skip sleep).
 
@@ -2565,6 +2651,19 @@ Here are the day's conversations (with timestamps):
                 )
                 return
 
+            # GHOST_DELIVERED probe: capture pane state right before send,
+            # so a missing UserPromptSubmit hook can be correlated with
+            # what the TUI was doing at the moment of send-keys.
+            _pane_before = capture_tmux_pane(agent.tmux_pane)
+            _status_at_promote = agent.status.value if agent.status else None
+            _gen_at_promote = bool(agent.generating_msg_id)
+            logger.info(
+                "GHOST_PROBE pre_send agent=%s msg=%s status=%s gen=%s "
+                "pane_tail=%r",
+                agent_id[:8], entry["id"][:8], _status_at_promote,
+                _gen_at_promote, (_pane_before or "")[-200:] if _pane_before else None,
+            )
+
             ok = send_tmux_message(agent.tmux_pane, entry["content"])
             if not ok:
                 logger.warning(
@@ -2574,6 +2673,12 @@ Here are the day's conversations (with timestamps):
                 return
 
             self._promote_pre_sent_to_sent(db, agent, entry)
+            self._record_promote_for_ack(
+                msg_id=entry["id"], agent_id=agent_id,
+                agent_status=_status_at_promote, generating=_gen_at_promote,
+                content=entry.get("content") or "",
+                pane_before=_pane_before, send_path="dispatch_pending",
+            )
         except Exception:
             logger.exception("dispatch_pending: error for agent %s", agent_id[:8])
         finally:
@@ -3022,6 +3127,17 @@ Here are the day's conversations (with timestamps):
                 self._clear_agent_pane(db, agent, kill_tmux=False)
                 continue
 
+            # GHOST_DELIVERED probe (scheduled-send path)
+            _pane_before = capture_tmux_pane(agent.tmux_pane)
+            _status_at_promote = agent.status.value if agent.status else None
+            _gen_at_promote = bool(agent.generating_msg_id)
+            logger.info(
+                "GHOST_PROBE pre_send agent=%s msg=%s status=%s gen=%s "
+                "pane_tail=%r send_path=scheduled",
+                agent.id[:8], entry["id"][:8], _status_at_promote,
+                _gen_at_promote, (_pane_before or "")[-200:] if _pane_before else None,
+            )
+
             ok = send_tmux_message(agent.tmux_pane, entry["content"])
             if not ok:
                 logger.warning(
@@ -3034,6 +3150,12 @@ Here are the day's conversations (with timestamps):
                 entry["id"], agent.id,
             )
             self._promote_pre_sent_to_sent(db, agent, entry)
+            self._record_promote_for_ack(
+                msg_id=entry["id"], agent_id=agent.id,
+                agent_status=_status_at_promote, generating=_gen_at_promote,
+                content=entry.get("content") or "",
+                pane_before=_pane_before, send_path="scheduled",
+            )
 
     # ------------------------------------------------------------------
     # Unified message preparation

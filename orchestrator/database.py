@@ -544,11 +544,35 @@ def init_db():
             "WHERE delivered_at IS NULL AND status != 'PENDING'"
         )).scalar()
         if _undelivered:
+            # GHOST_DELIVERED instrumentation: enumerate every row that
+            # this blind backfill is about to touch, so we can later see
+            # which user messages got their delivered_at fabricated.
+            try:
+                rows = conn.execute(text(
+                    "SELECT id, agent_id, role, status, source, display_seq, "
+                    "jsonl_uuid, created_at FROM messages "
+                    "WHERE delivered_at IS NULL AND status != 'PENDING' "
+                    "ORDER BY created_at"
+                )).fetchall()
+                for r in rows:
+                    logger.info(
+                        "GHOST_PROBE migration1_backfill_delivered_at "
+                        "msg=%s agent=%s role=%s status=%s source=%s "
+                        "display_seq=%s jsonl_uuid=%s created_at=%s",
+                        (r[0] or "")[:8], (r[1] or "")[:8], r[2], r[3], r[4],
+                        r[5], r[6], r[7],
+                    )
+            except Exception:
+                logger.exception("GHOST_PROBE migration1 enumerate failed")
             conn.execute(text(
                 "UPDATE messages SET delivered_at = created_at "
                 "WHERE delivered_at IS NULL AND status != 'PENDING'"
             ))
             conn.commit()
+            logger.info(
+                "GHOST_PROBE migration1: backfilled delivered_at for %d rows",
+                _undelivered,
+            )
 
         # --- progress_insights compound index for existing DBs ---
         if "progress_insights" in [r[0] for r in conn.execute(text(
