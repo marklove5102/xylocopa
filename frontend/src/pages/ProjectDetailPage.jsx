@@ -3,14 +3,11 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAllFolders,
   fetchProjectAgents,
-  fetchProjectSessions,
   createAgent,
   createProject,
   deleteProject as deleteProjectApi,
   archiveProject as archiveProjectApi,
   renameProject as renameProjectApi,
-  starSession,
-  unstarSession,
   fetchProjectBookmarks,
   createBookmark,
   deleteBookmark,
@@ -48,10 +45,11 @@ import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
 
 const AGENT_TABS = [
+  { key: "all", label: "All" },
   { key: "starred", label: "Starred" },
   { key: "active", label: "Active" },
+  { key: "insights", label: "Insights" },
   { key: "stopped", label: "Stopped" },
-  { key: "sessions", label: "Sessions" },
 ];
 
 function TaskRing({ total, completed, pct: pctOverride, size = 22 }) {
@@ -221,198 +219,6 @@ function projectBotState(proj) {
 }
 
 
-function formatSessionTime(unixMs) {
-  if (!unixMs) return "";
-  const d = new Date(unixMs);
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return "just now";
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.floor(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  return d.toLocaleDateString();
-}
-
-function SessionRow({ session, project, projectActive, onResume, onError, onToggleStar }) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [copied, setCopied] = useState(false);
-  const [resuming, setResuming] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [starLoading, setStarLoading] = useState(false);
-
-  const handleCopyId = (e) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(session.session_id).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }).catch(() => {});
-  };
-
-  const handleStarClick = async (e) => {
-    e.stopPropagation();
-    if (starLoading) return;
-    setStarLoading(true);
-    try {
-      if (session.starred) {
-        await unstarSession(project, session.session_id);
-      } else {
-        await starSession(project, session.session_id);
-      }
-      if (onToggleStar) onToggleStar(session.session_id, !session.starred);
-    } catch (err) {
-      console.error("Star toggle failed:", err);
-      if (onError) onError(err.message || "Failed to update star");
-    } finally {
-      setStarLoading(false);
-    }
-  };
-
-  const handleSync = async (e) => {
-    e.stopPropagation();
-    if (syncing || resuming || !projectActive) return;
-    setSyncing(true);
-    try {
-      const agent = await createAgent({
-        project,
-        prompt: session.first_message || "Synced CLI session",
-        mode: "AUTO",
-        resume_session_id: session.session_id,
-        sync_session: true,
-      });
-      if (onResume) onResume();
-      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
-    } catch (err) {
-      setSyncing(false);
-      if (onError) onError(err.message);
-    }
-  };
-
-  const handleClick = async () => {
-    if (resuming || syncing) return;
-    // Block resume for inactive projects
-    if (!projectActive && !session.linked_agent_id) {
-      if (onError) onError("Please activate this project first");
-      return;
-    }
-    // If already linked to an agent, navigate directly
-    if (session.linked_agent_id) {
-      navigate(`/agents/${session.linked_agent_id}`, { state: forwardState(location) });
-      return;
-    }
-    // Otherwise, create a new agent that resumes this session
-    setResuming(true);
-    try {
-      const agent = await createAgent({
-        project,
-        prompt: session.first_message || "Continue previous conversation",
-        mode: "AUTO",
-        resume_session_id: session.session_id,
-      });
-      if (onResume) onResume();
-      navigate(`/agents/${agent.id}`, { state: forwardState(location) });
-    } catch (err) {
-      setResuming(false);
-      if (onError) onError(err.message);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={resuming}
-      className="w-full text-left rounded-xl bg-surface shadow-card p-4 flex items-center gap-3 transition-colors active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover disabled:opacity-60"
-    >
-      <div
-        className="relative shrink-0 cursor-pointer hover:opacity-70 transition-opacity"
-        onClick={handleCopyId}
-        title={`Copy session ID: ${session.session_id}`}
-      >
-        {/* Clock icon */}
-        <svg className="w-9 h-9 text-label" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="9" />
-          <path strokeLinecap="round" d="M12 7v5l3 3" />
-        </svg>
-        {copied && (
-          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-cyan-400 font-medium whitespace-nowrap">
-            Copied!
-          </span>
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-heading truncate flex-1">
-            {session.first_message || "Untitled session"}
-          </h3>
-          <span className="text-xs text-dim shrink-0">
-            {formatSessionTime(session.last_activity_at)}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 mt-1 flex-wrap">
-          <span className="text-xs text-label">
-            {session.message_count} message{session.message_count !== 1 ? "s" : ""}
-          </span>
-          {session.linked_agent_id ? (
-            <span className="inline-flex items-center gap-1 text-xs text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded font-medium">
-              Linked to agent
-            </span>
-          ) : resuming ? (
-            <span className="inline-flex items-center gap-1 text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded font-medium animate-pulse">
-              Resuming...
-            </span>
-          ) : syncing ? (
-            <span className="inline-flex items-center gap-1 text-xs text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded font-medium animate-pulse">
-              Syncing...
-            </span>
-          ) : !projectActive ? (
-            <span className="inline-flex items-center gap-1 text-xs text-dim bg-elevated px-1.5 py-0.5 rounded font-medium">
-              Activate to resume
-            </span>
-          ) : (
-            <>
-              <span className="inline-flex items-center gap-1 text-xs text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded font-medium">
-                Click to resume
-              </span>
-              <button
-                type="button"
-                onClick={handleSync}
-                className="inline-flex items-center gap-1 text-xs text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded font-medium hover:bg-violet-500/20 transition-colors"
-                title="Import CLI history and live-sync"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Sync
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={handleStarClick}
-        disabled={starLoading}
-        className="shrink-0 p-1.5 rounded-lg hover:bg-input transition-colors disabled:opacity-50"
-        title={session.starred ? "Unstar session" : "Star session"}
-      >
-        {session.starred ? (
-          <svg className="w-5 h-5 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
-        ) : (
-          <svg className="w-5 h-5 text-label hover:text-amber-400 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
-        )}
-      </button>
-    </button>
-  );
-}
-
 export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const { name } = useParams();
   const navigate = useNavigate();
@@ -446,13 +252,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const [fileSearchLoading, setFileSearchLoading] = useState(false);
   const [openFile, setOpenFile] = useState(null); // {path, name} when clicked from search
   const searchTimerRef = useRef(null);
-
-  // Sessions (lazy-loaded)
-  const [sessions, setSessions] = useState(null);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
-
-  // Starred session IDs (eagerly loaded for agent rows)
-  const [starredIds, setStarredIds] = useState(new Set());
 
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiAnchorRef = useRef(null);
@@ -841,42 +640,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     });
   }, [name]);
 
-  // Fetch sessions on mount (for starred IDs + counts)
-  useEffect(() => {
-    fetchProjectSessions(name)
-      .then((data) => {
-        setStarredIds(new Set(data.filter((s) => s.starred).map((s) => s.session_id)));
-        setSessions(data);
-      })
-      .catch(() => {});
-  }, [name]);
-
-  // Lazy-fetch sessions when starred or sessions tab is selected
-  useEffect(() => {
-    if ((agentTab !== "sessions" && agentTab !== "starred") || sessions !== null) return;
-    let cancelled = false;
-    setSessionsLoading(true);
-    fetchProjectSessions(name)
-      .then((data) => { if (!cancelled) setSessions(data); })
-      .catch(() => { if (!cancelled) setSessions([]); })
-      .finally(() => { if (!cancelled) setSessionsLoading(false); });
-    return () => { cancelled = true; };
-  }, [agentTab, name, sessions]);
-
-  // Poll sessions while sessions/starred tab is visible
-  useEffect(() => {
-    if (!visible || (agentTab !== "sessions" && agentTab !== "starred")) return;
-    const timer = setInterval(() => {
-      fetchProjectSessions(name)
-        .then((data) => {
-          setSessions(data);
-          setStarredIds(new Set(data.filter((s) => s.starred).map((s) => s.session_id)));
-        })
-        .catch(() => {});
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [visible, agentTab, name]);
-
   // Debounced search: messages (server, project-scoped) + files (server)
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -907,9 +670,13 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const tabFiltered = useMemo(() => (
     agentTab === "active"
       ? agents.filter((a) => a.status !== "STOPPED")
-      : agentTab === "stopped"
-        ? agents.filter((a) => a.status === "STOPPED")
-        : agents
+      : agentTab === "starred"
+        ? agents.filter((a) => a.starred)
+        : agentTab === "insights"
+          ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
+          : agentTab === "stopped"
+            ? agents.filter((a) => a.status === "STOPPED")
+            : agents
   ), [agents, agentTab]);
 
   const filtered = useMemo(() => {
@@ -1004,10 +771,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Tab counts
   const tabCounts = {
-    starred: (sessions || []).filter((s) => s.starred).length,
-    active: agents.filter(a => a.status !== "STOPPED").length,
+    all: agents.length,
+    starred: agents.filter((a) => a.starred).length,
+    active: agents.filter((a) => a.status !== "STOPPED").length,
+    insights: agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating").length,
     stopped: agents.filter((a) => a.status === "STOPPED").length,
-    sessions: sessions != null ? sessions.length : 0,
   };
 
   // Activate project
@@ -1386,42 +1154,9 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
       {/* Agent list */}
       <div>
-        {agentTab === "sessions" || agentTab === "starred" ? (
-          sessionsLoading ? (
-            <div className="text-center py-8 text-faint text-sm animate-pulse">Loading sessions...</div>
-          ) : (() => {
-            const list = agentTab === "starred"
-              ? (sessions || []).filter((s) => s.starred)
-              : sessions || [];
-            return list.length === 0 ? (
-              <div className="text-center py-8 text-faint text-sm">
-                {agentTab === "starred" ? "No starred sessions" : "No sessions found"}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {list.map((s) => (
-                  <SessionRow
-                    key={s.session_id}
-                    session={s}
-                    project={name}
-                    projectActive={project?.active}
-                    onResume={() => { setSessions(null); loadData(); }}
-                    onError={(msg) => showToast(msg, "error")}
-                    onToggleStar={(sid, starred) => {
-                      setSessions((prev) =>
-                        prev ? prev.map((ss) =>
-                          ss.session_id === sid ? { ...ss, starred } : ss
-                        ) : prev
-                      );
-                    }}
-                  />
-                ))}
-              </div>
-            );
-          })()
-        ) : filtered.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="text-center py-8 text-faint text-sm">
-            No {agentTab} agents
+            No {agentTab === "all" ? "" : agentTab + " "}agents
           </div>
         ) : (
           <div className="space-y-3">
