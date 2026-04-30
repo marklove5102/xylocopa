@@ -102,15 +102,44 @@ def _get_db() -> sqlite3.Connection | None:
 server = FastMCP(
     "xylocopa",
     instructions=(
-        "Xylocopa orchestrator tools. Use list_sessions to discover "
-        "previous conversations, read_session to read one, and create_task "
-        "to drop a new task into the Xylocopa inbox. "
-        "Use update_task to modify a task, dispatch_task to queue it for "
-        "execution, and list_tasks to see the current backlog.\n\n"
-        "File handling: when generating or referencing media files "
-        "(images, videos, plots), save them inside the project directory "
-        "so the web UI can display them. Files in /tmp/ or other external "
-        "paths cannot be previewed."
+        "Xylocopa orchestrator control plane. Use these tools to inspect "
+        "and grow xylocopa state from inside an agent — query projects, "
+        "tasks, sessions, and agents; create new tasks and projects; "
+        "scaffold or regenerate CLAUDE.md; check orchestrator health.\n\n"
+
+        "## Tools by domain\n"
+        "- project: project_list, project_get, project_create, "
+        "project_scaffold, project_regenerate_claude_md\n"
+        "- task:    task_list, task_get, task_counts, task_create, "
+        "task_update, task_dispatch\n"
+        "- session: session_list, session_read, session_tail\n"
+        "- agent:   agent_list, agent_get\n"
+        "- system:  system_health\n"
+        "- aliases (kept for back-compat, prefer the domain-prefixed names): "
+        "list_sessions, read_session, create_task, update_task, "
+        "dispatch_task, list_tasks\n\n"
+
+        "## Safety boundary — by design, only non-destructive verbs are exposed\n"
+        "- Allowed verbs (whitelist): list, get, read, tail, create, update, "
+        "dispatch, scaffold, regenerate, count, health.\n"
+        "- Forbidden verbs (will never be added): delete, archive, kill, "
+        "force, reset, drop, wipe, clean. These operations exist in the "
+        "web UI but are intentionally NOT exposed via MCP. If you need to "
+        "delete a project, archive an agent, restart the server, purge "
+        "backups, or otherwise cause data loss, ask the human user — do "
+        "not attempt to work around this.\n"
+        "- All write tools are idempotent: calling task_create twice with "
+        "the same args creates two tasks (by design — title is not a key); "
+        "project_create with an existing name is a no-op (active) or "
+        "re-activates (archived); scaffold/regenerate are safe to repeat.\n"
+        "- task_dispatch handles retries: the state machine permits "
+        "FAILED→PENDING and TIMEOUT→PENDING, so dispatching a failed task "
+        "re-queues it.\n\n"
+
+        "## File handling\n"
+        "When generating or referencing media files (images, videos, plots), "
+        "save them inside the project directory so the web UI can display "
+        "them. Files in /tmp/ or other external paths cannot be previewed."
     ),
 )
 
