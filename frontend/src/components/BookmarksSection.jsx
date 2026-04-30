@@ -100,7 +100,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             : "active:bg-input hover:bg-input/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         }`}
       >
-        <div className="flex items-start gap-3 px-5 py-3 min-h-[72px]">
+        <div className="flex items-start gap-3 px-5 py-3">
           <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1 mt-0.5">
             <FluentEmoji char={pickEmoji(item)} size={22} />
           </div>
