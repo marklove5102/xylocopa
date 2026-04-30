@@ -158,8 +158,10 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                       : "text-faint hover:text-heading hover:bg-input"
                   }`}
                 >
-                  {/* Heroicons v2 pencil — single clean diagonal stroke */}
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  {/* Heroicons v2 pencil — single clean diagonal stroke.
+                      Nudge down 1px because the glyph sits in the upper-right
+                      of its viewBox, so visual centroid is above geometric. */}
+                  <svg className="w-[15px] h-[15px] block translate-y-px" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
                   </svg>
                 </button>
@@ -197,7 +199,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                       : "text-amber-500 hover:bg-amber-500/15"
                   }`}
                 >
-                  <svg className="w-4 h-4" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <svg className="w-[15px] h-[15px] block" fill={locallyRemoved ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                   </svg>
                 </span>
