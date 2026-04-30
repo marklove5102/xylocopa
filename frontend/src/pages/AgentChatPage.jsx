@@ -4104,7 +4104,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   }}
                   onContextMenu={(e) => e.preventDefault()}
                   style={{ touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
-                  className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-elevated text-dim hover:text-body hover:bg-input transition-colors"
                 >
                   {agent.id.slice(0, 4)}
                 </button>
