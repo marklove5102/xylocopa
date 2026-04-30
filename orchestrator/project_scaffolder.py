@@ -424,6 +424,11 @@ def scaffold_project(project_name: str, project_path: str,
 - Tests: {key_paths['tests']}
 - Build: {commands['build']}  |  Test: {commands['test']}  |  Lint: {commands['lint']}
 
+## Xylocopa context
+- This project is managed by xylocopa. The orchestrator MCP server is auto-registered via `.mcp.json`.
+- Available tools: `project_*`, `task_*`, `session_*`, `agent_*`, `system_health` — list/get/read/create/update/dispatch/scaffold only, no destructive verbs.
+- Full reference: xylocopa repo `docs/agent-mcp-tools.md`.
+
 ## Project-Specific Rules
 {rules_section}
 """
