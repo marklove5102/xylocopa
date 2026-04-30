@@ -2810,6 +2810,21 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     }
   }, [id, loadingLater]);
 
+  // "Go to live tail" — used by the scroll-to-bottom button. In tail
+  // mode this is just a scroll; in focus-slice mode the loaded window
+  // doesn't reach EOF, so we extend it first (loadNewerMessages reads
+  // slice-end → EOF in one shot) and wait one frame for React to commit
+  // the appended messages before scrollIntoView locks in its target —
+  // otherwise the smooth scroll lands on the OLD slice-end position
+  // before the new bottom renders.
+  const scrollToLiveTail = useCallback(async () => {
+    if (hasLaterRef.current) {
+      await loadNewerMessages();
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [loadNewerMessages]);
+
   // Incremental refresh: refetch sent (byte-incremental) and pre-sent
   // (full snapshot). Both are cheap; refreshing both keeps any cross-bucket
   // promote transition consistent regardless of WS event arrival order.
@@ -4499,17 +4514,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           <button
             type="button"
             onPointerDown={(e) => e.preventDefault()}
-            onClick={async () => {
-              // In focus-slice mode the bottom of the loaded window is
-              // the slice's right edge, not the file's EOF — pull the
-              // gap first, then wait one frame for React to render the
-              // appended messages so messagesEndRef is at its new
-              // position before scrollIntoView locks in a target.
-              if (hasLaterRef.current) {
-                await loadNewerMessages();
-                await new Promise((r) => requestAnimationFrame(r));
-              }
-              messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            onClick={() => {
+              scrollToLiveTail();
               setShowScrollToBottom(false);
             }}
             className="glass-bar w-9 h-9 rounded-full flex items-center justify-center text-dim hover:text-heading transition-all active:scale-90 pointer-events-auto mb-2"
