@@ -1379,6 +1379,64 @@ def agent_get(agent_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# System tools
+# ---------------------------------------------------------------------------
+
+@server.tool()
+def system_health() -> str:
+    """Lightweight liveness check for the xylocopa orchestrator.
+
+    Verifies that the database file exists and is readable, the registry
+    file is parseable, and reports total counts for projects/tasks/agents.
+    Use this before queuing work to confirm the orchestrator is up.
+    """
+    parts = ["# Xylocopa health"]
+
+    # DB check
+    if not os.path.isfile(DB_PATH):
+        parts.append(f"- db: MISSING ({DB_PATH})")
+        return "\n".join(parts)
+    parts.append(f"- db: OK (`{DB_PATH}`)")
+
+    db = _get_db()
+    if db is None:
+        parts.append("- db: UNREADABLE")
+        return "\n".join(parts)
+
+    try:
+        proj_count = db.execute(
+            "SELECT COUNT(*) FROM projects WHERE archived = 0"
+        ).fetchone()[0]
+        task_count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        agent_count = db.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
+        active_agents = db.execute(
+            "SELECT COUNT(*) FROM agents "
+            "WHERE status IN ('STARTING','RUNNING','WAITING')"
+        ).fetchone()[0]
+    finally:
+        db.close()
+
+    parts.append(f"- projects: {proj_count} (active)")
+    parts.append(f"- tasks: {task_count} (all-time)")
+    parts.append(f"- agents: {agent_count} total, {active_agents} active")
+
+    # Registry check
+    reg_path = _registry_path()
+    if not os.path.isfile(reg_path):
+        parts.append(f"- registry: MISSING ({reg_path})")
+    else:
+        try:
+            data = _read_registry()
+            entries = len(data.get("projects") or [])
+            parts.append(f"- registry: OK ({entries} entries)")
+        except Exception as e:
+            parts.append(f"- registry: PARSE-ERROR ({e})")
+
+    parts.append(f"- xylocopa_root: `{XYLOCOPA_ROOT}`")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Existing helpers (used by older tools below)
 # ---------------------------------------------------------------------------
 
