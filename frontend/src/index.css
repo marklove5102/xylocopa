@@ -25,14 +25,11 @@
   --color-hint:       #9ca3af;
   --color-shadow:     rgba(0,0,0,0.06);
   --color-skel:       #e5e7eb;
-  --color-glass:           #e6e9ee;
-  --color-glass-nav:       #f0f2f5;
-  --color-glass-edge:      rgba(255,255,255,0.5);
-  /* Opaque fallbacks used when the browser cannot render backdrop-filter
-     (see @supports rule below). Without blur, the rgba glass values let
-     content bleed through, so we swap to a solid surface tone. */
-  --color-glass-fallback:     #eaecef;
-  --color-glass-nav-fallback: #f0f2f5;
+  /* Default opaque values — browsers that do support backdrop-filter
+     opt into translucent rgba via the @supports block below. */
+  --color-glass:      #e6e9ee;
+  --color-glass-nav:  #f0f2f5;
+  --color-glass-edge: rgba(255,255,255,0.5);
 }
 
 .dark {
@@ -58,11 +55,23 @@
   --color-hint:       #6b7280;
   --color-shadow:     rgba(0,0,0,0.4);
   --color-skel:       #1f2937;
-  --color-glass:           #1e293b;
-  --color-glass-nav:       #283246;
-  --color-glass-edge:      rgba(255,255,255,0.22);
-  --color-glass-fallback:     #1e293b;
-  --color-glass-nav-fallback: #232f44;
+  --color-glass:      #1e293b;
+  --color-glass-nav:  #283246;
+  --color-glass-edge: rgba(255,255,255,0.22);
+}
+
+/* Opt-in to translucent glass only when the browser actually supports
+   backdrop-filter. Browsers without support keep the opaque defaults
+   above, so content underneath never bleeds through. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --color-glass:     rgba(230,233,238,0.68);
+    --color-glass-nav: rgba(240,242,245,0.3);
+  }
+  .dark {
+    --color-glass:     rgba(30,41,59,0.7);
+    --color-glass-nav: rgba(40,50,70,0.45);
+  }
 }
 
 /* SVG <text> doesn't inherit font-family by default in several browsers
@@ -138,14 +147,6 @@ svg text { font-family: inherit; }
     backdrop-filter: blur(48px) saturate(180%);
     -webkit-backdrop-filter: blur(48px) saturate(180%);
     box-shadow: 0 4px 24px rgba(0,0,0,0.1), inset 0 0.5px 0 var(--color-glass-edge);
-  }
-
-  /* Browsers without backdrop-filter (older Firefox, some Android WebViews)
-     would otherwise render the rgba glass values as a washed-out tint with
-     content showing through. Swap to opaque fallback surfaces. */
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .glass-bar     { background: var(--color-glass-fallback); }
-    .glass-bar-nav { background: var(--color-glass-nav-fallback); }
   }
 
   /* Skeleton loading */
