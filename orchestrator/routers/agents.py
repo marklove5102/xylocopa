@@ -1656,7 +1656,7 @@ async def list_agents(
         .limit(limit)
         .all()
     )
-    return _enrich_agent_briefs(rows, request)
+    return _enrich_agent_briefs(rows, request, db)
 
 
 @router.get("/api/agents/unread")

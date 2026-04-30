@@ -16,6 +16,7 @@ import { forwardState } from "../lib/nav";
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
   { key: "ACTIVE", label: "Active" },
+  { key: "STARRED", label: "Starred" },
   { key: "INSIGHTS", label: "Insights" },
   { key: "STOPPED", label: "Stopped" },
 ];
@@ -129,15 +130,22 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     }
   }, [showToast, load]);
 
-  // Cross-pane sync: notification toggle + data refresh
+  // Cross-pane sync: notification toggle + data refresh + star toggle
   useEffect(() => {
     const onNotifsChanged = (e) => setAgentNotifsOn(e.detail.enabled);
     const onDataChanged = () => { load(); loadUnlinked(); };
+    const onStarChanged = (e) => {
+      const { agentId, starred } = e.detail || {};
+      if (!agentId) return;
+      setAgents((prev) => prev.map((a) => a.id === agentId ? { ...a, starred } : a));
+    };
     window.addEventListener("agent-notifs-changed", onNotifsChanged);
     window.addEventListener("agents-data-changed", onDataChanged);
+    window.addEventListener("agent-star-changed", onStarChanged);
     return () => {
       window.removeEventListener("agent-notifs-changed", onNotifsChanged);
       window.removeEventListener("agents-data-changed", onDataChanged);
+      window.removeEventListener("agent-star-changed", onStarChanged);
     };
   }, [load, loadUnlinked]);
 
@@ -215,9 +223,11 @@ export default function AgentsPage({ theme, onToggleTheme }) {
       ? agents
       : filter === "ACTIVE"
         ? agents.filter((a) => a.status !== "STOPPED")
-        : filter === "INSIGHTS"
-          ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
-          : agents.filter((a) => a.status === "STOPPED"),
+        : filter === "STARRED"
+          ? agents.filter((a) => a.starred)
+          : filter === "INSIGHTS"
+            ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
+            : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
   const filtered = useMemo(() => {
@@ -289,6 +299,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const filterCounts = useMemo(() => ({
     ALL: agents.length,
     ACTIVE: agents.filter(a => a.status !== "STOPPED").length,
+    STARRED: agents.filter(a => a.starred).length,
     STOPPED: agents.filter(a => a.status === "STOPPED").length,
     INSIGHTS: agents.filter(a => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating").length,
   }), [agents]);

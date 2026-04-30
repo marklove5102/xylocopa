@@ -156,6 +156,7 @@ class _AgentBase(BaseModel):
     has_pending_suggestions: bool = False
     insight_status: str | None = None
     sort_order: int = 0
+    starred: bool = False
 
     model_config = {"from_attributes": True}
 

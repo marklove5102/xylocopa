@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import re
 
 from agent_dispatcher import ACTIVE_STATUSES
-from models import Agent, Project
+from models import Agent, Project, StarredSession
 from schemas import AgentBrief
 
 logger = logging.getLogger("orchestrator")
@@ -264,7 +264,34 @@ def generate_worktree_name_local(prompt: str) -> str:
     return "-".join(words) if words else "task"
 
 
-def enrich_agent_briefs(rows, request) -> list[AgentBrief]:
-    """Convert Agent ORM rows to AgentBrief — is_generating is derived
-    from generating_msg_id via property, no runtime enrichment needed."""
-    return [AgentBrief.model_validate(row) for row in rows]
+def enrich_agent_briefs(rows, request, db: Session | None = None) -> list[AgentBrief]:
+    """Convert Agent ORM rows to AgentBrief.
+
+    is_generating is derived from generating_msg_id via property.
+    starred is set when the agent's session_id (or legacy agent.id) appears in
+    starred_sessions — requires `db` to be passed.
+    """
+    starred_ids: set[str] = set()
+    if db is not None and rows:
+        ids_to_check = []
+        for r in rows:
+            if r.session_id:
+                ids_to_check.append(r.session_id)
+            ids_to_check.append(r.id)
+        if ids_to_check:
+            starred_ids = {
+                row[0] for row in db.query(StarredSession.session_id)
+                .filter(StarredSession.session_id.in_(ids_to_check))
+                .all()
+            }
+
+    briefs: list[AgentBrief] = []
+    for row in rows:
+        brief = AgentBrief.model_validate(row)
+        if starred_ids and (
+            (row.session_id and row.session_id in starred_ids)
+            or row.id in starred_ids
+        ):
+            brief.starred = True
+        briefs.append(brief)
+    return briefs

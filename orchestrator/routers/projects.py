@@ -1675,7 +1675,7 @@ async def list_project_agents(
     if status:
         q = q.filter(Agent.status == status)
     rows = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc()).limit(limit).all()
-    return _enrich_agent_briefs(rows, request)
+    return _enrich_agent_briefs(rows, request, db)
 
 
 # ---- Sessions (from ~/.claude/history.jsonl) ----
