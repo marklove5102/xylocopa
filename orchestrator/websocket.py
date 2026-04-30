@@ -265,6 +265,19 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
     await ws_manager.broadcast("agent_update", data)
 
 
+async def emit_agent_created(agent) -> None:
+    """Broadcast a newly-created Agent so AgentsPage can insert it into the
+    list without waiting for the next 5s poll. Carries a full AgentBrief
+    payload — the frontend prepends directly, no follow-up fetch needed.
+
+    Caller must `db.commit()` + `db.refresh(agent)` before invoking, so all
+    server-default fields (e.g. created_at) are populated on the instance.
+    """
+    from schemas import AgentBrief
+    payload = AgentBrief.model_validate(agent).model_dump(mode="json")
+    await ws_manager.broadcast("agent_created", payload)
+
+
 async def emit_new_message(agent_id: str, message_id: str,
                            agent_name: str = "", project: str = ""):
     await ws_manager.broadcast("new_message", {

@@ -19,7 +19,7 @@ from models import Agent, AgentMode, AgentStatus, Message, MessageRole, MessageS
 from schemas import AttemptAgentOut, MessageOut, TaskCreate, TaskDetailOut, TaskOut, TaskUpdate
 from task_state_machine import can_transition, InvalidTransitionError
 from task_state import TaskStateMachine
-from websocket import emit_task_update, emit_agent_update
+from websocket import emit_task_update, emit_agent_update, emit_agent_created
 from route_helpers import (
     check_project_capacity, create_tmux_claude_session,
     generate_worktree_name_local, resolve_project_path,
@@ -160,6 +160,11 @@ async def _dispatch_task_tmux(db: Session, task: Task, proj: Project, ad) -> str
     # up to busy_timeout=5s and crashes with "database is locked".
     db.commit()
     db.refresh(agent)
+
+    # Notify clients immediately — fire-and-forget so AgentsPage shows the
+    # STARTING card without waiting for sync_engine's first user_turn (~2s)
+    # or the 5s list poll. Mirrors how emit_task_update drives TasksPage.
+    asyncio.ensure_future(emit_agent_created(agent))
 
     # Schedule launch task EARLY with a prompt future, so its TUI polling
     # (~1s of process-detect + REPL-ready + settle) overlaps with

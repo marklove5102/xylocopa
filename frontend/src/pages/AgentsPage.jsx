@@ -181,6 +181,20 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     );
   }, []));
 
+  // New agent appearance via WebSocket (agent_created events).
+  // Backend emits this right after a new Agent row is committed, with the
+  // full AgentBrief payload — prepend directly, no follow-up fetch.
+  // Mirrors how task_update drives TasksPage's loadTasks on new tasks.
+  useWsEvent(useCallback((event) => {
+    if (event.type !== "agent_created") return;
+    const newAgent = event.data;
+    if (!newAgent?.id) return;
+    setAgents((prev) => {
+      if (prev.some((a) => a.id === newAgent.id)) return prev;
+      return [newAgent, ...prev];
+    });
+  }, []));
+
   // Double-tap nav: scroll to first unread agent
   useEffect(() => {
     const handler = (e) => {
