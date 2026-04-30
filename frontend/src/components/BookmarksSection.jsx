@@ -100,58 +100,59 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
             : "active:bg-input hover:bg-input/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         }`}
       >
-        <div className="flex items-center gap-3 px-5 py-3 min-h-[72px]">
-          <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1">
+        <div className="flex items-start gap-3 px-5 py-3 min-h-[72px]">
+          <div className="shrink-0 w-7 h-7 flex items-center justify-center -ml-1 mt-0.5">
             <FluentEmoji char={pickEmoji(item)} size={22} />
           </div>
 
-          <div className="min-w-0 flex-1 flex flex-col justify-center">
-            {editing ? (
-              <textarea
-                ref={taRef}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onBlur={saveEditing}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    cancelEditing();
-                  } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    taRef.current?.blur();
-                  }
-                }}
-                placeholder="Title — leave empty to use AI summary"
-                rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-                disabled={saving}
-                className="w-full bg-input rounded-md px-2 py-0.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
-              />
-            ) : (
-              <p className="text-[13px] leading-snug font-medium text-heading truncate">
-                {topText}
+          <div className="min-w-0 flex-1">
+            {/* Top row: title + time */}
+            <div className="flex items-start justify-between gap-3">
+              {editing ? (
+                <textarea
+                  ref={taRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={saveEditing}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEditing();
+                    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      taRef.current?.blur();
+                    }
+                  }}
+                  placeholder="Title — leave empty to use AI summary"
+                  rows={Math.min(6, Math.max(1, draft.split("\n").length))}
+                  disabled={saving}
+                  className="w-full bg-input rounded-md px-2 py-0.5 text-[13px] leading-snug font-medium text-heading resize-none outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
+                />
+              ) : (
+                <p className="text-[13px] leading-snug font-medium text-heading truncate">
+                  {topText}
+                </p>
+              )}
+              <span className="text-[11px] text-faint shrink-0 mt-0.5">{meta}</span>
+            </div>
+            {/* Subtitle row: title text + (edit / bookmark badges, accumulated rightward) */}
+            <div className="flex items-center gap-2 mt-0.5">
+              <p
+                className={`text-xs truncate min-w-0 flex-1 ${
+                  isFile ? "font-mono text-dim" : "text-dim"
+                }`}
+              >
+                {item.title || "(untitled)"}
               </p>
-            )}
-            <p
-              className={`text-xs mt-0.5 truncate ${
-                isFile ? "font-mono text-dim" : "text-dim"
-              }`}
-            >
-              {item.title || "(untitled)"}
-            </p>
-          </div>
-
-          <div className="shrink-0 flex flex-col items-end justify-between -my-0.5">
-            <span className="text-[11px] text-faint leading-none">{meta}</span>
-            <div className="flex items-center gap-0.5 -mr-1">
-              {!locallyRemoved ? (
+              {!locallyRemoved && (
                 <button
                   type="button"
-                  onClick={startEditing}
+                  onClick={(e) => { e.stopPropagation(); startEditing(e); }}
                   disabled={editing}
                   title="Edit title"
                   aria-label="Edit bookmark title"
-                  className={`p-1 rounded-md transition-colors ${
+                  className={`shrink-0 p-0.5 -my-0.5 rounded transition-colors ${
                     editing
                       ? "text-faint/40 cursor-default"
                       : "text-faint hover:text-heading hover:bg-input"
@@ -162,8 +163,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                     <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
                   </svg>
                 </button>
-              ) : null}
-
+              )}
               {typeof onDelete === "function" && (
                 <span
                   role="button"
@@ -191,7 +191,7 @@ function BookmarkRow({ projectName, item, onOpen, onDelete, onRestore, onPatched
                     }
                   }}
                   title={locallyRemoved ? "Re-bookmark" : "Remove bookmark"}
-                  className={`p-1 rounded-md transition-colors cursor-pointer ${
+                  className={`shrink-0 p-0.5 -my-0.5 rounded transition-colors cursor-pointer ${
                     locallyRemoved
                       ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
                       : "text-amber-500 hover:bg-amber-500/15"
