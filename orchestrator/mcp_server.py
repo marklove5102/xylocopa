@@ -152,11 +152,11 @@ def _get_write_session():
 
 
 @server.tool()
-def list_sessions(project: str = "") -> str:
+def session_list(project: str = "") -> str:
     """List recent Xylocopa agent sessions.
 
     Shows agent name, project, status, session ID, and last message preview.
-    Use this to discover session IDs that can be passed to read_session().
+    Use this to discover session IDs that can be passed to session_read().
 
     Args:
         project: Filter by project name (optional — shows all if empty)
@@ -198,7 +198,7 @@ def list_sessions(project: str = "") -> str:
 
 
 @server.tool()
-def read_session(session_id: str, max_turns: int = 50) -> str:
+def session_read(session_id: str, max_turns: int = 50) -> str:
     """Read a previous Xylocopa conversation by session ID or agent ID.
 
     Returns formatted conversation turns (user prompts, agent responses,
@@ -376,6 +376,42 @@ def _read_from_jsonl(
         lines.append("")
 
     return "\n".join(lines)
+
+
+@server.tool()
+def session_tail(session_id: str, max_turns: int = 10) -> str:
+    """Read just the latest few turns of a xylocopa session.
+
+    Same backend as session_read but optimized for "what just happened" —
+    smaller default turn cap. Use session_read when you need fuller history.
+
+    Args:
+        session_id: Session UUID, agent ID, or a prefix of either.
+        max_turns: Max turns to return (default 10, most recent).
+    """
+    return session_read(session_id=session_id, max_turns=max_turns)
+
+
+# ---------------------------------------------------------------------------
+# Old-name aliases (session domain) — preserved for backward compatibility
+# ---------------------------------------------------------------------------
+
+@server.tool()
+def list_sessions(project: str = "") -> str:
+    """[Alias for session_list — kept for backward compatibility.]
+
+    See session_list for full docs.
+    """
+    return session_list(project=project)
+
+
+@server.tool()
+def read_session(session_id: str, max_turns: int = 50) -> str:
+    """[Alias for session_read — kept for backward compatibility.]
+
+    See session_read for full docs.
+    """
+    return session_read(session_id=session_id, max_turns=max_turns)
 
 
 @server.tool()
