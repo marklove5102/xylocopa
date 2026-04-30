@@ -1,10 +1,11 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Hourglass } from "lucide-react";
 import { relativeTime } from "../lib/formatters";
 import { modelDisplayName } from "../lib/constants";
 import useLongPress from "../hooks/useLongPress";
 import WorktreePill from "./WorktreePill";
+import { starSession, unstarSession } from "../lib/api";
 
 /**
  * Shared Chats-style agent row, used on both AgentsPage and inside
@@ -29,6 +30,32 @@ const AgentRow = memo(function AgentRow({
   hideProjectTag = false,
 }) {
   const navigate = useNavigate();
+
+  // Soft-toggle for the inline star button — mirrors BookmarksSection's
+  // locallyRemoved pattern. The row stays visible in the STARRED section
+  // until the user navigates away, so an accidental tap can be undone with
+  // one more tap. Parent state isn't dispatched-to from here; the next
+  // poll/refresh reconciles agent.starred.
+  const [softUnstarred, setSoftUnstarred] = useState(false);
+  const [starBusy, setStarBusy] = useState(false);
+
+  const handleStarClick = async (e) => {
+    e.stopPropagation();
+    if (starBusy) return;
+    const sessionId = agent.session_id || agent.id;
+    if (!agent.project || !sessionId) return;
+    setStarBusy(true);
+    const next = !softUnstarred;
+    setSoftUnstarred(next);
+    try {
+      if (next) await unstarSession(agent.project, sessionId);
+      else await starSession(agent.project, sessionId);
+    } catch {
+      setSoftUnstarred(!next); // rollback on error
+    } finally {
+      setStarBusy(false);
+    }
+  };
 
   const handleClick = () => {
     if (selecting) {
@@ -139,6 +166,33 @@ const AgentRow = memo(function AgentRow({
         {agent.has_pending_suggestions && (
           <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
             insights
+          </span>
+        )}
+        {agent.starred && (
+          <span
+            data-no-longpress
+            role="button"
+            tabIndex={0}
+            onClick={handleStarClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") handleStarClick(e);
+            }}
+            title={softUnstarred ? "Re-star" : "Unstar"}
+            className={`shrink-0 self-center p-1 rounded-md transition-colors cursor-pointer ${
+              softUnstarred
+                ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
+                : "text-amber-500 hover:bg-amber-500/15"
+            }`}
+          >
+            <svg
+              className="w-4 h-4"
+              fill={softUnstarred ? "none" : "currentColor"}
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
           </span>
         )}
       </div>

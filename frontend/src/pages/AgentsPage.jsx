@@ -15,7 +15,6 @@ import { forwardState } from "../lib/nav";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
-  { key: "STARRED", label: "Starred" },
   { key: "ACTIVE", label: "Active" },
   { key: "INSIGHTS", label: "Insights" },
   { key: "STOPPED", label: "Stopped" },
@@ -223,11 +222,9 @@ export default function AgentsPage({ theme, onToggleTheme }) {
       ? agents
       : filter === "ACTIVE"
         ? agents.filter((a) => a.status !== "STOPPED")
-        : filter === "STARRED"
-          ? agents.filter((a) => a.starred)
-          : filter === "INSIGHTS"
-            ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
-            : agents.filter((a) => a.status === "STOPPED"),
+        : filter === "INSIGHTS"
+          ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
+          : agents.filter((a) => a.status === "STOPPED"),
     [agents, filter]);
 
   const filtered = useMemo(() => {
@@ -251,11 +248,11 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   }, [statusFiltered, search]);
 
   // Split filtered into active vs deferred (deferred_to in the future).
-  // Only group deferred separately on Starred/Active — those tabs are
-  // "what's live" views where snoozed agents would be noise. On All /
-  // Insights / Stopped, deferred agents render inline.
+  // Only group deferred separately on Active — that tab is the "what's live"
+  // view where snoozed agents would be noise. On All / Insights / Stopped,
+  // deferred agents render inline.
   const { activeAgents, deferredAgents } = useMemo(() => {
-    if (filter !== "STARRED" && filter !== "ACTIVE") {
+    if (filter !== "ACTIVE") {
       return { activeAgents: filtered, deferredAgents: [] };
     }
     const now = new Date();
@@ -268,6 +265,18 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     deferred.sort((a, b) => new Date(a.deferred_to) - new Date(b.deferred_to));
     return { activeAgents: active, deferredAgents: deferred };
   }, [filtered, filter]);
+
+  // Pin starred agents to top with a STARRED section header (like Bookmarks).
+  // The split applies to the non-deferred portion of the current tab.
+  const { starredAgents, regularAgents } = useMemo(() => {
+    const starred = [];
+    const regular = [];
+    for (const a of activeAgents) {
+      if (a.starred) starred.push(a);
+      else regular.push(a);
+    }
+    return { starredAgents: starred, regularAgents: regular };
+  }, [activeAgents]);
 
   const [showDeferred, setShowDeferred] = useDraft("ui:agents:showDeferred", false);
 
@@ -303,7 +312,6 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   const filterCounts = useMemo(() => ({
     ALL: agents.length,
     ACTIVE: agents.filter(a => a.status !== "STOPPED").length,
-    STARRED: agents.filter(a => a.starred).length,
     STOPPED: agents.filter(a => a.status === "STOPPED").length,
     INSIGHTS: agents.filter(a => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating").length,
   }), [agents]);
@@ -637,7 +645,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
         )}
 
         <div className="space-y-3">
-          {activeAgents.map((agent) => (
+          {[...starredAgents, ...regularAgents].map((agent) => (
             <AgentRow
               key={agent.id}
               agent={agent}

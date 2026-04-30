@@ -46,7 +46,6 @@ import { forwardState } from "../lib/nav";
 
 const AGENT_TABS = [
   { key: "all", label: "All" },
-  { key: "starred", label: "Starred" },
   { key: "active", label: "Active" },
   { key: "insights", label: "Insights" },
   { key: "stopped", label: "Stopped" },
@@ -670,13 +669,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const tabFiltered = useMemo(() => (
     agentTab === "active"
       ? agents.filter((a) => a.status !== "STOPPED")
-      : agentTab === "starred"
-        ? agents.filter((a) => a.starred)
-        : agentTab === "insights"
-          ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
-          : agentTab === "stopped"
-            ? agents.filter((a) => a.status === "STOPPED")
-            : agents
+      : agentTab === "insights"
+        ? agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating")
+        : agentTab === "stopped"
+          ? agents.filter((a) => a.status === "STOPPED")
+          : agents
   ), [agents, agentTab]);
 
   const filtered = useMemo(() => {
@@ -698,6 +695,18 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       predicate(a.id) || predicate(a.name) || predicate(a.last_message_preview)
     );
   }, [tabFiltered, search]);
+
+  // Pin starred agents to top with a STARRED section header — same pattern
+  // as AgentsPage, mirrors BookmarksSection.
+  const { starredAgents, regularAgents } = useMemo(() => {
+    const starred = [];
+    const regular = [];
+    for (const a of filtered) {
+      if (a.starred) starred.push(a);
+      else regular.push(a);
+    }
+    return { starredAgents: starred, regularAgents: regular };
+  }, [filtered]);
 
   // Selection partition for the bulk action bar
   const stoppableSelected = useMemo(
@@ -772,7 +781,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // Tab counts
   const tabCounts = {
     all: agents.length,
-    starred: agents.filter((a) => a.starred).length,
     active: agents.filter((a) => a.status !== "STOPPED").length,
     insights: agents.filter((a) => a.has_pending_suggestions || a.insight_status === "failed" || a.insight_status === "generating").length,
     stopped: agents.filter((a) => a.status === "STOPPED").length,
@@ -1181,7 +1189,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
                 </button>
               </div>
             )}
-            {filtered.map((agent) => (
+            {[...starredAgents, ...regularAgents].map((agent) => (
               <AgentRow
                 key={agent.id}
                 agent={agent}
