@@ -92,7 +92,7 @@ Vanilla `claude` is fine for one-off sessions. It frays once you run several in 
 
 ### Lessons Compound
 
-Most agent tools assume the agent gets it right. Xylocopa assumes it won't. One click turns a miss into a summary, the next agent picks up from there, and the durable lessons accumulate per project in `PROGRESS.md`, not per session.
+**Agents miss. Xylocopa makes the loop after the miss part of the workflow.** Most agent tools assume the agent gets it right. Xylocopa assumes it won't. One click turns a miss into a summary, the next agent picks up from there, and the durable lessons accumulate per project in `PROGRESS.md`, not per session.
 
 ### Zero Migration Cost
 
