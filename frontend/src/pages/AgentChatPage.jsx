@@ -2667,7 +2667,22 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         byId.set(msg.id, msg);
       }
       newIds = new Set((data.messages || []).map((m) => m.id));
-      return [...byId.values()];
+      // Sort by seq before returning. Map preserves first-insertion order,
+      // so an incremental update that introduces a message whose seq is
+      // smaller than something already in the Map (late _replace, retry
+      // markers, out-of-order tail reads) would otherwise land at the
+      // wrong position. Backend already sorts the response by seq, but we
+      // can't rely on Map order to encode that across merges.
+      const out = [...byId.values()];
+      out.sort((a, b) => {
+        const sa = a.seq;
+        const sb = b.seq;
+        if (sa == null && sb == null) return 0;
+        if (sa == null) return 1;   // null seq (e.g. stop_hook) sinks to end
+        if (sb == null) return -1;
+        return sa - sb;
+      });
+      return out;
     });
 
     // Evict promoted ids from preSentMessages so we don't double-render.
