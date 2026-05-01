@@ -108,53 +108,55 @@ const AgentRow = memo(function AgentRow({
               {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
             </span>
           </div>
-          {/* Preview + (insights / unread / star badges, accumulated rightward) */}
+          {/* Preview + right-aligned badge group (insights / unread / star) */}
           <div className="flex items-center gap-2 mt-1">
             <p className="text-sm text-dim truncate min-w-0 flex-1">
               {agent.last_message_preview || "No messages yet"}
             </p>
-            {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
-              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
-                generating
-              </span>
-            )}
-            {agent.has_pending_suggestions && (
-              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-                insights
-              </span>
-            )}
-            {agent.unread_count > 0 && (
-              <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
-                {agent.unread_count}
-              </span>
-            )}
-            {agent.starred && (
-              <span
-                data-no-longpress
-                role="button"
-                tabIndex={0}
-                onClick={handleStarClick}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") handleStarClick(e);
-                }}
-                title={softUnstarred ? "Re-star" : "Unstar"}
-                className={`shrink-0 p-0.5 -my-0.5 rounded transition-colors cursor-pointer ${
-                  softUnstarred
-                    ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
-                    : "text-amber-500 hover:bg-amber-500/15"
-                }`}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={softUnstarred ? "none" : "currentColor"}
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  viewBox="0 0 24 24"
+            <div className="shrink-0 flex items-center gap-1.5">
+              {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
+                <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
+                  generating
+                </span>
+              )}
+              {agent.has_pending_suggestions && (
+                <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
+                  insights
+                </span>
+              )}
+              {agent.unread_count > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
+                  {agent.unread_count}
+                </span>
+              )}
+              {agent.starred && (
+                <span
+                  data-no-longpress
+                  role="button"
+                  tabIndex={0}
+                  onClick={handleStarClick}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") handleStarClick(e);
+                  }}
+                  title={softUnstarred ? "Re-star" : "Unstar"}
+                  className={`inline-flex items-center p-0.5 rounded transition-colors cursor-pointer ${
+                    softUnstarred
+                      ? "text-faint hover:text-amber-500 hover:bg-amber-500/10"
+                      : "text-amber-500 hover:bg-amber-500/15"
+                  }`}
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                </svg>
-              </span>
-            )}
+                  <svg
+                    className="w-4 h-4"
+                    fill={softUnstarred ? "none" : "currentColor"}
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </span>
+              )}
+            </div>
           </div>
           {/* Tags */}
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
