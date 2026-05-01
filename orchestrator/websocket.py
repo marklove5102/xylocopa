@@ -258,6 +258,14 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
                     if _a.last_message_at else None
                 )
                 data["has_pending_suggestions"] = bool(_a.has_pending_suggestions)
+                # User-mutable fields (rename / mute / defer) — without
+                # these, AgentsContext subscribers wouldn't see edits
+                # made via PUT /api/agents/{id} until the next 5s poll.
+                data["name"] = _a.name
+                data["muted"] = bool(_a.muted)
+                data["deferred_to"] = (
+                    _a.deferred_to.isoformat() if _a.deferred_to else None
+                )
         finally:
             _db.close()
     except Exception:

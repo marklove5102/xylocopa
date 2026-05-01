@@ -86,6 +86,12 @@ export function AgentsProvider({ children }) {
             if (d.last_message_at !== undefined) next.last_message_at = d.last_message_at;
             if (d.has_pending_suggestions !== undefined) next.has_pending_suggestions = d.has_pending_suggestions;
             if (d.insight_status !== undefined) next.insight_status = d.insight_status;
+            // User-mutable fields (rename / mute / defer) carried by the
+            // backend's agent_update payload — keeps cross-tab edits in
+            // sync without waiting for the visible-page poll tick.
+            if (d.name !== undefined) next.name = d.name;
+            if (d.muted !== undefined) next.muted = d.muted;
+            if (d.deferred_to !== undefined) next.deferred_to = d.deferred_to;
             return next;
           })
         );
