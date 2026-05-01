@@ -2465,12 +2465,6 @@ Here are the day's conversations (with timestamps):
         }
         self._promote_ack_pending[short] = rec
         self._promote_ack_by_agent.setdefault(agent_id, []).append(short)
-        logger.info(
-            "GHOST_PROBE promote msg=%s agent=%s status=%s gen=%s send_path=%s "
-            "content=%r pane_tail=%r",
-            short, agent_id[:8], agent_status, generating, send_path,
-            rec["content_preview"], rec["pane_before_send_tail"],
-        )
         asyncio.ensure_future(self._promote_ack_deadline(short))
 
     async def _promote_ack_deadline(self, msg_short: str) -> None:
@@ -2505,12 +2499,7 @@ Here are the day's conversations (with timestamps):
                 queue.pop(0)
                 continue
             rec["ack_received"] = True
-            elapsed = _t.monotonic() - rec["ts"]
             queue.pop(0)
-            logger.info(
-                "GHOST_PROBE ack_received msg=%s agent=%s elapsed=%.3fs",
-                short, agent_id[:8], elapsed,
-            )
             return
 
     def wake_sync(self, agent_id: str) -> bool:
@@ -2654,18 +2643,11 @@ Here are the day's conversations (with timestamps):
                 )
                 return
 
-            # GHOST_DELIVERED probe: capture pane state right before send,
-            # so a missing UserPromptSubmit hook can be correlated with
-            # what the TUI was doing at the moment of send-keys.
+            # GHOST_DELIVERED probe: capture pane state + status right before
+            # send so an ack_missing warning has full context.
             _pane_before = capture_tmux_pane(agent.tmux_pane)
             _status_at_promote = agent.status.value if agent.status else None
             _gen_at_promote = bool(agent.generating_msg_id)
-            logger.info(
-                "GHOST_PROBE pre_send agent=%s msg=%s status=%s gen=%s "
-                "pane_tail=%r",
-                agent_id[:8], entry["id"][:8], _status_at_promote,
-                _gen_at_promote, (_pane_before or "")[-200:] if _pane_before else None,
-            )
 
             ok = send_tmux_message(agent.tmux_pane, entry["content"])
             if not ok:
@@ -3134,12 +3116,6 @@ Here are the day's conversations (with timestamps):
             _pane_before = capture_tmux_pane(agent.tmux_pane)
             _status_at_promote = agent.status.value if agent.status else None
             _gen_at_promote = bool(agent.generating_msg_id)
-            logger.info(
-                "GHOST_PROBE pre_send agent=%s msg=%s status=%s gen=%s "
-                "pane_tail=%r send_path=scheduled",
-                agent.id[:8], entry["id"][:8], _status_at_promote,
-                _gen_at_promote, (_pane_before or "")[-200:] if _pane_before else None,
-            )
 
             ok = send_tmux_message(agent.tmux_pane, entry["content"])
             if not ok:

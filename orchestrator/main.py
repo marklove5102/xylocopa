@@ -140,62 +140,32 @@ def _migrate_pre_sent_legacy():
         )
         for msg in legacy:
             try:
-                # GHOST_DELIVERED instrumentation: every transition this
-                # migration applies is suspect — log enough to reconstruct
-                # which messages got "fixed" without sync_engine confirmation.
-                _content_preview = (msg.content or "")[:60].replace("\n", " ")
                 if msg.status == MessageStatus.CANCELLED:
                     if msg.display_seq is not None:
-                        logger.info(
-                            "GHOST_PROBE migration2 CANCELLED→COMPLETED "
-                            "msg=%s agent=%s source=%s display_seq=%s "
-                            "delivered_at=%s jsonl_uuid=%s content=%r",
-                            msg.id[:8], msg.agent_id[:8], msg.source,
-                            msg.display_seq, msg.delivered_at, msg.jsonl_uuid,
-                            _content_preview,
-                        )
                         msg.status = MessageStatus.COMPLETED
                         if not msg.completed_at:
                             msg.completed_at = msg.delivered_at
                         fixed_completed += 1
                     else:
-                        logger.info(
-                            "GHOST_PROBE migration2 CANCELLED_DELETE "
-                            "msg=%s agent=%s source=%s content=%r",
-                            msg.id[:8], msg.agent_id[:8], msg.source,
-                            _content_preview,
-                        )
                         db.delete(msg)
                         deleted_cancelled += 1
                     continue
 
                 # SENT
-                if msg.delivered_at is not None and msg.display_seq is not None:
-                    # Actually delivered — just fix the status label.
-                    logger.warning(
-                        "GHOST_PROBE migration2 SENT→COMPLETED "
-                        "msg=%s agent=%s source=%s display_seq=%s "
-                        "delivered_at=%s jsonl_uuid=%s created_at=%s "
-                        "content=%r — flipping without sync_engine evidence",
-                        msg.id[:8], msg.agent_id[:8], msg.source,
-                        msg.display_seq, msg.delivered_at, msg.jsonl_uuid,
-                        msg.created_at, _content_preview,
-                    )
-                    msg.status = MessageStatus.COMPLETED
-                    if not msg.completed_at:
-                        msg.completed_at = msg.delivered_at
-                    fixed_completed += 1
-                    continue
+                # NOTE: removed "SENT + delivered_at + display_seq → COMPLETED"
+                # branch (was here, deleted 2026-04-30). It paired with the
+                # database.py blind delivered_at backfill to fabricate
+                # delivered status for messages sync_engine never confirmed
+                # via JSONL — produced 12 ghost-delivered messages over an
+                # 8-day window. Verified zero call rate via GHOST_PROBE
+                # telemetry across 52 restarts before deletion.
+                #
+                # All SENT rows now fall through to the pre_sent_zone rescue
+                # below: the row goes back to the pre-sent file so the user
+                # can see it as "queued" and re-send if needed. status=COMPLETED
+                # is now exclusively written by sync_engine on JSONL match.
 
                 # Move to pre_sent zone.
-                logger.info(
-                    "GHOST_PROBE migration2 SENT→pre_sent_zone "
-                    "msg=%s agent=%s source=%s delivered_at=%s "
-                    "display_seq=%s jsonl_uuid=%s content=%r",
-                    msg.id[:8], msg.agent_id[:8], msg.source,
-                    msg.delivered_at, msg.display_seq, msg.jsonl_uuid,
-                    _content_preview,
-                )
                 entry_status = "scheduled" if msg.scheduled_at else "queued"
                 metadata = None
                 if msg.meta_json:
