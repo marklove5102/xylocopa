@@ -2687,11 +2687,22 @@ Here are the day's conversations (with timestamps):
 
         from display_writer import (
             _serialize_message,
+            flush_agent,
             pre_sent_promote_to_sent,
         )
         from websocket import emit_message_sent, emit_pre_sent_tombstoned
 
         msg_id = entry["id"]
+
+        # Drain any pending AGENT/SYSTEM messages into the display file BEFORE
+        # picking our seq. Otherwise rapid user sends interleaved with
+        # in-flight agent replies (which sit at display_seq=NULL until
+        # sync_engine's next flush) cause the user message to grab a small
+        # max+1 and visually "jump ahead" of replies that arrived first.
+        # flush_agent opens its own session, commits, and closes — safe to
+        # call inline.
+        flush_agent(agent.id)
+        db.expire_all()
 
         # Allocate display_seq: max(existing) + 1.
         max_seq = db.query(func.max(Message.display_seq)).filter(
