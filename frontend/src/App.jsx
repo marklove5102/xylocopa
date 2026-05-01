@@ -12,6 +12,7 @@ import { MonitorProvider } from "./contexts/MonitorContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { WebSocketProvider } from "./contexts/WebSocketContext";
 import { UnreadProvider, useUnread } from "./contexts/UnreadContext";
+import { AgentsProvider } from "./contexts/AgentsContext";
 import AttentionButton from "./components/AttentionButton";
 import BottomNavBar from "./components/BottomNavBar";
 
@@ -527,7 +528,9 @@ export default function App() {
                 <WebSocketProvider>
                 <MonitorProvider>
                 <UnreadProvider>
+                <AgentsProvider>
                   <AppChrome themeProps={themeProps} />
+                </AgentsProvider>
                 </UnreadProvider>
                 </MonitorProvider>
                 </WebSocketProvider>

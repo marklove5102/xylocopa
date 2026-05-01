@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, replayPendingUnlinked, adoptUnlinkedSession } from "../lib/api";
+import { stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, replayPendingUnlinked, adoptUnlinkedSession } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
-import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL } from "../lib/constants";
+import { SYNC_SETTLE_DELAY_GLOBAL } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
 import FilterTabs from "../components/FilterTabs";
 import AgentRow from "../components/AgentRow";
 import useDraft from "../hooks/useDraft";
-import useWebSocket, { useWsEvent, isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
-import usePageVisible from "../hooks/usePageVisible";
+import { isAgentNotificationsEnabled, setAgentNotificationsEnabled } from "../hooks/useWebSocket";
 import { useToast } from "../contexts/ToastContext";
+import { useAgents } from "../contexts/AgentsContext";
 import { forwardState } from "../lib/nav";
 
 const FILTER_TABS = [
@@ -23,13 +23,9 @@ const FILTER_TABS = [
 export default function AgentsPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const visible = usePageVisible();
-  const [agents, setAgents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { agents, loaded, error, refresh, setAgents } = useAgents();
   const [filter, setFilter] = useDraft("ui:agents:filter", "ALL");
   const [search, setSearch] = useDraft("ui:agents:search", "");
-  const pollRef = useRef(null);
 
   // Multi-select state
   const [selecting, setSelecting] = useState(false);
@@ -85,17 +81,9 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const data = await fetchAgents();
-      setAgents(Array.isArray(data) ? data : []);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Thin alias kept so existing callbacks (handleAdopt, handleBulkStop, ...)
+  // keep working unchanged. AgentsContext owns the actual fetch + state.
+  const load = useCallback(() => refresh("page-load"), [refresh]);
 
   // --- Unlinked sessions ---
   const [unlinked, setUnlinked] = useState([]);
@@ -129,10 +117,12 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     }
   }, [showToast, load]);
 
-  // Cross-pane sync: notification toggle + data refresh + star toggle
+  // Cross-pane sync: notification toggle + unlinked refresh + star toggle.
+  // Note: 'agents-data-changed' is now consumed by AgentsContext directly,
+  // so we only need to refresh the unlinked-sessions list here.
   useEffect(() => {
     const onNotifsChanged = (e) => setAgentNotifsOn(e.detail.enabled);
-    const onDataChanged = () => { load(); loadUnlinked(); };
+    const onDataChanged = () => { loadUnlinked(); };
     const onStarChanged = (e) => {
       const { agentId, starred } = e.detail || {};
       if (!agentId) return;
@@ -146,7 +136,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
       window.removeEventListener("agents-data-changed", onDataChanged);
       window.removeEventListener("agent-star-changed", onStarChanged);
     };
-  }, [load, loadUnlinked]);
+  }, [loadUnlinked, setAgents]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -159,49 +149,13 @@ export default function AgentsPage({ theme, onToggleTheme }) {
     setTimeout(() => setRefreshing(false), 400);
   }, [load, loadUnlinked]);
 
+  // Unlinked sessions are page-local state; load on mount and poll.
+  // The agents list itself is owned by AgentsContext (seeded once,
+  // maintained via WS, polled in the background) — no per-mount
+  // fetchAgents() round-trip and no "Loading agents..." flash.
   useEffect(() => {
-    if (!visible) return;
-    load();
     loadUnlinked();
-    pollRef.current = setInterval(() => { load(); loadUnlinked(); }, POLL_INTERVAL);
-    return () => clearInterval(pollRef.current);
-  }, [load, loadUnlinked, visible]);
-
-  // Real-time status updates via WebSocket (agent_update events).
-  // Backend now attaches unread_count / last_message_preview / last_message_at
-  // so the badge and preview update without waiting for the 5s poll tick.
-  useWsEvent(useCallback((event) => {
-    if (event.type !== "agent_update") return;
-    const d = event.data || {};
-    const { agent_id } = d;
-    if (!agent_id) return;
-    setAgents((prev) =>
-      prev.map((a) => {
-        if (a.id !== agent_id) return a;
-        const next = { ...a };
-        if (d.status !== undefined) next.status = d.status;
-        if (d.unread_count !== undefined) next.unread_count = d.unread_count;
-        if (d.last_message_preview !== undefined) next.last_message_preview = d.last_message_preview;
-        if (d.last_message_at !== undefined) next.last_message_at = d.last_message_at;
-        return next;
-      })
-    );
-  }, []));
-
-  // New agent appearance via WebSocket (agent_created events).
-  // Backend emits this right after a new Agent row is committed, with the
-  // full AgentBrief payload — prepend directly, no follow-up fetch.
-  // Mirrors how task_update drives TasksPage's loadTasks on new tasks.
-  useWsEvent(useCallback((event) => {
-    if (event.type !== "agent_created") return;
-    const newAgent = event.data;
-    if (!newAgent?.id) return;
-    console.log('[ws] agent_created', newAgent.id?.slice(0, 8), newAgent.status, newAgent.project);
-    setAgents((prev) => {
-      if (prev.some((a) => a.id === newAgent.id)) return prev;
-      return [newAgent, ...prev];
-    });
-  }, []));
+  }, [loadUnlinked]);
 
   // Double-tap nav: scroll to first unread agent
   useEffect(() => {
@@ -619,7 +573,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
 
       {/* Agent list */}
       <div className={`${selecting ? "pb-32" : "pb-24"} px-4 py-2 space-y-3`}>
-        {loading && agents.length === 0 && (
+        {!loaded && agents.length === 0 && (
           <div className="flex justify-center py-12">
             <span className="text-dim text-sm animate-pulse">Loading agents...</span>
           </div>
@@ -634,7 +588,7 @@ export default function AgentsPage({ theme, onToggleTheme }) {
           </div>
         )}
 
-        {!loading && !error && filtered.length === 0 && (
+        {loaded && !error && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-faint">
             <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />

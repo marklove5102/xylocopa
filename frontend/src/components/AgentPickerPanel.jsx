@@ -1,28 +1,15 @@
-import { useState, useEffect, useCallback } from "react";
-import { fetchAgents } from "../lib/api";
+import { useState } from "react";
 import { AGENT_STATUS_COLORS, AGENT_STATUS_TEXT_COLORS, agentBotState } from "../lib/constants";
 import { relativeTime } from "../lib/formatters";
+import { useAgents } from "../contexts/AgentsContext";
 import BotIcon from "./BotIcon";
 
 export default function AgentPickerPanel({ onSelect }) {
-  const [agents, setAgents] = useState([]);
+  // Read from the shared AgentsContext — same warm copy as AgentsPage,
+  // no per-mount HTTP request, WS keeps it fresh.
+  const { agents, loaded } = useAgents();
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(() => {
-    fetchAgents("limit=200")
-      .then((data) => {
-        setAgents(data.agents || data || []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 10000);
-    return () => clearInterval(timer);
-  }, [load]);
+  const loading = !loaded && agents.length === 0;
 
   const q = search.toLowerCase();
   const filtered = agents.filter(
