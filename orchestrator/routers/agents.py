@@ -2295,6 +2295,22 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     if ad:
         ad._stale_session_retries.pop(agent.id, None)
 
+    # Resume implicitly discards the prior stop-cycle's insight suggestions.
+    # The next stop will regenerate from the full conversation (which now
+    # includes the post-resume turns), so keeping the old pending set adds
+    # no value and would just clutter the agent card. Accepted/rejected rows
+    # and project-level ProgressInsight history are untouched.
+    db.query(AgentInsightSuggestion).filter(
+        AgentInsightSuggestion.agent_id == agent.id,
+        AgentInsightSuggestion.status == "pending",
+    ).delete(synchronize_session=False)
+    agent.has_pending_suggestions = False
+    agent.insight_status = None
+    if agent.task_id:
+        _t = db.get(Task, agent.task_id)
+        if _t:
+            _t.agent_summary = None
+
     # Flip to STARTING and commit before the tmux work so a concurrent
     # second Resume click hits the precheck (status not in STOPPED/ERROR)
     # and is rejected with 400 — instead of racing into

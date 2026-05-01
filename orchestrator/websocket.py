@@ -257,6 +257,7 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
                     _a.last_message_at.isoformat()
                     if _a.last_message_at else None
                 )
+                data["has_pending_suggestions"] = bool(_a.has_pending_suggestions)
         finally:
             _db.close()
     except Exception:
