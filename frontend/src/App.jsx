@@ -445,21 +445,28 @@ export default function App() {
   const navigate = useNavigate();
   const showDebug = useDebugLines();
 
-  // Service Worker notification click — split-screen aware navigation
+  // Service Worker notification click — split-screen aware navigation.
+  // Listener is mounted ONCE and reads pathname/navigate via refs so it
+  // never detaches across route changes.  Previous deps-based effect
+  // dropped messages that arrived during the brief teardown→reattach
+  // window when iOS resumed the PWA from background.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
   useEffect(() => {
     const handler = (event) => {
       if (event.data?.type !== "notification-navigate") return;
       const url = event.data.url || "/";
-      if (location.pathname === "/split") {
-        // Let SplitScreenPage handle it without leaving split mode
+      if (pathnameRef.current === "/split") {
         window.dispatchEvent(new CustomEvent("split-navigate", { detail: { url } }));
       } else {
-        navigate(url);
+        navigateRef.current(url);
       }
     };
     navigator.serviceWorker?.addEventListener("message", handler);
     return () => navigator.serviceWorker?.removeEventListener("message", handler);
-  }, [location.pathname, navigate]);
+  }, []);
 
   // Safari iOS: after keyboard dismiss the visual viewport desyncs from
   // the layout viewport.  The ONLY thing that fixes it is an actual
