@@ -5,11 +5,9 @@
 [![React 19](https://img.shields.io/badge/react-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
 
-<p align="center"><img src="docs/hero.png" alt="Xylocopa — Many projects. One attention." width="640"></p>
-
 > [**The Loop**](#the-loop) · [**Getting Started**](#getting-started) · [**Features**](#features) · [**Architecture**](docs/ARCHITECTURE.md) · [**Contributing**](CONTRIBUTING.md) · [**新手入门（中文）**](docs/getting-started-zh.md)
 
-**Many projects. One attention.** 🐝
+<p align="center"><img src="docs/hero.png" alt="Xylocopa — Many projects. One attention." width="640"></p>
 
 _Named after [Xylocopa caerulea](https://en.wikipedia.org/wiki/Xylocopa_caerulea): the blue carpenter bee._
 
