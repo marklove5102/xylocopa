@@ -108,11 +108,21 @@ const AgentRow = memo(function AgentRow({
               {agent.last_message_at ? relativeTime(agent.last_message_at) : ""}
             </span>
           </div>
-          {/* Preview + (unread / star badges, accumulated rightward) */}
+          {/* Preview + (insights / unread / star badges, accumulated rightward) */}
           <div className="flex items-center gap-2 mt-1">
             <p className="text-sm text-dim truncate min-w-0 flex-1">
               {agent.last_message_preview || "No messages yet"}
             </p>
+            {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
+              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
+                generating
+              </span>
+            )}
+            {agent.has_pending_suggestions && (
+              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
+                insights
+              </span>
+            )}
             {agent.unread_count > 0 && (
               <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-cyan-500 text-white text-xs font-bold">
                 {agent.unread_count}
@@ -185,16 +195,6 @@ const AgentRow = memo(function AgentRow({
             )}
           </div>
         </div>
-        {agent.insight_status === "generating" && !agent.has_pending_suggestions && (
-          <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 text-blue-400 animate-pulse">
-            generating
-          </span>
-        )}
-        {agent.has_pending_suggestions && (
-          <span className="shrink-0 self-center text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/15 text-amber-500 dark:text-amber-400">
-            insights
-          </span>
-        )}
       </div>
     </button>
   );
