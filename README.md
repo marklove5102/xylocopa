@@ -15,6 +15,10 @@ Xylocopa aims to help you navigate attention across many [Claude Code](https://d
 
 If you find Xylocopa useful, a star helps others find it :)
 
+| <img src="docs/pwa/inbox.png" alt="Inbox" width="160"> | <img src="docs/pwa/projects.png" alt="Projects" width="160"> | <img src="docs/pwa/agents.png" alt="Agents" width="160"> | <img src="docs/pwa/chat-insights.png" alt="Chat with Progress Insights" width="160"> | <img src="docs/pwa/git.png" alt="Git" width="160"> | <img src="docs/pwa/monitor.png" alt="Monitor" width="160"> |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| Inbox | Projects | Agents | Chat | Git | Monitor |
+
 ## The Loop
 
 Classic [GTD](https://gettingthingsdone.com/what-is-gtd/) has one human do all five steps (capture, clarify, organize, reflect, engage). Xylocopa keeps the loop but rewires the executor: **you capture and decide, agents execute, the system remembers.**
