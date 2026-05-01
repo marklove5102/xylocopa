@@ -307,6 +307,40 @@ _progress_jobs_lock = threading.Lock()
 _main_event_loop: asyncio.AbstractEventLoop | None = None  # set during lifespan
 _PROGRESS_CACHE_TTL = 600  # 10 minutes
 
+# In-flight insight-generation runs, keyed by agent_id. Each entry holds the
+# claude subprocess handle (set after Popen) and a `cancelled` flag the worker
+# thread checks before any DB write. `cancel_insight_run` flips the flag and
+# terminates the subprocess so resume mid-generation cleans up cleanly.
+_INSIGHT_RUNS: dict[str, dict] = {}
+_INSIGHT_RUNS_LOCK = threading.Lock()
+
+
+def cancel_insight_run(agent_id: str) -> bool:
+    """Cancel an in-flight `_run_agent_summary_background` run for `agent_id`.
+
+    Sets a cancelled flag (the worker thread skips DB writes on its way out)
+    and terminates the underlying claude subprocess if still running. Safe to
+    call when no run is active — returns False in that case.
+    """
+    with _INSIGHT_RUNS_LOCK:
+        entry = _INSIGHT_RUNS.get(agent_id)
+        if not entry:
+            return False
+        entry['cancelled'] = True
+        proc = entry.get('proc')
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+    return True
+
+
+def _is_insight_cancelled(agent_id: str) -> bool:
+    with _INSIGHT_RUNS_LOCK:
+        entry = _INSIGHT_RUNS.get(agent_id)
+        return bool(entry and entry.get('cancelled'))
+
 
 _PROGRESS_RUNNING_TTL = 900  # 15 min — auto-expire stuck "running" jobs
 
@@ -496,21 +530,34 @@ def _set_insight_status(agent_id: str, status: str | None, project_name: str = "
 def _run_agent_summary_background(agent_id: str, agent_name: str,
                                   task_title: str, project_name: str,
                                   project_path: str):
-    """Run claude -p in a background thread to extract insights from an agent conversation."""
-    from config import CLAUDE_BIN
+    """Run claude -p in a background thread to extract insights from an agent
+    conversation.
 
-    own_db = SessionLocal()
+    The run registers itself in `_INSIGHT_RUNS` so a concurrent
+    `cancel_insight_run(agent_id)` (e.g. when the agent is resumed
+    mid-generation) can terminate the claude subprocess and flip a flag
+    that suppresses any DB writes on the way out.
+    """
+    with _INSIGHT_RUNS_LOCK:
+        _INSIGHT_RUNS[agent_id] = {'proc': None, 'cancelled': False}
+
     try:
-        context = _gather_agent_conversation_context(own_db, agent_id)
-    finally:
-        own_db.close()
+        from config import CLAUDE_BIN
 
-    if not context:
-        logger.info("No conversation context for agent %s — skipping summary", agent_id)
-        _set_insight_status(agent_id, "failed", project_name)
-        return
+        own_db = SessionLocal()
+        try:
+            context = _gather_agent_conversation_context(own_db, agent_id)
+        finally:
+            own_db.close()
 
-    prompt = f"""You are a project analyst. Read the following agent conversation and extract insights worth remembering for PROGRESS.md.
+        if _is_insight_cancelled(agent_id):
+            return
+        if not context:
+            logger.info("No conversation context for agent %s — skipping summary", agent_id)
+            _set_insight_status(agent_id, "failed", project_name)
+            return
+
+        prompt = f"""You are a project analyst. Read the following agent conversation and extract insights worth remembering for PROGRESS.md.
 
 ALWAYS respond in English regardless of the source language.
 
@@ -527,94 +574,127 @@ Agent: {agent_name} | Task: {task_title}
 
 {context}"""
 
-    try:
-        # Run from /tmp to avoid loading project hooks (PreToolUse permission
-        # hook returns {} for non-agent subprocesses, causing empty output).
-        result = subprocess.run(
-            [CLAUDE_BIN, "-p", "-", "--output-format", "text",
-             "--no-session-persistence"],
-            input=prompt,
-            capture_output=True, text=True, timeout=300,
-            cwd="/tmp",
-            env=subprocess_clean_env(),
-        )
+        try:
+            # Run from /tmp to avoid loading project hooks (PreToolUse permission
+            # hook returns {} for non-agent subprocesses, causing empty output).
+            # Popen (not run) so cancel_insight_run can terminate the proc mid-flight.
+            proc = subprocess.Popen(
+                [CLAUDE_BIN, "-p", "-", "--output-format", "text",
+                 "--no-session-persistence"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+                cwd="/tmp",
+                env=subprocess_clean_env(),
+            )
+            with _INSIGHT_RUNS_LOCK:
+                entry = _INSIGHT_RUNS.get(agent_id)
+                if entry is not None:
+                    if entry.get('cancelled'):
+                        try:
+                            proc.terminate()
+                        except OSError:
+                            pass
+                    else:
+                        entry['proc'] = proc
 
-        if result.returncode != 0:
-            logger.warning("Agent summary failed for %s (rc=%d): %s",
-                           agent_id, result.returncode, result.stderr[:500])
+            try:
+                stdout, stderr = proc.communicate(input=prompt, timeout=300)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                if _is_insight_cancelled(agent_id):
+                    return
+                logger.warning("Agent summary timed out for %s", agent_id)
+                _set_insight_status(agent_id, "failed", project_name)
+                return
+
+            if _is_insight_cancelled(agent_id):
+                return
+
+            if proc.returncode != 0:
+                logger.warning("Agent summary failed for %s (rc=%d): %s",
+                               agent_id, proc.returncode, stderr[:500])
+                _set_insight_status(agent_id, "failed", project_name)
+                return
+
+            raw_output = stdout.strip()
+        except FileNotFoundError:
+            if _is_insight_cancelled(agent_id):
+                return
+            logger.warning("Claude CLI not found for agent summary")
+            _set_insight_status(agent_id, "failed", project_name)
+            return
+        except Exception:
+            if _is_insight_cancelled(agent_id):
+                return
+            logger.exception("Unexpected error in agent summary for %s", agent_id)
             _set_insight_status(agent_id, "failed", project_name)
             return
 
-        raw_output = result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        logger.warning("Agent summary timed out for %s", agent_id)
-        _set_insight_status(agent_id, "failed", project_name)
-        return
-    except FileNotFoundError:
-        logger.warning("Claude CLI not found for agent summary")
-        _set_insight_status(agent_id, "failed", project_name)
-        return
-    except Exception:
-        logger.exception("Unexpected error in agent summary for %s", agent_id)
-        _set_insight_status(agent_id, "failed", project_name)
-        return
+        if _is_insight_cancelled(agent_id):
+            return
+        if not raw_output:
+            logger.info("Claude returned empty output for agent %s summary", agent_id)
+            _set_insight_status(agent_id, "failed", project_name)
+            return
 
-    if not raw_output:
-        logger.info("Claude returned empty output for agent %s summary", agent_id)
-        _set_insight_status(agent_id, "failed", project_name)
-        return
+        # Strip markdown fences if LLM wrapped output
+        if raw_output.startswith("```"):
+            lines = raw_output.split("\n")
+            if lines[-1].strip() == "```":
+                lines = lines[1:-1]
+            else:
+                lines = lines[1:]
+            raw_output = "\n".join(lines).strip()
 
-    # Strip markdown fences if LLM wrapped output
-    if raw_output.startswith("```"):
-        lines = raw_output.split("\n")
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
+        # Parse numbered insights
+        insight_items = re.findall(r"^\d+\.\s+(.+)", raw_output, re.MULTILINE)
+        if not insight_items:
+            logger.info("No insights parsed from agent %s summary", agent_id)
+            _set_insight_status(agent_id, "failed", project_name)
+            return
+
+        if _is_insight_cancelled(agent_id):
+            return
+
+        # Store as AgentInsightSuggestion rows
+        own_db = SessionLocal()
+        try:
+            for content in insight_items:
+                own_db.add(AgentInsightSuggestion(
+                    agent_id=agent_id,
+                    content=content.strip(),
+                ))
+            agent = own_db.get(Agent, agent_id)
+            if agent:
+                agent.has_pending_suggestions = True
+                agent.insight_status = None  # Clear — success
+                # Save combined insights as task agent_summary (replaces the
+                # quick last_message_preview saved at stop time)
+                if agent.task_id:
+                    _task = own_db.get(Task, agent.task_id)
+                    if _task:
+                        _task.agent_summary = "\n".join(
+                            f"{i+1}. {c.strip()}" for i, c in enumerate(insight_items)
+                        )[:2000]
+            own_db.commit()
+            logger.info("Stored %d insight suggestions for agent %s", len(insight_items), agent_id)
+        finally:
+            own_db.close()
+
+        # Emit WS event (from background thread → use stored main event loop)
+        from websocket import emit_progress_suggestions_ready
+        loop = _main_event_loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                emit_progress_suggestions_ready(agent_id, len(insight_items), project_name),
+                loop,
+            )
         else:
-            lines = lines[1:]
-        raw_output = "\n".join(lines).strip()
-
-    # Parse numbered insights
-    insight_items = re.findall(r"^\d+\.\s+(.+)", raw_output, re.MULTILINE)
-    if not insight_items:
-        logger.info("No insights parsed from agent %s summary", agent_id)
-        _set_insight_status(agent_id, "failed", project_name)
-        return
-
-    # Store as AgentInsightSuggestion rows
-    own_db = SessionLocal()
-    try:
-        for content in insight_items:
-            own_db.add(AgentInsightSuggestion(
-                agent_id=agent_id,
-                content=content.strip(),
-            ))
-        agent = own_db.get(Agent, agent_id)
-        if agent:
-            agent.has_pending_suggestions = True
-            agent.insight_status = None  # Clear — success
-            # Save combined insights as task agent_summary (replaces the
-            # quick last_message_preview saved at stop time)
-            if agent.task_id:
-                _task = own_db.get(Task, agent.task_id)
-                if _task:
-                    _task.agent_summary = "\n".join(
-                        f"{i+1}. {c.strip()}" for i, c in enumerate(insight_items)
-                    )[:2000]
-        own_db.commit()
-        logger.info("Stored %d insight suggestions for agent %s", len(insight_items), agent_id)
+            logger.debug("Main event loop not available for WS emit")
     finally:
-        own_db.close()
-
-    # Emit WS event (from background thread → use stored main event loop)
-    from websocket import emit_progress_suggestions_ready
-    loop = _main_event_loop
-    if loop and loop.is_running():
-        asyncio.run_coroutine_threadsafe(
-            emit_progress_suggestions_ready(agent_id, len(insight_items), project_name),
-            loop,
-        )
-    else:
-        logger.debug("Main event loop not available for WS emit")
+        with _INSIGHT_RUNS_LOCK:
+            _INSIGHT_RUNS.pop(agent_id, None)
 
 
 def _generate_retry_summary_background(agent_id: str, task_id: str,

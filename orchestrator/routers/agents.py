@@ -2300,6 +2300,10 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     # includes the post-resume turns), so keeping the old pending set adds
     # no value and would just clutter the agent card. Accepted/rejected rows
     # and project-level ProgressInsight history are untouched.
+    # If a generation is still in flight, terminate its claude subprocess
+    # and flip its cancel flag so the worker thread exits without writing.
+    from routers.projects import cancel_insight_run
+    cancel_insight_run(agent.id)
     db.query(AgentInsightSuggestion).filter(
         AgentInsightSuggestion.agent_id == agent.id,
         AgentInsightSuggestion.status == "pending",
