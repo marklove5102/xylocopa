@@ -1751,13 +1751,13 @@ async def list_project_agents(
     name: str,
     status: AgentStatus | None = None,
     limit: int | None = None,
+    include_subagents: bool = False,
     db: Session = Depends(get_db),
 ):
     """List agents for a project (works for active, archived, and unregistered projects)."""
-    q = db.query(Agent).filter(
-        Agent.project == name,
-        Agent.is_subagent == False,  # noqa: E712
-    )
+    q = db.query(Agent).filter(Agent.project == name)
+    if not include_subagents:
+        q = q.filter(Agent.is_subagent == False)  # noqa: E712
     if status:
         q = q.filter(Agent.status == status)
     q = q.order_by(Agent.last_message_at.desc().nulls_last(), Agent.created_at.desc())

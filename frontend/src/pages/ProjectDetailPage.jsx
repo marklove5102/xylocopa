@@ -40,6 +40,7 @@ import ProjectFileModal from "../components/ProjectFileModal";
 import ProjectBrowserModal from "../components/ProjectBrowserModal";
 import ClaudeMdDiffModal from "../components/ClaudeMdDiffModal";
 import BookmarksSection from "../components/BookmarksSection";
+import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
@@ -49,6 +50,7 @@ const AGENT_TABS = [
   { key: "active", label: "Active" },
   { key: "insights", label: "Insights" },
   { key: "stopped", label: "Stopped" },
+  { key: "graph", label: "Graph" },
 ];
 
 function TaskRing({ total, completed, pct: pctOverride, size = 22 }) {
@@ -1160,50 +1162,55 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         </div>
       )}
 
-      {/* Agent list */}
-      <div>
-        {filtered.length === 0 ? (
-          <div className="text-center py-8 text-faint text-sm">
-            No {agentTab === "all" ? "" : agentTab + " "}agents
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {selecting && (
-              <div className="grid grid-cols-3 items-center px-1 -mt-1 mb-1">
-                <button
-                  type="button"
-                  onClick={allSelected ? deselectAll : selectAll}
-                  className="justify-self-start text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
-                >
-                  {allSelected ? "Deselect All" : "Select All"}
-                </button>
-                <span className="justify-self-center text-sm text-label">
-                  {selected.size > 0 ? `${selected.size} selected` : "Select agents"}
-                </span>
-                <button
-                  type="button"
-                  onClick={exitSelectMode}
-                  className="justify-self-end text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
-                >
-                  Done
-                </button>
-              </div>
-            )}
-            {[...starredAgents, ...regularAgents].map((agent) => (
-              <AgentRow
-                key={agent.id}
-                agent={agent}
-                hideProjectTag
-                onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
-                selecting={selecting}
-                selected={selected.has(agent.id)}
-                onToggle={toggleOne}
-                onEnterSelect={enterSelectMode}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Agent list (hidden on Graph tab) */}
+      {agentTab !== "graph" && (
+        <div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-8 text-faint text-sm">
+              No {agentTab === "all" ? "" : agentTab + " "}agents
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {selecting && (
+                <div className="grid grid-cols-3 items-center px-1 -mt-1 mb-1">
+                  <button
+                    type="button"
+                    onClick={allSelected ? deselectAll : selectAll}
+                    className="justify-self-start text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                  >
+                    {allSelected ? "Deselect All" : "Select All"}
+                  </button>
+                  <span className="justify-self-center text-sm text-label">
+                    {selected.size > 0 ? `${selected.size} selected` : "Select agents"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={exitSelectMode}
+                    className="justify-self-end text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors px-2 py-1"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+              {[...starredAgents, ...regularAgents].map((agent) => (
+                <AgentRow
+                  key={agent.id}
+                  agent={agent}
+                  hideProjectTag
+                  onClick={() => navigate(`/agents/${agent.id}`, { state: forwardState(location) })}
+                  selecting={selecting}
+                  selected={selected.has(agent.id)}
+                  onToggle={toggleOne}
+                  onEnterSelect={enterSelectMode}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Task graph view */}
+      <TaskGraphSection projectName={name} visible={agentTab === "graph"} />
 
       <BookmarksSection
         projectName={name}
