@@ -4001,7 +4001,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   </button>
                 )}
 
-                <ContextUsagePill usage={contextUsage} />
+                <ContextUsagePill usage={contextUsage} agentId={id} />
 
                 <button
                   type="button"

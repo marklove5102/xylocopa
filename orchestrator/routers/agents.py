@@ -1802,6 +1802,20 @@ async def get_context_usage_endpoint(agent_id: str, db: Session = Depends(get_db
     return get_context_usage(agent_id)
 
 
+@router.get("/api/agents/{agent_id}/context-breakdown")
+async def get_context_breakdown_endpoint(agent_id: str, db: Session = Depends(get_db)):
+    """Full 5-component breakdown + suggestions — Phase 2.
+
+    Lazily fetched when the user opens the popover. Anchors total to the
+    JSONL `usage` value; static categories (MCP/Memory/Agents/System) use
+    a char-based heuristic; Messages absorbs the residual.
+    """
+    if not db.get(Agent, agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    from context_breakdown import get_context_breakdown
+    return get_context_breakdown(agent_id)
+
+
 @router.get("/api/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
     """Get full agent details."""

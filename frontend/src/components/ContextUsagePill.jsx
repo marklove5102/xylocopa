@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { fetchAgentContextBreakdown } from "../lib/api";
 
 /**
  * Token budget pill — sits between Stop and Monitor in the chat header.
@@ -8,10 +9,10 @@ import { useState, useRef } from "react";
  *   [● 85%]   red     80-95%
  *   [● 96%]   red+pulse  >95%
  *
- * Click → popover with absolute numbers. Hover → tooltip via title attr.
- * Falls back to neutral grey when no data yet (no assistant turn).
+ * Click → popover with per-component breakdown + suggestions (lazy-fetched).
+ * Hover → tooltip via title attr with absolute numbers.
  */
-export default function ContextUsagePill({ usage }) {
+export default function ContextUsagePill({ usage, agentId }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
 
@@ -60,7 +61,7 @@ export default function ContextUsagePill({ usage }) {
       {open && (
         <ContextUsagePopover
           usage={usage}
-          anchorRef={btnRef}
+          agentId={agentId}
           onClose={() => setOpen(false)}
         />
       )}
@@ -68,7 +69,26 @@ export default function ContextUsagePill({ usage }) {
   );
 }
 
-function ContextUsagePopover({ usage, onClose }) {
+const SEVERITY_STYLES = {
+  urgent: "bg-red-500/15 text-red-600 dark:text-red-400 border-l-2 border-red-500",
+  warn: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-l-2 border-amber-500",
+  info: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-l-2 border-cyan-500",
+};
+
+function ContextUsagePopover({ usage, agentId, onClose }) {
+  const [breakdown, setBreakdown] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState({});
+
+  useEffect(() => {
+    if (!agentId) return;
+    let cancelled = false;
+    fetchAgentContextBreakdown(agentId)
+      .then((data) => { if (!cancelled) { setBreakdown(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [agentId]);
+
   const hasData = !!usage?.has_data;
   const total = hasData ? (usage.total || 0) : 0;
   const limit = usage?.limit || 200_000;
@@ -76,42 +96,142 @@ function ContextUsagePopover({ usage, onClose }) {
   const pct = hasData ? (usage.percent || 0) : 0;
   const fmt = (n) => n.toLocaleString();
 
+  const components = breakdown?.components || [];
+  const suggestions = breakdown?.suggestions || [];
+
   return (
     <>
-      <div
-        className="fixed inset-0 z-40"
-        onClick={onClose}
-      />
-      <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-lg shadow-lg bg-surface border border-divider p-3 text-xs">
-        <div className="font-semibold text-body mb-1">Context Usage</div>
-        {hasData ? (
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute right-0 top-full mt-1 z-50 w-80 max-w-[90vw] rounded-lg shadow-lg bg-surface border border-divider p-3 text-xs max-h-[70vh] overflow-y-auto">
+        <div className="flex items-baseline justify-between mb-1">
+          <div className="font-semibold text-body">Context Usage</div>
+          {usage?.model && (
+            <div className="font-mono text-[10px] text-faint">{usage.model}</div>
+          )}
+        </div>
+
+        {!hasData ? (
+          <div className="text-dim">
+            No assistant turns yet — usage will appear after the first response.
+          </div>
+        ) : (
           <>
             <div className="text-dim mb-2 tabular-nums">
               {fmt(total)} / {fmt(limit)} tokens ({pct.toFixed(1)}%)
             </div>
-            <div className="w-full h-1.5 rounded-full bg-input overflow-hidden mb-2">
-              <div
-                className={`h-full ${pct < 60 ? "bg-cyan-500" : pct < 80 ? "bg-amber-500" : "bg-red-500"}`}
-                style={{ width: `${Math.min(100, pct)}%` }}
-              />
+            <div className="w-full h-2 rounded-full bg-input overflow-hidden mb-3 flex">
+              {components.map((c) => {
+                const widthPct = Math.min(100, (c.tokens / limit) * 100);
+                if (widthPct < 0.1) return null;
+                const color = COMPONENT_COLOR[c.name] || "bg-gray-500";
+                return (
+                  <div
+                    key={c.name}
+                    className={`h-full ${color}`}
+                    style={{ width: `${widthPct}%` }}
+                    title={`${c.name}: ${fmt(c.tokens)} (${c.percent.toFixed(1)}%)`}
+                  />
+                );
+              })}
             </div>
-            <div className="space-y-0.5 text-dim">
-              <div className="flex justify-between"><span>Used</span><span className="tabular-nums">{fmt(total)}</span></div>
-              <div className="flex justify-between"><span>Free</span><span className="tabular-nums">{fmt(free)}</span></div>
-              {usage.model && (
-                <div className="flex justify-between"><span>Model</span><span className="font-mono text-[10px]">{usage.model}</span></div>
-              )}
-            </div>
+
+            {loading && !components.length ? (
+              <div className="text-dim animate-pulse">Loading breakdown...</div>
+            ) : (
+              <div className="space-y-1">
+                {components.map((c) => (
+                  <ComponentRow
+                    key={c.name}
+                    component={c}
+                    expanded={!!expanded[c.name]}
+                    onToggle={() => setExpanded((s) => ({ ...s, [c.name]: !s[c.name] }))}
+                  />
+                ))}
+                <div className="flex items-center justify-between py-1 text-dim border-t border-divider mt-2 pt-2">
+                  <span>Free space</span>
+                  <span className="tabular-nums">
+                    {fmt(free)}
+                    <span className="text-faint ml-1">({((free / limit) * 100).toFixed(1)}%)</span>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {suggestions.length > 0 && (
+              <div className="mt-3 pt-2 border-t border-divider">
+                <div className="font-semibold text-body mb-1.5">Suggestions</div>
+                <div className="space-y-1">
+                  {suggestions.map((s, i) => (
+                    <div key={i} className={`px-2 py-1.5 rounded text-[11px] leading-snug ${SEVERITY_STYLES[s.severity] || SEVERITY_STYLES.info}`}>
+                      {s.text}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="mt-2 pt-2 border-t border-divider text-[10px] text-faint">
-              Headline numbers from session JSONL. Component breakdown coming in a later update.
+              Total from JSONL `usage` (exact). Static buckets approximate;
+              Messages absorbs residual.
             </div>
           </>
-        ) : (
-          <div className="text-dim">
-            No assistant turns yet — context usage will appear after the first response.
-          </div>
         )}
       </div>
     </>
+  );
+}
+
+const COMPONENT_COLOR = {
+  "Messages": "bg-cyan-500",
+  "MCP tools": "bg-violet-500",
+  "Memory files": "bg-amber-500",
+  "Custom Agents": "bg-emerald-500",
+  "System overhead": "bg-gray-500",
+};
+
+function ComponentRow({ component, expanded, onToggle }) {
+  const fmt = (n) => n.toLocaleString();
+  const hasBreakdown = Array.isArray(component.breakdown) && component.breakdown.length > 0;
+  const dotColor = COMPONENT_COLOR[component.name] || "bg-gray-500";
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={hasBreakdown ? onToggle : undefined}
+        disabled={!hasBreakdown}
+        className={`w-full flex items-center justify-between py-1 ${hasBreakdown ? "hover:bg-input rounded px-1 -mx-1" : ""}`}
+      >
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dotColor}`} />
+          <span className="truncate text-body">{component.name}</span>
+          {hasBreakdown && (
+            <svg className={`w-3 h-3 shrink-0 text-dim transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          )}
+        </span>
+        <span className="tabular-nums text-dim shrink-0">
+          {fmt(component.tokens)}
+          <span className="text-faint ml-1">({component.percent.toFixed(1)}%)</span>
+        </span>
+      </button>
+      {expanded && hasBreakdown && (
+        <div className="ml-3.5 my-1 space-y-0.5 border-l border-divider pl-2">
+          {component.breakdown.map((b, i) => (
+            <div key={i} className="flex items-center justify-between text-[10px] text-dim">
+              <span className="truncate font-mono">{b.name}</span>
+              <span className="tabular-nums shrink-0 ml-2">
+                {fmt(b.tokens)}
+                {b.estimated && <span className="text-faint ml-0.5">~</span>}
+              </span>
+            </div>
+          ))}
+          {component.info && (
+            <div className="text-[10px] text-faint italic mt-1">{component.info}</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
