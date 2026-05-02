@@ -96,9 +96,13 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
 
   // Fetch inbox tasks
   const loadTasks = useCallback(async () => {
+    const t0 = performance.now();
     try {
       const data = await fetchTasksV2(`statuses=INBOX&limit=100`);
+      const t1 = performance.now();
       setTasks(Array.isArray(data) ? data : []);
+      // eslint-disable-next-line no-console
+      console.log(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
     } catch (err) {
       console.warn("Failed to load tasks", err);
     } finally {
@@ -126,9 +130,15 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
   }, [isActive]);
 
   // Load on mount + poll — gated on visible AND active so hidden tabs don't poll.
+  // Note: do NOT setLoading(true) here. With keep-mounted, this effect re-runs
+  // on every isActive transition; resetting loading would briefly hide
+  // InboxView and cause a perceptible flash. The initial useState(true) is the
+  // only time loading should be true — first fetch flips it false and it stays.
   useEffect(() => {
     if (!visible || !isActive) return;
-    setLoading(true);
+    const t0 = performance.now();
+    // eslint-disable-next-line no-console
+    console.log(`[tasks] activate visible=${visible} isActive=${isActive}`);
     loadTasks();
     loadCounts();
     pollRef.current = setInterval(loadTasks, INBOX_POLL_INTERVAL);
@@ -136,6 +146,8 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
     return () => {
       clearInterval(pollRef.current);
       clearInterval(countPollRef.current);
+      // eslint-disable-next-line no-console
+      console.log(`[tasks] deactivate after ${(performance.now() - t0).toFixed(0)}ms`);
     };
   }, [loadTasks, loadCounts, visible, isActive]);
 

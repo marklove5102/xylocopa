@@ -86,9 +86,13 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    const t0 = performance.now();
     try {
       const data = await fetchAgents();
+      const t1 = performance.now();
       setAgents(Array.isArray(data) ? data : []);
+      // eslint-disable-next-line no-console
+      console.log(`[agents] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -161,6 +165,8 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
 
   useEffect(() => {
     if (!visible || !isActive) return;
+    // eslint-disable-next-line no-console
+    console.log(`[agents] activate visible=${visible} isActive=${isActive}`);
     load();
     loadUnlinked();
     pollRef.current = setInterval(() => { load(); loadUnlinked(); }, POLL_INTERVAL);
