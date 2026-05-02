@@ -10,13 +10,24 @@
 # Tries HTTP POST first; falls back to local file when orchestrator is offline.
 #
 # Env vars: XY_PORT/XY_AGENT_ID (preferred), AHIVE_PORT/AHIVE_AGENT_ID (legacy).
+# Port resolution: env vars > repo .env > 8080.  Unmanaged (user-launched)
+# sessions don't inherit XY_PORT, so we fall back to reading PORT from the
+# orchestrator's .env file located relative to this script.
 
 PAYLOAD=$(cat)
 export SESSION_ID=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
 [ -z "$SESSION_ID" ] && exit 0
 export SESSION_SOURCE=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('source',''))" 2>/dev/null)
 
-PORT="${XY_PORT:-${AHIVE_PORT:-8080}}"
+PORT="${XY_PORT:-${AHIVE_PORT:-}}"
+if [ -z "$PORT" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  ENV_FILE="${SCRIPT_DIR}/../../.env"
+  if [ -f "$ENV_FILE" ]; then
+    PORT=$(grep -E '^[[:space:]]*PORT=' "$ENV_FILE" | head -n1 | sed -E 's/^[[:space:]]*PORT=//' | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+  fi
+fi
+PORT="${PORT:-8080}"
 AGENT_ID="${XY_AGENT_ID:-${AHIVE_AGENT_ID:-}}"
 
 # Try HTTP POST to orchestrator
