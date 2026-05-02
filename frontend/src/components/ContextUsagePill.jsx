@@ -190,7 +190,7 @@ function LifetimeSection({ lifetime }) {
         className="w-full flex items-center justify-between py-0.5 hover:bg-input rounded px-1 -mx-1"
       >
         <span className="flex items-center gap-1.5">
-          <span className="font-semibold text-body">Lifetime spend</span>
+          <span className="font-semibold text-body">Xylo session lifetime</span>
           <svg className={`w-3 h-3 text-dim transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
@@ -199,7 +199,7 @@ function LifetimeSection({ lifetime }) {
           {fmtTok(lifetime.total_tokens || 0)} <span className="text-dim">·</span> {fmtCost(cost)}
         </span>
       </button>
-      <div className="text-[10px] text-faint pl-1">{sessionStr} · {lifetime.turn_count || 0} turns</div>
+      <div className="text-[10px] text-faint pl-1">across {sessionStr} · {lifetime.turn_count || 0} turns</div>
 
       {expanded && (
         <div className="mt-1.5 ml-1 space-y-0.5 text-[10px]">
@@ -255,14 +255,17 @@ function _shortId(id) {
 
 function BySessionList({ sessions, fmtTok, fmtCost }) {
   const [open, setOpen] = useState(false);
+  // Tally tokens + cost across both top-level CC sessions and their sub-sessions.
   const totalTurns = sessions.reduce((acc, s) => {
     const subTurns = (s.sub_sessions || []).reduce((a, x) => a + (x.turn_count || 0), 0);
     return acc + (s.turn_count || 0) + subTurns;
   }, 0);
+  const totalSubCount = sessions.reduce((acc, s) => acc + (s.sub_sessions?.length || 0), 0);
   const topCount = sessions.length;
-  const summaryStr = topCount === 1
-    ? `1 session · ${totalTurns} turns`
-    : `${topCount} sessions · ${totalTurns} turns`;
+  const totalCount = topCount + totalSubCount;
+  const summaryStr = totalSubCount === 0
+    ? `${topCount} CC session${topCount === 1 ? "" : "s"} · ${totalTurns} turns`
+    : `${topCount} top + ${totalSubCount} sub · ${totalTurns} turns`;
 
   return (
     <div className="mt-2 pt-1.5 border-t border-divider">
@@ -272,7 +275,7 @@ function BySessionList({ sessions, fmtTok, fmtCost }) {
         className="w-full flex items-center justify-between py-0.5 hover:bg-input rounded px-1 -mx-1"
       >
         <span className="flex items-center gap-1.5">
-          <span className="font-semibold text-body">By session</span>
+          <span className="font-semibold text-body">CC sessions</span>
           <svg className={`w-3 h-3 text-dim transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
@@ -293,6 +296,10 @@ function BySessionList({ sessions, fmtTok, fmtCost }) {
               depth={0}
             />
           ))}
+          <div className="text-faint italic mt-1.5 leading-snug">
+            One xylo session can span multiple CC sessions (rotated by /compact
+            or /clear) plus any Agent-tool sub-sessions spawned from within.
+          </div>
         </div>
       )}
     </div>
