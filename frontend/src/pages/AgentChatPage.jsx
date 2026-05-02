@@ -84,6 +84,7 @@ import useHealthStatus from "../hooks/useHealthStatus";
 import useContextUsage from "../hooks/useContextUsage";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
+import ChatSkeleton from "../components/skeletons/ChatSkeleton";
 
 const ACTIVE_AGENT_STATUSES = new Set(["EXECUTING", "IDLE"]);
 
@@ -3819,11 +3820,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   }, [isExecutingRaw]);
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-20">
-        <span className="text-dim text-sm animate-pulse">Loading...</span>
-      </div>
-    );
+    return <ChatSkeleton />;
   }
 
   if (!agent) {

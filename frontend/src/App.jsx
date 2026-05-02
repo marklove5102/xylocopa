@@ -14,6 +14,7 @@ import { WebSocketProvider } from "./contexts/WebSocketContext";
 import { UnreadProvider, useUnread } from "./contexts/UnreadContext";
 import AttentionButton from "./components/AttentionButton";
 import BottomNavBar from "./components/BottomNavBar";
+import RouteFallback from "./components/skeletons/RouteFallback";
 
 const MODULE_IMPORT_ERROR_PATTERNS = [
   "Importing a module script failed",
@@ -446,7 +447,7 @@ function AppChrome({ themeProps }) {
   return (
     <>
       <ErrorBoundary>
-        <Suspense fallback={<div className="flex items-center justify-center h-full bg-page"><div className="animate-pulse text-dim text-sm">Loading...</div></div>}>
+        <Suspense fallback={<RouteFallback />}>
           <AppRoutes themeProps={themeProps} />
         </Suspense>
       </ErrorBoundary>

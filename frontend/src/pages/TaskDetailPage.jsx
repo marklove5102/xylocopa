@@ -12,6 +12,7 @@ import { useToast } from "../contexts/ToastContext";
 import useDraft from "../hooks/useDraft";
 import { forwardState } from "../lib/nav";
 import { taskDetailCache } from "../lib/detailCache";
+import TaskDetailSkeleton from "../components/skeletons/TaskDetailSkeleton";
 
 export default function TaskDetailPage({ theme, onToggleTheme }) {
   const { id } = useParams();
@@ -139,11 +140,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
   };
 
   if (loading && !task) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <span className="text-dim text-sm animate-pulse">Loading task...</span>
-      </div>
-    );
+    return <TaskDetailSkeleton />;
   }
 
   if (error && !task) {

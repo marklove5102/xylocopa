@@ -45,6 +45,7 @@ import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
 import { projectDetailCache } from "../lib/detailCache";
+import ProjectDetailSkeleton from "../components/skeletons/ProjectDetailSkeleton";
 
 const AGENT_TABS = [
   { key: "all", label: "All" },
@@ -851,11 +852,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-20">
-        <span className="text-dim text-sm animate-pulse">Loading...</span>
-      </div>
-    );
+    return <ProjectDetailSkeleton />;
   }
 
   if (!project && loadError) {
