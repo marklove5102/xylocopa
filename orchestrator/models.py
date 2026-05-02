@@ -338,3 +338,70 @@ class SessionViewEvent(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CCSession(Base):
+    """A single Claude Code conversation session — either top-level (the
+    xylo agent's own CLI session, possibly one of many across /compact
+    /clear rotations) or a sub-session spawned by Task tool invocation
+    inside another CC session.
+
+    Top-level: parent_session_id IS NULL, is_subagent_session = False
+    Sub-session: parent_session_id points to the calling CC session,
+                 is_subagent_session = True
+
+    agent_id always points to the OWNING xylo agent. For sub-sessions
+    that's the same xylo agent that issued the Task tool call (xylo
+    "subagent" rows themselves have session_id=None — they're metadata,
+    not session owners).
+
+    Token totals are populated either:
+    - On rotation/end (writer in agent_dispatcher / sync_engine)
+    - By reconcile sweep (cc_session_discovery scanning JSONL files)
+    Updated rows on subsequent writes if usage grew.
+    """
+    __tablename__ = "cc_sessions"
+    __table_args__ = (
+        Index("ix_cc_sessions_agent_started", "agent_id", "started_at"),
+        Index("ix_cc_sessions_parent", "parent_session_id"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(
+        String(12), ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # Self-referential link to the CC session that spawned this one via
+    # Task tool. NULL for top-level sessions.
+    parent_session_id: Mapped[str | None] = mapped_column(
+        String(50),
+        ForeignKey("cc_sessions.session_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # The JSONL `parentUuid` field — points back to a specific entry in
+    # the parent's JSONL (the tool_use that spawned us). Lets reconcile
+    # find unmatched sub-sessions.
+    parent_jsonl_uuid: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    project_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    worktree: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    is_subagent_session: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # active | rotation | compact | clear | subagent_done | reconciled | stopped
+    end_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
