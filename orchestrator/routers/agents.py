@@ -1799,7 +1799,7 @@ async def get_context_usage_endpoint(agent_id: str, db: Session = Depends(get_db
     """
     if not db.get(Agent, agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-    from context_breakdown import get_context_breakdown
+    from context import get_context_breakdown
     return get_context_breakdown(agent_id)
 
 

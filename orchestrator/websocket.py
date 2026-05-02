@@ -423,7 +423,7 @@ async def emit_context_usage(agent_id: str):
     single source of truth. The popover does not refetch on open.
     """
     try:
-        from context_breakdown import get_context_breakdown
+        from context import get_context_breakdown
         snap = get_context_breakdown(agent_id)
     except Exception:
         logger.warning("emit_context_usage: snapshot failed for %s",

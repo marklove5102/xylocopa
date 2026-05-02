@@ -212,6 +212,11 @@ function LifetimeSection({ lifetime }) {
           <LifetimeRow label="Cache write"    tokens={byKind.cache_creation_input_tokens} rate={pricing.cache_create} />
           <LifetimeRow label="Cache read"     tokens={byKind.cache_read_input_tokens}     rate={pricing.cache_read}   />
           <LifetimeRow label="Output"         tokens={byKind.output_tokens}               rate={pricing.output}       />
+          <div className="text-faint italic mt-1.5 leading-snug">
+            Cache reads are billed every turn (at the discounted rate). The cached
+            prefix gets re-read on each request, so cache_read tokens accumulate
+            well past the current window size.
+          </div>
           {lifetime.pricing_model && (
             <div className="text-faint italic mt-1">
               Pricing for {lifetime.pricing_model} (USD/M tokens)
