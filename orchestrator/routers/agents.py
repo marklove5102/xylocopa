@@ -2249,6 +2249,12 @@ async def permanently_delete_agent(agent_id: str, request: Request, db: Session 
             except OSError as e:
                 logger.warning("Failed to delete output log %s: %s", log_path, e)
 
+    # 6. Delete session-history files (lifetime tracking sidecar)
+    from session_history import remove_history as _remove_history, _history_file
+    for aid in all_agent_ids:
+        if _remove_history(aid):
+            cleaned_files.append(_history_file(aid))
+
     logger.info("Permanently deleted agent %s (+%d subagents, %d messages, %d files cleaned)",
                 agent_id, len(child_agents), deleted_msgs, len(cleaned_files))
     return {
