@@ -159,11 +159,6 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
             {usage?.lifetime && (
               <LifetimeSection lifetime={usage.lifetime} />
             )}
-
-            <div className="mt-2 pt-2 border-t border-divider text-[10px] text-faint">
-              Total from JSONL `usage` (exact). Static buckets approximate;
-              Messages absorbs residual.
-            </div>
           </>
         )}
       </div>
