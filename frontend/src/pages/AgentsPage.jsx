@@ -20,7 +20,7 @@ const FILTER_TABS = [
   { key: "STOPPED", label: "Stopped" },
 ];
 
-export default function AgentsPage({ theme, onToggleTheme }) {
+export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const location = useLocation();
   const visible = usePageVisible();
@@ -160,12 +160,12 @@ export default function AgentsPage({ theme, onToggleTheme }) {
   }, [load, loadUnlinked]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !isActive) return;
     load();
     loadUnlinked();
     pollRef.current = setInterval(() => { load(); loadUnlinked(); }, POLL_INTERVAL);
     return () => clearInterval(pollRef.current);
-  }, [load, loadUnlinked, visible]);
+  }, [load, loadUnlinked, visible, isActive]);
 
   // Real-time status updates via WebSocket (agent_update events).
   // Backend now attaches unread_count / last_message_preview / last_message_at

@@ -12,7 +12,7 @@ import { forwardState } from "../lib/nav";
 
 const INBOX_POLL_INTERVAL = 5000;
 
-export default function TasksPage({ theme, onToggleTheme }) {
+export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [tasks, setTasks] = useState([]);
@@ -117,12 +117,17 @@ export default function TasksPage({ theme, onToggleTheme }) {
     loadCountsRef.current();
   });
 
-  // Register viewing for notification suppression
-  useEffect(() => { registerViewingTasks(); return () => unregisterViewingTasks(); }, []);
-
-  // Load on mount + poll
+  // Register viewing for notification suppression — track isActive transitions,
+  // not mount/unmount, since this page is kept mounted across tab switches.
   useEffect(() => {
-    if (!visible) return;
+    if (!isActive) return;
+    registerViewingTasks();
+    return () => unregisterViewingTasks();
+  }, [isActive]);
+
+  // Load on mount + poll — gated on visible AND active so hidden tabs don't poll.
+  useEffect(() => {
+    if (!visible || !isActive) return;
     setLoading(true);
     loadTasks();
     loadCounts();
@@ -132,7 +137,7 @@ export default function TasksPage({ theme, onToggleTheme }) {
       clearInterval(pollRef.current);
       clearInterval(countPollRef.current);
     };
-  }, [loadTasks, loadCounts, visible]);
+  }, [loadTasks, loadCounts, visible, isActive]);
 
   const onRefresh = useCallback(() => {
     loadTasks();

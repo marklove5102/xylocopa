@@ -159,7 +159,7 @@ const SORT_OPTIONS = [
   { value: "updated-old", label: "Oldest" },
 ];
 
-export default function ProjectsPage({ theme, onToggleTheme }) {
+export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const navType = useNavigationType();
   const visible = usePageVisible();
@@ -205,12 +205,12 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
 
   // Poll claudemd-pending projects
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !isActive) return;
     const poll = () => fetchClaudeMdPending().then((r) => setPendingProjects(r.projects || [])).catch(() => {});
     poll();
     const id = setInterval(poll, 30000);
     return () => clearInterval(id);
-  }, [visible]);
+  }, [visible, isActive]);
 
   // Double-tap nav: scroll to first project with pending CLAUDE.md review
   useEffect(() => {
@@ -250,11 +250,11 @@ export default function ProjectsPage({ theme, onToggleTheme }) {
   }, [load]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !isActive) return;
     load();
     const interval = setInterval(load, 10000);
     return () => clearInterval(interval);
-  }, [load, visible]);
+  }, [load, visible, isActive]);
 
   // When user swipes back (POP) to the list, flag it so the tab bar
   // click handler knows to show the list instead of auto-navigating

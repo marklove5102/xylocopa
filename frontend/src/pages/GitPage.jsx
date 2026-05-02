@@ -91,7 +91,8 @@ function MergeDropdown({ branchName, currentName, isMerging, disabled, onMerge }
   );
 }
 
-export default function GitPage({ theme, onToggleTheme }) {
+// eslint-disable-next-line no-unused-vars
+export default function GitPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const location = useLocation();
 

@@ -230,26 +230,56 @@ function AppRoutes({ themeProps }) {
   const savedRoute = localStorage.getItem("ah:last-route");
   const resumeTo = savedRoute && savedRoute !== "/" && savedRoute !== "/login" ? savedRoute : "/projects";
 
+  // Effective path for routing decisions: bg if overlay is open, else current.
+  const effectivePath = (bgLocation || location).pathname;
+
+  // Which of the four keep-mounted main tabs is currently visible (if any).
+  // These pages stay mounted across navigation — switching tabs flips visibility
+  // via CSS instead of unmounting/remounting, so re-entry is instant.
+  const keepMountedActive =
+    effectivePath === "/projects" ? "projects" :
+    effectivePath === "/agents" ? "agents" :
+    effectivePath === "/tasks" ? "tasks" :
+    effectivePath === "/git" ? "git" :
+    null;
+
+  // Dynamic routes render only when the active path is not one of the keep-mounted tabs.
+  const showingDynamic = keepMountedActive === null;
+
   return (
     <>
-      {/* Render background page when overlay is active, otherwise normal routes */}
-      <Routes location={bgLocation || location}>
-        <Route path="/" element={<Navigate to={resumeTo} replace />} />
-        <Route path="/projects" element={<ProjectsPage {...themeProps} />} />
-        <Route path="/projects/trash" element={<TrashPage {...themeProps} />} />
-        <Route path="/projects/:name" element={<ProjectDetailPage {...themeProps} />} />
-        <Route path="/agents" element={<AgentsPage {...themeProps} />} />
-        <Route path="/agents/:id" element={<AgentChatPage {...themeProps} />} />
-        <Route path="/tasks" element={<TasksPage {...themeProps} />} />
-        <Route path="/tasks/:id" element={<TaskDetailPage {...themeProps} />} />
-        {/* Only render as a standalone page if no background location */}
-        {!bgLocation && <Route path="/new/task" element={<NewTaskPage />} />}
-        <Route path="/new" element={<NewPage {...themeProps} />} />
-        <Route path="/monitor" element={<MonitorPage {...themeProps} />} />
-        <Route path="/split" element={<SplitScreenPage />} />
-        <Route path="/git" element={<GitPage {...themeProps} />} />
-      </Routes>
-      {/* Overlay: NewTaskPage sheet rendered on top of background page */}
+      {/* Keep-mounted main tabs — always rendered, visibility toggled by CSS.
+          Each receives `isActive` so its polling/effects pause when hidden. */}
+      <div className="h-full" hidden={keepMountedActive !== "projects"}>
+        <ProjectsPage {...themeProps} isActive={keepMountedActive === "projects"} />
+      </div>
+      <div className="h-full" hidden={keepMountedActive !== "agents"}>
+        <AgentsPage {...themeProps} isActive={keepMountedActive === "agents"} />
+      </div>
+      <div className="h-full" hidden={keepMountedActive !== "tasks"}>
+        <TasksPage {...themeProps} isActive={keepMountedActive === "tasks"} />
+      </div>
+      <div className="h-full" hidden={keepMountedActive !== "git"}>
+        <GitPage {...themeProps} isActive={keepMountedActive === "git"} />
+      </div>
+
+      {/* Dynamic routes — mount/unmount as before */}
+      {showingDynamic && (
+        <Routes location={bgLocation || location}>
+          <Route path="/" element={<Navigate to={resumeTo} replace />} />
+          <Route path="/projects/trash" element={<TrashPage {...themeProps} />} />
+          <Route path="/projects/:name" element={<ProjectDetailPage {...themeProps} />} />
+          <Route path="/agents/:id" element={<AgentChatPage {...themeProps} />} />
+          <Route path="/tasks/:id" element={<TaskDetailPage {...themeProps} />} />
+          {/* Only render as a standalone page if no background location */}
+          {!bgLocation && <Route path="/new/task" element={<NewTaskPage />} />}
+          <Route path="/new" element={<NewPage {...themeProps} />} />
+          <Route path="/monitor" element={<MonitorPage {...themeProps} />} />
+          <Route path="/split" element={<SplitScreenPage />} />
+        </Routes>
+      )}
+
+      {/* Overlay: NewTaskPage sheet rendered on top of whatever is below */}
       {bgLocation && (
         <Routes>
           <Route path="/new/task" element={<NewTaskPage />} />
