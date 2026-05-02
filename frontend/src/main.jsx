@@ -6,10 +6,16 @@ import "./index.css";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 import { setupFrameLogger } from "./lib/frameLogger";
+import { prefetchHeavyChunks } from "./lib/prefetchChunks";
 
 // Frame-by-frame DOM mutation logger (off by default).
 // Enable: localStorage.setItem("ah:frame-log", "1") then reload.
 setupFrameLogger();
+
+// Idle-time preload for AgentChatPage / ProjectDetailPage / TaskDetailPage
+// / NewTaskPage chunks so first navigation into them doesn't show the
+// Suspense "Loading..." fallback.
+prefetchHeavyChunks();
 
 // Mark non-mobile Linux as glass-incapable: backdrop-filter parses on
 // Linux Chrome/Firefox so @supports reports true, but the GPU compositor
