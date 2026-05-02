@@ -1534,16 +1534,23 @@ async def rename_project(name: str, body: ProjectRename, request: Request, db: S
     # Expire ORM cache so it doesn't conflict with raw SQL
     db.expire_all()
 
+    # Defer FK enforcement until commit so updating projects.name (the PK
+    # all child tables reference) doesn't fail before we get to update
+    # the children. SQLite supports this per-transaction; without it the
+    # parent UPDATE fires before any child UPDATE and trips a FK error.
+    db.execute(text("PRAGMA defer_foreign_keys = ON"))
+
     db.execute(text(
         "UPDATE projects SET name = :new_name, display_name = :display WHERE name = :old_name"
     ), {"new_name": new_name, "display": new_display, "old_name": name})
     db.execute(update(Agent).where(Agent.project == name).values(project=new_name))
     db.execute(update(StarredSession).where(StarredSession.project == name).values(project=new_name))
-    from models import Task, ProgressInsight, SessionViewEvent
+    from models import Task, ProgressInsight, SessionViewEvent, BookmarkedMessage
     db.execute(update(Task).where(Task.project == name).values(project=new_name))
     db.execute(update(Task).where(Task.project_name == name).values(project_name=new_name))
     db.execute(update(ProgressInsight).where(ProgressInsight.project == name).values(project=new_name))
     db.execute(update(SessionViewEvent).where(SessionViewEvent.project == name).values(project=new_name))
+    db.execute(update(BookmarkedMessage).where(BookmarkedMessage.project == name).values(project=new_name))
 
     ghost = db.execute(text("SELECT name FROM projects WHERE name = :old"), {"old": name}).fetchone()
     if ghost:
