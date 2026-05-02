@@ -48,35 +48,44 @@ async function clearModuleCachesBestEffort() {
 }
 
 function lazyPage(importer) {
-  return lazy(async () => {
-    // Retry import up to 3 times before falling back to full reload.
-    // iOS Safari kills background PWA processes; on resume the network
-    // often needs a few hundred ms to reconnect — retries cover that gap.
-    let lastErr;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const mod = await importer();
-        try { sessionStorage.removeItem(MODULE_RELOAD_KEY); } catch { }
-        return mod;
-      } catch (err) {
-        lastErr = err;
-        if (!isModuleImportError(err)) throw err;
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 1000));
+  // Single shared Promise per route. React.lazy reads .status synchronously
+  // when its factory returns an already-settled Promise; sharing the same
+  // Promise between preload() and the lazy factory means a preloaded route
+  // mounts without ever showing the Suspense fallback.
+  let cached = null;
+  const load = () => {
+    if (cached) return cached;
+    cached = (async () => {
+      let lastErr;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const mod = await importer();
+          try { sessionStorage.removeItem(MODULE_RELOAD_KEY); } catch { }
+          return mod;
+        } catch (err) {
+          lastErr = err;
+          if (!isModuleImportError(err)) throw err;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1000));
+        }
       }
-    }
-    // All retries exhausted — one-time reload as last resort
-    let shouldReload = true;
-    try {
-      shouldReload = sessionStorage.getItem(MODULE_RELOAD_KEY) !== "1";
-      if (shouldReload) sessionStorage.setItem(MODULE_RELOAD_KEY, "1");
-    } catch { }
-    if (shouldReload) {
-      await clearModuleCachesBestEffort();
-      window.location.reload();
-      return new Promise(() => {});
-    }
-    throw lastErr;
-  });
+      // All retries exhausted — one-time reload as last resort
+      let shouldReload = true;
+      try {
+        shouldReload = sessionStorage.getItem(MODULE_RELOAD_KEY) !== "1";
+        if (shouldReload) sessionStorage.setItem(MODULE_RELOAD_KEY, "1");
+      } catch { }
+      if (shouldReload) {
+        await clearModuleCachesBestEffort();
+        window.location.reload();
+        return new Promise(() => {});
+      }
+      throw lastErr;
+    })().catch((err) => { cached = null; throw err; });
+    return cached;
+  };
+  const Component = lazy(load);
+  Component.preload = load;
+  return Component;
 }
 
 const ProjectsPage = lazyPage(() => import("./pages/ProjectsPage"));
@@ -91,6 +100,19 @@ const GitPage = lazyPage(() => import("./pages/GitPage"));
 const TaskDetailPage = lazyPage(() => import("./pages/TaskDetailPage"));
 const NewTaskPage = lazyPage(() => import("./pages/NewTaskPage"));
 const SplitScreenPage = lazyPage(() => import("./pages/SplitScreenPage"));
+
+// Preload registry — lib/prefetchChunks.js reads window.__xylocopa_preloaders
+// to warm up heavy routes during idle time. Sharing the lazy component's
+// own load function (not a parallel import()) means React.lazy gets back
+// the already-settled Promise and skips the Suspense fallback on mount.
+if (typeof window !== "undefined") {
+  window.__xylocopa_preloaders = {
+    AgentChatPage: () => AgentChatPage.preload(),
+    ProjectDetailPage: () => ProjectDetailPage.preload(),
+    TaskDetailPage: () => TaskDetailPage.preload(),
+    NewTaskPage: () => NewTaskPage.preload(),
+  };
+}
 
 
 function AuthGuard({ children }) {

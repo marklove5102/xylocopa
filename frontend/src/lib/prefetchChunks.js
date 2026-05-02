@@ -25,13 +25,16 @@ export function prefetchHeavyChunks() {
   _scheduled = true;
 
   const fire = () => {
-    // Fire all four in parallel; browser dedups concurrent fetches.
-    // Failures here are silent — they'll happen again on real navigation
-    // and the lazyPage retry/reload safety net there will handle it.
-    import("../pages/AgentChatPage").catch(() => {});
-    import("../pages/ProjectDetailPage").catch(() => {});
-    import("../pages/TaskDetailPage").catch(() => {});
-    import("../pages/NewTaskPage").catch(() => {});
+    // Use the lazy components' own preload() so React.lazy receives
+    // the same already-settled Promise it would have created internally —
+    // a parallel import() would cache the chunk in HTTP but lazy() still
+    // creates a fresh Promise on first render and suspends for one frame.
+    // Window-bridge avoids a circular import between App.jsx and this file.
+    const reg = (typeof window !== "undefined" && window.__xylocopa_preloaders) || null;
+    if (!reg) return;
+    Object.values(reg).forEach((preload) => {
+      try { preload()?.catch?.(() => {}); } catch { /* ignore */ }
+    });
   };
 
   if (typeof window === "undefined") return;
