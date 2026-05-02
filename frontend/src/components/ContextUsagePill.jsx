@@ -156,6 +156,10 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
               </div>
             )}
 
+            {usage?.lifetime && (
+              <LifetimeSection lifetime={usage.lifetime} />
+            )}
+
             <div className="mt-2 pt-2 border-t border-divider text-[10px] text-faint">
               Total from JSONL `usage` (exact). Static buckets approximate;
               Messages absorbs residual.
@@ -164,6 +168,74 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
         )}
       </div>
     </>
+  );
+}
+
+function LifetimeSection({ lifetime }) {
+  const [expanded, setExpanded] = useState(false);
+  const fmt = (n) => (n || 0).toLocaleString();
+  const fmtTok = (n) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  };
+  const cost = lifetime.estimated_cost_usd || 0;
+  const fmtCost = (c) => c >= 100 ? `$${c.toFixed(0)}` : c >= 1 ? `$${c.toFixed(2)}` : `$${c.toFixed(4)}`;
+  const sc = lifetime.session_count || 0;
+  const hc = lifetime.history_session_count || 0;
+  const sessionStr = sc <= 1 ? "current session" : `${sc} CC sessions (${hc} historical)`;
+  const byKind = lifetime.by_kind || {};
+  const pricing = lifetime.pricing_per_million || {};
+
+  return (
+    <div className="mt-3 pt-2 border-t border-divider">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between py-0.5 hover:bg-input rounded px-1 -mx-1"
+      >
+        <span className="flex items-center gap-1.5">
+          <span className="font-semibold text-body">Lifetime spend</span>
+          <svg className={`w-3 h-3 text-dim transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <span className="tabular-nums text-body">
+          {fmtTok(lifetime.total_tokens || 0)} <span className="text-dim">·</span> {fmtCost(cost)}
+        </span>
+      </button>
+      <div className="text-[10px] text-faint pl-1">{sessionStr} · {lifetime.turn_count || 0} turns</div>
+
+      {expanded && (
+        <div className="mt-1.5 ml-1 space-y-0.5 text-[10px]">
+          <LifetimeRow label="Input (fresh)"  tokens={byKind.input_tokens}                rate={pricing.input}        />
+          <LifetimeRow label="Cache write"    tokens={byKind.cache_creation_input_tokens} rate={pricing.cache_create} />
+          <LifetimeRow label="Cache read"     tokens={byKind.cache_read_input_tokens}     rate={pricing.cache_read}   />
+          <LifetimeRow label="Output"         tokens={byKind.output_tokens}               rate={pricing.output}       />
+          {lifetime.pricing_model && (
+            <div className="text-faint italic mt-1">
+              Pricing for {lifetime.pricing_model} (USD/M tokens)
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LifetimeRow({ label, tokens, rate }) {
+  const t = tokens || 0;
+  const r = rate || 0;
+  const cost = (t * r) / 1_000_000;
+  const fmt = (n) => n.toLocaleString();
+  const fmtCost = (c) => c >= 1 ? `$${c.toFixed(2)}` : `$${c.toFixed(4)}`;
+  return (
+    <div className="flex items-center justify-between text-dim">
+      <span>{label} <span className="text-faint">@ ${r.toFixed(2)}</span></span>
+      <span className="tabular-nums">
+        {fmt(t)} <span className="text-faint">·</span> {fmtCost(cost)}
+      </span>
+    </div>
   );
 }
 

@@ -3840,6 +3840,40 @@ Here are the day's conversations (with timestamps):
             if not agent:
                 return False
             old_sid = agent.session_id
+
+            # Snapshot the ending session's lifetime usage to the agent's
+            # history file BEFORE rotation cleanup wipes the .owner file.
+            # End reason inferred from the rotation context — this method
+            # gets called from compact (PostCompact hook) and clear paths;
+            # we tag both as "rotation" since downstream we mostly care
+            # about the cumulative totals, not the cause.
+            if old_sid:
+                try:
+                    import session_history as _sh
+                    old_jsonl = _resolve_session_jsonl(
+                        old_sid, project_path, agent.worktree,
+                    )
+                    old_totals = _sh.sum_jsonl_usage(old_jsonl)
+                    _sh.append_ended_session(
+                        agent_id=agent_id,
+                        session_id=old_sid,
+                        project_path=project_path,
+                        worktree=agent.worktree,
+                        end_reason="rotation",
+                        model=agent.model,
+                        usage={k: old_totals[k] for k in (
+                            "input_tokens", "output_tokens",
+                            "cache_creation_input_tokens",
+                            "cache_read_input_tokens",
+                        )},
+                        turn_count=old_totals.get("turn_count", 0),
+                    )
+                except Exception:
+                    logger.warning(
+                        "_rotate_agent_session: history snapshot failed for %s",
+                        agent_id[:8], exc_info=True,
+                    )
+
             agent.session_id = new_sid
             new_fpath = _resolve_session_jsonl(
                 new_sid, project_path, worktree or agent.worktree,
@@ -3885,6 +3919,14 @@ Here are the day's conversations (with timestamps):
         _rebuild_display(agent_id)
 
         self._emit(emit_agent_update(agent_id, "IDLE", agent_project))
+
+        # Push fresh context-usage snapshot so the chat-header pill
+        # reflects the post-rotation state immediately (new JSONL has
+        # no assistant turns yet → has_data=False → pill shows "—")
+        # instead of staying on the stale pre-rotation big number until
+        # the next assistant reply lands (~5-15s later).
+        from websocket import emit_context_usage as _emit_ctx
+        self._emit(_emit_ctx(agent_id))
 
         # Cancel old sync task and start a fresh one.  The new sync
         # loop does initial reconciliation which deduplicates turns

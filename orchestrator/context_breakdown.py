@@ -34,6 +34,39 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Pricing — USD per 1M tokens. Anthropic published rates (subject to change).
+# ---------------------------------------------------------------------------
+PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-7":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
+    "claude-opus-4-6":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
+    "claude-opus-4-5":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
+    "claude-sonnet-4-6": {"input":  3.00, "cache_create":  3.75, "cache_read": 0.30, "output": 15.00},
+    "claude-sonnet-4-5": {"input":  3.00, "cache_create":  3.75, "cache_read": 0.30, "output": 15.00},
+    "claude-haiku-4-5":  {"input":  1.00, "cache_create":  1.25, "cache_read": 0.10, "output":  5.00},
+}
+DEFAULT_PRICING = {"input": 3.00, "cache_create": 3.75, "cache_read": 0.30, "output": 15.00}
+
+
+def _resolve_pricing(model: str | None) -> dict[str, float]:
+    if not model:
+        return DEFAULT_PRICING
+    if model in PRICING:
+        return PRICING[model]
+    base = model.rsplit("-", 1)[0]
+    return PRICING.get(base, DEFAULT_PRICING)
+
+
+def _compute_cost(usage: dict[str, int], model: str | None) -> float:
+    p = _resolve_pricing(model)
+    return (
+        usage.get("input_tokens", 0) * p["input"]
+        + usage.get("cache_creation_input_tokens", 0) * p["cache_create"]
+        + usage.get("cache_read_input_tokens", 0) * p["cache_read"]
+        + usage.get("output_tokens", 0) * p["output"]
+    ) / 1_000_000
+
+
+# ---------------------------------------------------------------------------
 # Token approximation
 # ---------------------------------------------------------------------------
 # cl100k_base averages ~3.5 chars/token for English/code, ~1.6 for CJK.
@@ -342,4 +375,59 @@ def get_context_breakdown(agent_id: str) -> dict[str, Any]:
         "free_percent": _pct(free),
         "components": components,
         "suggestions": suggestions,
+        "lifetime": _get_lifetime(agent_id, agent.model if agent else None,
+                                  project_path, agent.worktree if agent else None,
+                                  agent.session_id if agent else None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Lifetime spend across all CC sessions ever owned by this xylo agent
+# ---------------------------------------------------------------------------
+def _get_lifetime(
+    agent_id: str,
+    model: str | None,
+    project_path: str | None,
+    worktree: str | None,
+    current_session_id: str | None,
+) -> dict[str, Any]:
+    """Aggregate token + cost across history file + current session.
+
+    History records are written in `_rotate_agent_session` BEFORE the
+    old session_id is overwritten. Current session is computed from
+    its live JSONL since it has not yet ended.
+    """
+    from session_history import sum_history_usage, sum_jsonl_usage
+    from agent_dispatcher import _resolve_session_jsonl as _resolve
+
+    hist = sum_history_usage(agent_id)
+    cur = {"input_tokens": 0, "output_tokens": 0,
+           "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+           "turn_count": 0}
+    if current_session_id and project_path:
+        try:
+            jsonl = _resolve(current_session_id, project_path, worktree)
+            cur = sum_jsonl_usage(jsonl)
+        except Exception:
+            logger.debug("lifetime: current-session scan failed", exc_info=True)
+
+    combined = {
+        "input_tokens": hist["input_tokens"] + cur["input_tokens"],
+        "output_tokens": hist["output_tokens"] + cur["output_tokens"],
+        "cache_creation_input_tokens": hist["cache_creation_input_tokens"] + cur["cache_creation_input_tokens"],
+        "cache_read_input_tokens": hist["cache_read_input_tokens"] + cur["cache_read_input_tokens"],
+    }
+    total_tokens = sum(combined.values())
+    cost_usd = _compute_cost(combined, model)
+    pricing = _resolve_pricing(model)
+
+    return {
+        "session_count": hist["sessions"] + (1 if current_session_id else 0),
+        "history_session_count": hist["sessions"],
+        "turn_count": hist["turn_count"] + cur["turn_count"],
+        "total_tokens": total_tokens,
+        "by_kind": combined,
+        "estimated_cost_usd": round(cost_usd, 4),
+        "pricing_model": model,
+        "pricing_per_million": pricing,
     }
