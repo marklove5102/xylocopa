@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, memo } from "react";
 import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -169,6 +169,18 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const [refreshing, setRefreshing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [filter, setFilter] = useDraft("ui:projects:filter", "ALL");
+
+  // Render+layout timing — fires after every commit. Tag with filter so switches are obvious in the log.
+  const renderStartRef = useRef(performance.now());
+  renderStartRef.current = performance.now();
+  const lastFilterRef = useRef(filter);
+  useLayoutEffect(() => {
+    const dt = performance.now() - renderStartRef.current;
+    const filterChanged = lastFilterRef.current !== filter;
+    lastFilterRef.current = filter;
+    // eslint-disable-next-line no-console
+    console.log(`[projects] render+layout ${dt.toFixed(1)}ms filter=${filter}${filterChanged ? " (filter changed)" : ""}`);
+  });
   const [trashCount, setTrashCount] = useState(0);
   const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
   const [customOrder, setCustomOrder] = useState(() => {
@@ -227,13 +239,17 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   }, []);
 
   const load = useCallback(async () => {
+    const t0 = performance.now();
     try {
       const [data, trash] = await Promise.all([
         fetchAllFolders(),
         fetchTrashFolders(),
       ]);
+      const t1 = performance.now();
       setFolders(data);
       setTrashCount(trash.length);
+      // eslint-disable-next-line no-console
+      console.log(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -251,6 +267,8 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
 
   useEffect(() => {
     if (!visible || !isActive) return;
+    // eslint-disable-next-line no-console
+    console.log(`[projects] activate visible=${visible} isActive=${isActive}`);
     load();
     const interval = setInterval(load, 10000);
     return () => clearInterval(interval);

@@ -157,6 +157,9 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
   useEffect(() => {
     if (!selectedProject) return;
     let cancelled = false;
+    const t0 = performance.now();
+    // eslint-disable-next-line no-console
+    console.log(`[git] select project=${selectedProject}`);
 
     async function fetchGitData() {
       setLoadingCommits(true);
@@ -177,6 +180,7 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
       ]);
 
       if (!cancelled) {
+        const t1 = performance.now();
         setCommits(commitRes.status === "fulfilled" ? commitRes.value : []);
         setBranches(branchRes.status === "fulfilled" ? branchRes.value : []);
         setStatus(statusRes.status === "fulfilled" ? statusRes.value : null);
@@ -185,6 +189,8 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
         setLoadingBranches(false);
         setLoadingStatus(false);
         setLoadingWorktrees(false);
+        // eslint-disable-next-line no-console
+        console.log(`[git] fetch ${(t1 - t0).toFixed(0)}ms commits=${commitRes.status === "fulfilled" ? (commitRes.value?.length || 0) : "?"} branches=${branchRes.status === "fulfilled" ? (branchRes.value?.length || 0) : "?"} worktrees=${wtRes.status === "fulfilled" ? (wtRes.value?.length || 0) : "?"}`);
       }
     }
 
