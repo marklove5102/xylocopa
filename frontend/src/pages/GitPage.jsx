@@ -153,25 +153,45 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
     return () => { cancelled = true; };
   }, []);
 
+  // Per-project cache so re-selecting a project shows its data instantly
+  // while a fresh fetch runs in the background. Cache lives only in memory
+  // (page is kept-mounted, so this survives tab switches without a remount).
+  const gitDataCacheRef = useRef({});
+
   // --- Fetch commits and branches when project changes ---
   useEffect(() => {
     if (!selectedProject) return;
     let cancelled = false;
     const t0 = performance.now();
-    // eslint-disable-next-line no-console
-    console.log(`[git] select project=${selectedProject}`);
 
-    async function fetchGitData() {
-      setLoadingCommits(true);
-      setLoadingBranches(true);
-      setLoadingStatus(true);
-      setLoadingWorktrees(true);
+    const cached = gitDataCacheRef.current[selectedProject];
+    // eslint-disable-next-line no-console
+    console.log(`[git] select project=${selectedProject} cache=${cached ? "hit" : "miss"}`);
+
+    if (cached) {
+      // Hit — render cached state immediately, do not show skeletons.
+      setCommits(cached.commits);
+      setBranches(cached.branches);
+      setStatus(cached.status);
+      setWorktrees(cached.worktrees);
+      setLoadingCommits(false);
+      setLoadingBranches(false);
+      setLoadingStatus(false);
+      setLoadingWorktrees(false);
+    } else {
+      // Miss — first time on this project: clear + show skeletons.
       setCommits([]);
       setBranches([]);
       setStatus(null);
       setWorktrees([]);
+      setLoadingCommits(true);
+      setLoadingBranches(true);
+      setLoadingStatus(true);
+      setLoadingWorktrees(true);
+    }
 
-      // Fetch all in parallel
+    async function fetchGitData() {
+      // Always refetch in the background so cached data stays fresh.
       const [commitRes, branchRes, statusRes, wtRes] = await Promise.allSettled([
         fetchGitLog(selectedProject).catch(() => []),
         fetchGitBranches(selectedProject).catch(() => []),
@@ -181,16 +201,23 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
 
       if (!cancelled) {
         const t1 = performance.now();
-        setCommits(commitRes.status === "fulfilled" ? commitRes.value : []);
-        setBranches(branchRes.status === "fulfilled" ? branchRes.value : []);
-        setStatus(statusRes.status === "fulfilled" ? statusRes.value : null);
-        setWorktrees(wtRes.status === "fulfilled" ? wtRes.value : []);
+        const fresh = {
+          commits: commitRes.status === "fulfilled" ? commitRes.value : [],
+          branches: branchRes.status === "fulfilled" ? branchRes.value : [],
+          status: statusRes.status === "fulfilled" ? statusRes.value : null,
+          worktrees: wtRes.status === "fulfilled" ? wtRes.value : [],
+        };
+        setCommits(fresh.commits);
+        setBranches(fresh.branches);
+        setStatus(fresh.status);
+        setWorktrees(fresh.worktrees);
         setLoadingCommits(false);
         setLoadingBranches(false);
         setLoadingStatus(false);
         setLoadingWorktrees(false);
+        gitDataCacheRef.current[selectedProject] = fresh;
         // eslint-disable-next-line no-console
-        console.log(`[git] fetch ${(t1 - t0).toFixed(0)}ms commits=${commitRes.status === "fulfilled" ? (commitRes.value?.length || 0) : "?"} branches=${branchRes.status === "fulfilled" ? (branchRes.value?.length || 0) : "?"} worktrees=${wtRes.status === "fulfilled" ? (wtRes.value?.length || 0) : "?"}`);
+        console.log(`[git] fetch ${(t1 - t0).toFixed(0)}ms commits=${fresh.commits.length} branches=${fresh.branches.length} worktrees=${fresh.worktrees.length}`);
       }
     }
 
