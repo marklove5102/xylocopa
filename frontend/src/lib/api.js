@@ -316,7 +316,6 @@ export const fetchAgents = (params = "") =>
   request(`/api/agents${params ? `?${params}` : ""}`);
 export const fetchAgent = (id) => request(`/api/agents/${id}`);
 export const fetchAgentContextUsage = (id) => request(`/api/agents/${id}/context-usage`);
-export const fetchAgentContextBreakdown = (id) => request(`/api/agents/${id}/context-breakdown`);
 export const fetchUnreadCount = () => request("/api/agents/unread");
 export const fetchUnreadList = () => request("/api/agents/unread-list");
 export const createAgent = (data) =>

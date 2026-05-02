@@ -1790,25 +1790,12 @@ async def search_messages(
 
 @router.get("/api/agents/{agent_id}/context-usage")
 async def get_context_usage_endpoint(agent_id: str, db: Session = Depends(get_db)):
-    """Headline token budget for an agent.
+    """Token-budget snapshot for an agent.
 
-    Reads the latest assistant entry's `message.usage` from the session
-    JSONL and returns total/limit/percent/model. Used by the chat header
-    pill — Phase 1 of the in-app /context dashboard.
-    """
-    if not db.get(Agent, agent_id):
-        raise HTTPException(status_code=404, detail="Agent not found")
-    from context_usage import get_context_usage
-    return get_context_usage(agent_id)
-
-
-@router.get("/api/agents/{agent_id}/context-breakdown")
-async def get_context_breakdown_endpoint(agent_id: str, db: Session = Depends(get_db)):
-    """Full 5-component breakdown + suggestions — Phase 2.
-
-    Lazily fetched when the user opens the popover. Anchors total to the
-    JSONL `usage` value; static categories (MCP/Memory/Agents/System) use
-    a char-based heuristic; Messages absorbs the residual.
+    Returns headline numbers (total/limit/percent/model) plus the full
+    5-component breakdown and rule-based suggestions. The chat-header
+    pill bootstraps from this on mount; subsequent updates flow over WS
+    via `emit_context_usage` so the popover never refetches separately.
     """
     if not db.get(Agent, agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")

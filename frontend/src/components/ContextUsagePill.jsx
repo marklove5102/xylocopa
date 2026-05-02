@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { fetchAgentContextBreakdown, sendMessage } from "../lib/api";
+import { useState, useRef } from "react";
+import { sendMessage } from "../lib/api";
 
 /**
  * Build a self-contained markdown prompt that captures the full token
@@ -7,13 +7,13 @@ import { fetchAgentContextBreakdown, sendMessage } from "../lib/api";
  * Claude to optimize" — Claude then has structured context to reason
  * about which buckets to /compact, which MCP servers to disable, etc.
  */
-function buildOptimizationPrompt(usage, breakdown) {
+function buildOptimizationPrompt(usage) {
   const fmt = (n) => (n || 0).toLocaleString();
   const total = usage?.total || 0;
   const limit = usage?.limit || 200_000;
   const pct = (usage?.percent || 0).toFixed(1);
-  const components = breakdown?.components || [];
-  const suggestions = breakdown?.suggestions || [];
+  const components = usage?.components || [];
+  const suggestions = usage?.suggestions || [];
 
   const lines = [
     `My current context window usage:`,
@@ -54,7 +54,7 @@ function buildOptimizationPrompt(usage, breakdown) {
  *   [● 85%]   red     80-95%
  *   [● 96%]   red+pulse  >95%
  *
- * Click → popover with per-component breakdown + suggestions (lazy-fetched).
+ * Click → popover with per-component breakdown + suggestions.
  * Hover → tooltip via title attr with absolute numbers.
  */
 export default function ContextUsagePill({ usage, agentId }) {
@@ -121,21 +121,12 @@ const SEVERITY_STYLES = {
 };
 
 function ContextUsagePopover({ usage, agentId, onClose }) {
-  const [breakdown, setBreakdown] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(null);
 
-  useEffect(() => {
-    if (!agentId) return;
-    let cancelled = false;
-    fetchAgentContextBreakdown(agentId)
-      .then((data) => { if (!cancelled) { setBreakdown(data); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [agentId]);
-
+  // Single source of truth: usage prop already carries components +
+  // suggestions, refreshed via WS push on every assistant turn.
   const hasData = !!usage?.has_data;
   const total = hasData ? (usage.total || 0) : 0;
   const limit = usage?.limit || 200_000;
@@ -143,8 +134,8 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
   const pct = hasData ? (usage.percent || 0) : 0;
   const fmt = (n) => n.toLocaleString();
 
-  const components = breakdown?.components || [];
-  const suggestions = breakdown?.suggestions || [];
+  const components = usage?.components || [];
+  const suggestions = usage?.suggestions || [];
 
   return (
     <>
@@ -182,27 +173,23 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
               })}
             </div>
 
-            {loading && !components.length ? (
-              <div className="text-dim animate-pulse">Loading breakdown...</div>
-            ) : (
-              <div className="space-y-1">
-                {components.map((c) => (
-                  <ComponentRow
-                    key={c.name}
-                    component={c}
-                    expanded={!!expanded[c.name]}
-                    onToggle={() => setExpanded((s) => ({ ...s, [c.name]: !s[c.name] }))}
-                  />
-                ))}
-                <div className="flex items-center justify-between py-1 text-dim border-t border-divider mt-2 pt-2">
-                  <span>Free space</span>
-                  <span className="tabular-nums">
-                    {fmt(free)}
-                    <span className="text-faint ml-1">({((free / limit) * 100).toFixed(1)}%)</span>
-                  </span>
-                </div>
+            <div className="space-y-1">
+              {components.map((c) => (
+                <ComponentRow
+                  key={c.name}
+                  component={c}
+                  expanded={!!expanded[c.name]}
+                  onToggle={() => setExpanded((s) => ({ ...s, [c.name]: !s[c.name] }))}
+                />
+              ))}
+              <div className="flex items-center justify-between py-1 text-dim border-t border-divider mt-2 pt-2">
+                <span>Free space</span>
+                <span className="tabular-nums">
+                  {fmt(free)}
+                  <span className="text-faint ml-1">({((free / limit) * 100).toFixed(1)}%)</span>
+                </span>
               </div>
-            )}
+            </div>
 
             {suggestions.length > 0 && (
               <div className="mt-3 pt-2 border-t border-divider">
@@ -217,7 +204,7 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
               </div>
             )}
 
-            {breakdown && hasData && (
+            {hasData && components.length > 0 && (
               <div className="mt-3 pt-2 border-t border-divider">
                 <button
                   type="button"
@@ -227,7 +214,7 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
                     setSending(true);
                     setSendError(null);
                     try {
-                      const prompt = buildOptimizationPrompt(usage, breakdown);
+                      const prompt = buildOptimizationPrompt(usage);
                       await sendMessage(agentId, prompt);
                       onClose();
                     } catch (err) {

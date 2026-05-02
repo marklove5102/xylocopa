@@ -418,12 +418,13 @@ async def emit_progress_suggestions_ready(agent_id: str, count: int, project: st
 async def emit_context_usage(agent_id: str):
     """Signal: token-budget snapshot updated for agent.
 
-    Recomputed from latest assistant JSONL entry's usage block. Frontend
-    pill in AgentChatPage subscribes to refresh its current %.
+    Pushes the full breakdown (5 components + suggestions) on every
+    assistant turn so the chat-header pill AND its popover share a
+    single source of truth. The popover does not refetch on open.
     """
     try:
-        from context_usage import get_context_usage
-        snap = get_context_usage(agent_id)
+        from context_breakdown import get_context_breakdown
+        snap = get_context_breakdown(agent_id)
     except Exception:
         logger.warning("emit_context_usage: snapshot failed for %s",
                        agent_id[:8], exc_info=True)
