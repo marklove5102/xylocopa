@@ -3672,6 +3672,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     try {
       await renameAgent(id, trimmed);
       setAgent((prev) => prev ? { ...prev, name: trimmed } : prev);
+      // Keep the brief cache in sync so list pages (AgentsPage,
+      // ProjectDetailPage) don't render the old name from cache.
+      const cached = agentBriefCache.get(id);
+      if (cached) agentBriefCache.set(id, { ...cached, name: trimmed });
       window.dispatchEvent(new CustomEvent("agent-renamed", { detail: { agentId: id, name: trimmed } }));
       showToast("Renamed");
     } catch (err) {

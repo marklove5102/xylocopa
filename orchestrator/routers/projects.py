@@ -1586,6 +1586,17 @@ async def rename_project(name: str, body: ProjectRename, request: Request, db: S
             logger.info("Renamed project directory %s → %s", old_path, new_path)
 
     new_proj.path = new_path
+
+    # cc_sessions.project_path is a string column (not FK) that mirrors
+    # Project.path. Migrate it in lockstep with the directory rename so
+    # session lookups (e.g. resolving an agent's parent CC session by
+    # encoded project path) keep working.
+    if new_path != old_path:
+        db.execute(
+            text("UPDATE cc_sessions SET project_path = :new WHERE project_path = :old"),
+            {"new": new_path, "old": old_path},
+        )
+
     db.commit()
 
     # --- Migrate Claude session directory and session cache ---

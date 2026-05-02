@@ -44,7 +44,7 @@ import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
-import { projectDetailCache, cacheAgentBriefs, projectBriefCache } from "../lib/detailCache";
+import { projectDetailCache, cacheAgentBriefs, projectBriefCache, agentBriefCache } from "../lib/detailCache";
 import ProjectDetailSkeleton from "../components/skeletons/ProjectDetailSkeleton";
 
 const AGENT_TABS = [
@@ -359,23 +359,39 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     try {
       const displayName = nameDraft.trim() !== slug ? nameDraft.trim() : undefined;
       await renameProjectApi(name, slug, displayName);
-      // Both old and new keys are now stale; drop them so the next
-      // mount fetches fresh under the new name.
+
+      // Invalidate every in-memory cache that's keyed by project name OR
+      // contains agents whose `project` field has just gone stale. The
+      // post-rename navigate() remounts ProjectDetailPage; the next
+      // load will repopulate from the backend with fresh data.
       projectDetailCache.invalidate(name);
       projectDetailCache.invalidate(slug);
-      showToast("Project renamed!");
-      setShowRenameConfirm(false);
+      projectBriefCache.invalidate(name);
+      // agentBriefCache rows have agent.project pointing at the old
+      // project name; clearing wholesale is simpler than scanning. Next
+      // AgentsPage / ProjectDetailPage fetch reseeds from the server.
+      agentBriefCache.clear();
 
-      // Clean up old localStorage keys that embed the project name
+      // Clean up every per-project localStorage key. Use a prefix sweep
+      // so we don't have to remember each useDraft / pref site by name.
       try {
-        // Tab state from useDraft
-        localStorage.removeItem(`draft:ui:project:${name}:tab`);
-        // Update lastViewed to new name
+        // Sweep any draft:ui:project:{name}:* and pref:*:{name} entries
+        const oldDraftPrefix = `draft:ui:project:${name}:`;
+        const oldGenerateSummary = `pref:generateSummary:${name}`;
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith(oldDraftPrefix)) toRemove.push(k);
+          else if (k === oldGenerateSummary) toRemove.push(k);
+        }
+        toRemove.forEach((k) => localStorage.removeItem(k));
+
+        // Update single-value keys that reference the project name.
         const lastViewed = localStorage.getItem("lastViewed:projects");
         if (lastViewed === name) {
           localStorage.setItem("lastViewed:projects", slug);
         }
-        // Update custom order array
         const orderRaw = localStorage.getItem("projects-custom-order");
         if (orderRaw) {
           const order = JSON.parse(orderRaw);
@@ -386,6 +402,14 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
           }
         }
       } catch { /* ignore localStorage errors */ }
+
+      // Notify other open panes (split-screen, AgentsPage in another
+      // route stack) so their lists invalidate and refetch.
+      window.dispatchEvent(new CustomEvent("projects-data-changed"));
+      window.dispatchEvent(new CustomEvent("agents-data-changed"));
+
+      showToast("Project renamed!");
+      setShowRenameConfirm(false);
 
       navigate(`/projects/${encodeURIComponent(slug)}`, { replace: true });
     } catch (err) {
