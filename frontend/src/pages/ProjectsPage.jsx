@@ -32,10 +32,21 @@ function DragHandle({ listeners, attributes }) {
   );
 }
 
+// Suppress @dnd-kit layout animations except during a real drag.
+// Without this, changing the SortableContext.items array (e.g. switching the
+// All/Active/Inactive filter) is treated as a reorder and every remaining card
+// runs a 400ms transform transition — visible as a flash.
+// Flipped from handleDragStart (true) and handleDragEnd / handleDragCancel (false).
+let _projectsDragging = false;
+function projectsAnimateLayoutChanges(args) {
+  return _projectsDragging || args.wasDragging;
+}
+
 function SortableFolderCard(props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.folder.name,
     disabled: props.selecting,
+    animateLayoutChanges: projectsAnimateLayoutChanges,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -307,8 +318,12 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   );
 
-  const handleDragStart = useCallback((event) => setActiveDragId(event.active.id), []);
+  const handleDragStart = useCallback((event) => {
+    _projectsDragging = true;
+    setActiveDragId(event.active.id);
+  }, []);
   const handleDragEnd = useCallback((event) => {
+    _projectsDragging = false;
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -321,7 +336,10 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
       return updated;
     });
   }, []);
-  const handleDragCancel = useCallback(() => setActiveDragId(null), []);
+  const handleDragCancel = useCallback(() => {
+    _projectsDragging = false;
+    setActiveDragId(null);
+  }, []);
 
   const activeCount = folders.filter((f) => f.active).length;
   const inactiveCount = folders.filter((f) => !f.active).length;
