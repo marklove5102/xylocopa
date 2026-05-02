@@ -187,6 +187,11 @@ def reconcile_agent(
         md_by_sid: dict[str, dict] = {}
         for md in all_md:
             md_by_sid[md["session_id"]] = md
+            # Skip subdir-subagent JSONLs in this pass — they're path-linked
+            # not owner-linked, and we'll fold them in below once the parent
+            # set is known.
+            if md.get("is_subagent_session"):
+                continue
             if md.get("parent_jsonl_uuid") is None:
                 owner = find_owner_for_top_session(
                     md["session_id"], md["session_dir"]
@@ -212,15 +217,30 @@ def reconcile_agent(
         # Assemble the final write set.
         owned_sub_ids: set[str] = set()
         sub_parent_map: dict[str, str] = {}  # sub_sid -> parent_sid
+        # Path-linked subagent JSONLs (from <parent_sid>/subagents/agent-*.jsonl):
+        # parent_session_id is authoritative from the directory layout —
+        # if that parent is owned, the subagent JSONL belongs to the same
+        # xylo agent.
+        for md in all_md:
+            if not md.get("is_subagent_session"):
+                continue
+            psid = md.get("parent_session_id")
+            sid = md["session_id"]
+            if psid and psid in owned_top_ids:
+                owned_sub_ids.add(sid)
+                sub_parent_map[sid] = psid
+
         # Repeat until fixed-point in case sub-sessions chain (sub of sub).
+        all_owned: set[str] = set(owned_top_ids) | owned_sub_ids
         changed = True
-        all_owned: set[str] = set(owned_top_ids)
         while changed:
             changed = False
             for md in all_md:
                 sid = md["session_id"]
                 if sid in all_owned:
                     continue
+                if md.get("is_subagent_session"):
+                    continue  # already handled above
                 if md.get("parent_jsonl_uuid") is None:
                     continue
                 psid = _resolve_parent_sid(md)

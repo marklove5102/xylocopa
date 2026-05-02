@@ -84,9 +84,26 @@ def parse_jsonl_metadata(jsonl_path: str) -> dict | None:
         # Empty or all-malformed file.
         return None
 
-    # Filename stem is authoritative; fall back to entry's sessionId.
+    # Detect subagent JSONLs by path: <parent_sid>/subagents/agent-<aid>.jsonl
+    # CC writes the PARENT's session_id into entries' `sessionId` field for
+    # these — so we can't use that. The unique key is the entry-level
+    # `agentId` (matches xylocopa subagent row's `claude_agent_id`).
     fname = os.path.basename(jsonl_path)
-    if fname.endswith(".jsonl"):
+    parent_dir = os.path.basename(os.path.dirname(jsonl_path))
+    is_subagent = (parent_dir == "subagents" and fname.startswith("agent-")
+                   and fname.endswith(".jsonl"))
+
+    inferred_parent_session_id: str | None = None
+    inferred_claude_agent_id: str | None = None
+
+    if is_subagent:
+        # session_id := claude_agent_id (parsed from filename)
+        inferred_claude_agent_id = fname[len("agent-"):-len(".jsonl")]
+        session_id = inferred_claude_agent_id
+        # parent CC session = the directory ABOVE `subagents/`
+        grandparent_dir = os.path.dirname(os.path.dirname(jsonl_path))
+        inferred_parent_session_id = os.path.basename(grandparent_dir)
+    elif fname.endswith(".jsonl"):
         session_id = fname[:-6]
     else:
         sid = first_entry.get("sessionId")
@@ -123,6 +140,13 @@ def parse_jsonl_metadata(jsonl_path: str) -> dict | None:
         # JSONL came from without re-deriving it. Callers that don't need it
         # ignore it.
         "session_dir": os.path.dirname(jsonl_path),
+        # Subagent-specific fields (None for top-level sessions). When
+        # `is_subagent_session` is True, callers should use
+        # `parent_session_id` rather than parent_jsonl_uuid for linkage —
+        # the subdir layout is authoritative.
+        "is_subagent_session": is_subagent,
+        "claude_agent_id": inferred_claude_agent_id,
+        "parent_session_id": inferred_parent_session_id,
     }
 
 
@@ -139,6 +163,40 @@ def _list_jsonl_in_dir(session_dir: str) -> list[str]:
                     out.append(full)
     except OSError as e:
         logger.debug("_list_jsonl_in_dir: scan failed for %s: %s", session_dir, e)
+    return out
+
+
+def _list_subagent_jsonls(session_dir: str) -> list[str]:
+    """Walk ``<session_dir>/<top_session_id>/subagents/agent-*.jsonl``.
+
+    For each top-level session JSONL in *session_dir*, CC may write
+    Agent-tool subagent JSONLs into a sibling subdirectory named after
+    the parent's session_id, e.g.::
+
+        <session_dir>/4fe864e7-.../subagents/agent-aa0024a76b421ee61.jsonl
+
+    Returns the list of absolute paths to such subagent JSONLs.
+    """
+    if not session_dir or not os.path.isdir(session_dir):
+        return []
+    out: list[str] = []
+    try:
+        for entry in os.listdir(session_dir):
+            sub_root = os.path.join(session_dir, entry, "subagents")
+            if not os.path.isdir(sub_root):
+                continue
+            try:
+                for fname in os.listdir(sub_root):
+                    if fname.startswith("agent-") and fname.endswith(".jsonl"):
+                        full = os.path.join(sub_root, fname)
+                        if os.path.isfile(full):
+                            out.append(full)
+            except OSError as exc:
+                logger.debug("_list_subagent_jsonls: scan %s failed: %s",
+                             sub_root, exc)
+    except OSError as e:
+        logger.debug("_list_subagent_jsonls: scan failed for %s: %s",
+                     session_dir, e)
     return out
 
 
@@ -186,6 +244,13 @@ def discover_project_sessions(
             continue
         seen.add(sdir)
         for path in _list_jsonl_in_dir(sdir):
+            md = parse_jsonl_metadata(path)
+            if md is None:
+                continue
+            out.append(md)
+        # Also walk per-session subagent dirs (CC writes them at
+        # <session_dir>/<top_sid>/subagents/agent-*.jsonl).
+        for path in _list_subagent_jsonls(sdir):
             md = parse_jsonl_metadata(path)
             if md is None:
                 continue
