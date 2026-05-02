@@ -11,16 +11,19 @@ import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks 
 import { useToast } from "../contexts/ToastContext";
 import useDraft from "../hooks/useDraft";
 import { forwardState } from "../lib/nav";
-import { taskDetailCache } from "../lib/detailCache";
+import { taskDetailCache, taskBriefCache } from "../lib/detailCache";
 import TaskDetailSkeleton from "../components/skeletons/TaskDetailSkeleton";
 
 export default function TaskDetailPage({ theme, onToggleTheme }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  // Seed from module-level cache so re-entering paints instantly.
+  // Seed from full-detail cache first, fall back to brief cache so a
+  // never-visited task still paints its header (title / status / project)
+  // from the TasksPage list snapshot before fetchTaskV2 returns.
   const initialCached = taskDetailCache.get(id);
-  const [task, setTask] = useState(initialCached?.task || null);
+  const initialBrief = initialCached?.task || taskBriefCache.get(id) || null;
+  const [task, setTask] = useState(initialBrief);
   const [loading, setLoading] = useState(!initialCached);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -139,8 +142,14 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     setEditMode(true);
   };
 
-  if (loading && !task) {
-    return <TaskDetailSkeleton />;
+  // The seed (brief or full cache) means we usually have `task` set even
+  // while loading is true — in that case the existing render path uses
+  // the brief data for the header, which paints immediately. Only fall
+  // back to the full skeleton when we have nothing.
+  if (!task) {
+    if (loading) return <TaskDetailSkeleton />;
+    // No task and not loading → unreachable in practice; let the error
+    // branch below handle it.
   }
 
   if (error && !task) {

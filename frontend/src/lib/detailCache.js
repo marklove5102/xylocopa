@@ -55,3 +55,27 @@ export function cacheAgentBriefs(list) {
     if (a?.id) agentBriefCache.set(a.id, a);
   }
 }
+
+// Keys: project name. Value shape: { ...folderBrief, ts }
+// Populated by ProjectsPage when its folder list loads, consumed by
+// ProjectDetailPage to render the project header (emoji, name, stats)
+// before fetchAllFolders + fetchProjectAgents finish.
+export const projectBriefCache = makeCache();
+export function cacheProjectBriefs(list) {
+  if (!Array.isArray(list)) return;
+  for (const f of list) {
+    if (f?.name) projectBriefCache.set(f.name, f);
+  }
+}
+
+// Keys: task id. Value shape: { ...taskBrief, ts }
+// Populated by TasksPage / InboxView when the task list loads, consumed
+// by TaskDetailPage to paint the title / status / project chip before
+// fetchTaskV2 returns.
+export const taskBriefCache = makeCache();
+export function cacheTaskBriefs(list) {
+  if (!Array.isArray(list)) return;
+  for (const t of list) {
+    if (t?.id) taskBriefCache.set(t.id, t);
+  }
+}

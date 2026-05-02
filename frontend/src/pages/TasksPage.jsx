@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } fr
 import { useNavigate, useLocation } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, batchProcessTasks, clog } from "../lib/api";
+import { cacheTaskBriefs } from "../lib/detailCache";
 import PageHeader from "../components/PageHeader";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
@@ -100,8 +101,11 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
     try {
       const data = await fetchTasksV2(`statuses=INBOX&limit=100`);
       const t1 = performance.now();
-      setTasks(Array.isArray(data) ? data : []);
-      clog(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
+      const list = Array.isArray(data) ? data : [];
+      setTasks(list);
+      // Seed brief cache so TaskDetailPage paints its header from cache.
+      cacheTaskBriefs(list);
+      clog(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${list.length}`);
     } catch (err) {
       console.warn("Failed to load tasks", err);
     } finally {

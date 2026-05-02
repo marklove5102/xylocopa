@@ -4,6 +4,7 @@ import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSe
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject, clog } from "../lib/api";
+import { cacheProjectBriefs } from "../lib/detailCache";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
 import FluentEmoji from "../components/FluentEmoji";
@@ -289,6 +290,10 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
       const dataChanged = hash !== prevFoldersHashRef.current;
       prevFoldersHashRef.current = hash;
       clog(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${arr.length} dataChanged=${dataChanged}`);
+      // Always seed brief cache so ProjectDetailPage can paint its
+      // header from cache even on the first poll where the array
+      // reference itself is unchanged.
+      cacheProjectBriefs(arr);
       if (dataChanged) {
         setFolders(arr);
       }

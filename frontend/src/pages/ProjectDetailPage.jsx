@@ -44,7 +44,7 @@ import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
-import { projectDetailCache, cacheAgentBriefs } from "../lib/detailCache";
+import { projectDetailCache, cacheAgentBriefs, projectBriefCache } from "../lib/detailCache";
 import ProjectDetailSkeleton from "../components/skeletons/ProjectDetailSkeleton";
 
 const AGENT_TABS = [
@@ -237,9 +237,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Seed initial state from module-level cache so re-entering a recently
   // viewed project paints instantly. loadData() still runs in the
-  // background to refresh against the latest data.
+  // background to refresh against the latest data. Falls back to
+  // projectBriefCache (populated by ProjectsPage) so even a never-
+  // visited project paints its header from the folder list snapshot.
   const initialCached = projectDetailCache.get(name);
-  const [project, setProject] = useState(initialCached?.project || null);
+  const [project, setProject] = useState(initialCached?.project || projectBriefCache.get(name) || null);
   const [agents, setAgents] = useState(initialCached?.agents || []);
   const [bookmarks, setBookmarks] = useState(initialCached?.bookmarks || []);
   // Rows the user removed in this mount session. We re-inject them into the
@@ -852,7 +854,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     }
   };
 
-  if (loading) {
+  // Full skeleton only when we have no project metadata at all. With a
+  // brief seed we render the real header + filter tabs immediately and
+  // only the agent list area gets a skeleton (see body below).
+  if (loading && !project) {
     return <ProjectDetailSkeleton />;
   }
 
@@ -1183,7 +1188,23 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       {/* Agent list (hidden on Graph tab) */}
       {agentTab !== "graph" && (
         <div>
-          {filtered.length === 0 ? (
+          {loading && agents.length === 0 ? (
+            // Header was seeded from briefCache; only the agent list area
+            // is waiting on fetchProjectAgents. Show row placeholders that
+            // match AgentRow's height so the layout doesn't jump.
+            <div className="space-y-3">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="rounded-2xl bg-surface px-5 py-[18px] flex items-start gap-3 animate-pulse">
+                  <div className="shrink-0 w-2.5 h-2.5 rounded-full bg-input self-center" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 w-1/2 rounded bg-input" />
+                    <div className="h-3 w-3/4 rounded bg-input" />
+                  </div>
+                  <div className="w-4 h-4 rounded bg-input self-center" />
+                </div>
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="text-center py-8 text-faint text-sm">
               No {agentTab === "all" ? "" : agentTab + " "}agents
             </div>
