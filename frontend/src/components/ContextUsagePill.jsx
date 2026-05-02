@@ -1,50 +1,4 @@
 import { useState, useRef } from "react";
-import { sendMessage } from "../lib/api";
-
-/**
- * Build a self-contained markdown prompt that captures the full token
- * budget snapshot. Sent as a user message when the user clicks "Ask
- * Claude to optimize" — Claude then has structured context to reason
- * about which buckets to /compact, which MCP servers to disable, etc.
- */
-function buildOptimizationPrompt(usage) {
-  const fmt = (n) => (n || 0).toLocaleString();
-  const total = usage?.total || 0;
-  const limit = usage?.limit || 200_000;
-  const pct = (usage?.percent || 0).toFixed(1);
-  const components = usage?.components || [];
-  const suggestions = usage?.suggestions || [];
-
-  const lines = [
-    `My current context window usage:`,
-    ``,
-    `**Total:** ${fmt(total)} / ${fmt(limit)} tokens (${pct}%)`,
-    `**Model:** ${usage?.model || "unknown"}`,
-    ``,
-    `### Breakdown`,
-  ];
-  for (const c of components) {
-    lines.push(`- **${c.name}:** ${fmt(c.tokens)} tokens (${c.percent.toFixed(1)}%)`);
-    if (Array.isArray(c.breakdown)) {
-      for (const b of c.breakdown) {
-        const mark = b.estimated ? " (~ estimated)" : "";
-        lines.push(`  - ${b.name}: ${fmt(b.tokens)}${mark}`);
-      }
-    }
-  }
-  if (suggestions.length > 0) {
-    lines.push(``, `### Auto-detected warnings`);
-    for (const s of suggestions) {
-      lines.push(`- [${s.severity}] ${s.text}`);
-    }
-  }
-  lines.push(
-    ``,
-    `Where is my context potentially inefficient and what should I do to free up space?`,
-    `Be specific — name MCP servers to disable, files to trim, or whether /compact would help most.`,
-  );
-  return lines.join("\n");
-}
 
 /**
  * Token budget pill — sits between Stop and Monitor in the chat header.
@@ -122,8 +76,6 @@ const SEVERITY_STYLES = {
 
 function ContextUsagePopover({ usage, agentId, onClose }) {
   const [expanded, setExpanded] = useState({});
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState(null);
 
   // Single source of truth: usage prop already carries components +
   // suggestions, refreshed via WS push on every assistant turn.
@@ -201,48 +153,6 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {hasData && components.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-divider">
-                <button
-                  type="button"
-                  disabled={sending || !agentId}
-                  onClick={async () => {
-                    if (!agentId) return;
-                    setSending(true);
-                    setSendError(null);
-                    try {
-                      const prompt = buildOptimizationPrompt(usage);
-                      await sendMessage(agentId, prompt);
-                      onClose();
-                    } catch (err) {
-                      setSendError(err?.message || "Failed to send");
-                      setSending(false);
-                    }
-                  }}
-                  className="w-full px-3 py-1.5 rounded-md text-[11px] font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
-                >
-                  {sending ? (
-                    <>
-                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="40 60" />
-                      </svg>
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18 7.5L17.553 9 17 10.5l-1.5-.447L14 9.5l1.553-.553L17 8l.553-1.5L18 5l.553 1.5L19 8l1.5.447L21 9l-1.5.553L18 10z" />
-                      </svg>
-                      Ask Claude to optimize
-                    </>
-                  )}
-                </button>
-                {sendError && (
-                  <div className="mt-1 text-[10px] text-red-500 dark:text-red-400">{sendError}</div>
-                )}
               </div>
             )}
 
