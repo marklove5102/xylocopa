@@ -99,6 +99,37 @@ function handle401(requestToken) {
 
 const _API_SLOW_MS = 300;
 
+// --- Frontend log mirroring ---
+// Mirror selected console.log lines to the backend so they land in
+// logs/frontend-debug.log. Useful for diagnosing render/timing issues
+// without copy-pasting out of the browser console.
+let _clogBuffer = [];
+let _clogFlushTimer = null;
+function _flushClog() {
+  if (_clogBuffer.length === 0) return;
+  const batch = _clogBuffer;
+  _clogBuffer = [];
+  _clogFlushTimer = null;
+  const token = getAuthToken();
+  const headers = { "Content-Type": "text/plain" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Best-effort fire-and-forget — never block UI on log delivery.
+  fetch(`${BASE}/api/debug/frontend-log`, {
+    method: "POST",
+    headers,
+    body: batch.join("\n"),
+    keepalive: true,
+  }).catch(() => { /* ignore */ });
+}
+export function clog(...args) {
+  // eslint-disable-next-line no-console
+  console.log(...args);
+  const line = args.map((a) => typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })()).join(" ");
+  _clogBuffer.push(`${new Date().toISOString().slice(11, 23)} ${line}`);
+  if (_clogFlushTimer) return;
+  _clogFlushTimer = setTimeout(_flushClog, 500);
+}
+
 function _logTiming(method, url, status, durMs) {
   const tag = durMs >= _API_SLOW_MS ? "[api SLOW]" : "[api]";
   // eslint-disable-next-line no-console

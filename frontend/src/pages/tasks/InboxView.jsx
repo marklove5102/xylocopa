@@ -4,7 +4,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove, d
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import InboxCard from "../../components/cards/InboxCard";
-import { reorderTasks } from "../../lib/api";
+import { reorderTasks, clog } from "../../lib/api";
 import useDraft from "../../hooks/useDraft";
 
 /** Disable layout animation on drop to prevent snap-back */
@@ -40,8 +40,7 @@ export default function InboxView({ tasks, loading, selecting, selected, onToggl
   const renderStartRef = useRef(performance.now());
   renderStartRef.current = performance.now();
   useLayoutEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log(`[inbox] render+layout ${(performance.now() - renderStartRef.current).toFixed(1)}ms n=${tasks.length}`);
+    clog(`[inbox] render+layout ${(performance.now() - renderStartRef.current).toFixed(1)}ms n=${tasks.length}`);
   });
 
   // Clear optimistic state when tasks prop changes (server data arrived)

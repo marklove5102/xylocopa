@@ -3,7 +3,7 @@ import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject } from "../lib/api";
+import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject, clog } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
 import FluentEmoji from "../components/FluentEmoji";
@@ -210,8 +210,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
       sortMode, customOrderRef: customOrder,
       selecting, activeDragId,
     };
-    // eslint-disable-next-line no-console
-    console.log(`[projects] render #${renderCountRef.current} +${dt.toFixed(1)}ms ${changes.length ? "Δ " + changes.join(", ") : "(no state change — parent re-render)"}`);
+    clog(`[projects] render #${renderCountRef.current} +${dt.toFixed(1)}ms ${changes.length ? "Δ " + changes.join(", ") : "(no state change — parent re-render)"}`);
   });
   const [trashCount, setTrashCount] = useState(0);
   const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
@@ -285,8 +284,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
       const hash = arr.map((f) => `${f.name}|${f.last_activity || ""}|${f.active ? 1 : 0}`).join(",");
       const dataChanged = hash !== prevFoldersHashRef.current;
       prevFoldersHashRef.current = hash;
-      // eslint-disable-next-line no-console
-      console.log(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${arr.length} dataChanged=${dataChanged}`);
+      clog(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${arr.length} dataChanged=${dataChanged}`);
       if (dataChanged) {
         setFolders(arr);
       }
@@ -308,8 +306,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
 
   useEffect(() => {
     if (!visible || !isActive) return;
-    // eslint-disable-next-line no-console
-    console.log(`[projects] activate visible=${visible} isActive=${isActive}`);
+    clog(`[projects] activate visible=${visible} isActive=${isActive}`);
     load();
     const interval = setInterval(load, 10000);
     return () => clearInterval(interval);
@@ -375,8 +372,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const inactiveCount = folders.filter((f) => !f.active).length;
 
   const filtered = useMemo(() => {
-    // eslint-disable-next-line no-console
-    console.log(`[projects] filtered recompute (folders=${folders.length} filter=${filter} sortMode=${sortMode} customOrder.len=${customOrder.length})`);
+    clog(`[projects] filtered recompute (folders=${folders.length} filter=${filter} sortMode=${sortMode} customOrder.len=${customOrder.length})`);
     const base = folders.filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active));
     switch (sortMode) {
       case "name-asc":

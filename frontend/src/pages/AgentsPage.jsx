@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Bell, BellOff, Link2, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, replayPendingUnlinked, adoptUnlinkedSession } from "../lib/api";
+import { fetchAgents, stopAgent, deleteAgent, scanAgents, wakeSyncAll, searchMessages, markAgentRead, updateNotificationSettings, fetchUnlinkedSessions, replayPendingUnlinked, adoptUnlinkedSession, clog } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { POLL_INTERVAL, SYNC_SETTLE_DELAY_GLOBAL } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
@@ -91,8 +91,7 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
       const data = await fetchAgents();
       const t1 = performance.now();
       setAgents(Array.isArray(data) ? data : []);
-      // eslint-disable-next-line no-console
-      console.log(`[agents] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
+      clog(`[agents] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -165,8 +164,7 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
 
   useEffect(() => {
     if (!visible || !isActive) return;
-    // eslint-disable-next-line no-console
-    console.log(`[agents] activate visible=${visible} isActive=${isActive}`);
+    clog(`[agents] activate visible=${visible} isActive=${isActive}`);
     load();
     loadUnlinked();
     pollRef.current = setInterval(() => { load(); loadUnlinked(); }, POLL_INTERVAL);

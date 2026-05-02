@@ -303,6 +303,26 @@ async def test_notify(request: Request):
     }
 
 
+@router.post("/api/debug/frontend-log")
+async def frontend_log(request: Request):
+    """Append free-form frontend log lines to logs/frontend-debug.log.
+
+    Body is plain text, one or more newline-separated lines. Used by the
+    frontend `clog()` helper so per-render / per-fetch timing logs land
+    somewhere a developer (or agent) can `tail -f` without copy-pasting
+    out of the browser console.
+    """
+    _dbg = logging.getLogger("frontend.debug")
+    body = (await request.body()).decode("utf-8", errors="replace").rstrip()
+    if not body:
+        return {"ok": True, "lines": 0}
+    lines = body.split("\n")
+    for line in lines:
+        if line.strip():
+            _dbg.info("[fe] %s", line)
+    return {"ok": True, "lines": len(lines)}
+
+
 @router.post("/api/debug/frontend-state")
 async def frontend_debug_state(request: Request):
     """Receive and log frontend rendered state for debugging."""

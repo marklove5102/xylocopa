@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Sparkles } from "lucide-react";
-import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, batchProcessTasks } from "../lib/api";
+import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, batchProcessTasks, clog } from "../lib/api";
 import PageHeader from "../components/PageHeader";
 import usePageVisible from "../hooks/usePageVisible";
 import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
@@ -101,8 +101,7 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
       const data = await fetchTasksV2(`statuses=INBOX&limit=100`);
       const t1 = performance.now();
       setTasks(Array.isArray(data) ? data : []);
-      // eslint-disable-next-line no-console
-      console.log(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
+      clog(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
     } catch (err) {
       console.warn("Failed to load tasks", err);
     } finally {
@@ -137,8 +136,7 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
   useEffect(() => {
     if (!visible || !isActive) return;
     const t0 = performance.now();
-    // eslint-disable-next-line no-console
-    console.log(`[tasks] activate visible=${visible} isActive=${isActive}`);
+    clog(`[tasks] activate visible=${visible} isActive=${isActive}`);
     loadTasks();
     loadCounts();
     pollRef.current = setInterval(loadTasks, INBOX_POLL_INTERVAL);
@@ -146,8 +144,7 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
     return () => {
       clearInterval(pollRef.current);
       clearInterval(countPollRef.current);
-      // eslint-disable-next-line no-console
-      console.log(`[tasks] deactivate after ${(performance.now() - t0).toFixed(0)}ms`);
+      clog(`[tasks] deactivate after ${(performance.now() - t0).toFixed(0)}ms`);
     };
   }, [loadTasks, loadCounts, visible, isActive]);
 

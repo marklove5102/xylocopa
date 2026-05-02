@@ -12,6 +12,7 @@ import {
   checkoutBranch,
   gitPush,
   launchTmuxAgent,
+  clog,
 } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import { useToast } from "../contexts/ToastContext";
@@ -165,8 +166,7 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
     const t0 = performance.now();
 
     const cached = gitDataCacheRef.current[selectedProject];
-    // eslint-disable-next-line no-console
-    console.log(`[git] select project=${selectedProject} cache=${cached ? "hit" : "miss"}`);
+    clog(`[git] select project=${selectedProject} cache=${cached ? "hit" : "miss"}`);
 
     if (cached) {
       // Hit — render cached state immediately, do not show skeletons.
@@ -216,8 +216,7 @@ export default function GitPage({ theme, onToggleTheme, isActive = true }) {
         setLoadingStatus(false);
         setLoadingWorktrees(false);
         gitDataCacheRef.current[selectedProject] = fresh;
-        // eslint-disable-next-line no-console
-        console.log(`[git] fetch ${(t1 - t0).toFixed(0)}ms commits=${fresh.commits.length} branches=${fresh.branches.length} worktrees=${fresh.worktrees.length}`);
+        clog(`[git] fetch ${(t1 - t0).toFixed(0)}ms commits=${fresh.commits.length} branches=${fresh.branches.length} worktrees=${fresh.worktrees.length}`);
       }
     }
 
