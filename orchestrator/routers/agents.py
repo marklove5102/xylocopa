@@ -2066,6 +2066,9 @@ async def apply_agent_suggestions(agent_id: str, body: _ApplySuggestionsBody,
     # Clear flag
     agent.has_pending_suggestions = False
     db.commit()
+    # Broadcast so AgentsContext subscribers (other tabs / pages) drop the
+    # pending-suggestions badge without waiting for the 5s poll.
+    asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
 
     # Write accepted insights to PROGRESS.md
     if accepted_contents:
@@ -2114,6 +2117,9 @@ async def discard_agent_suggestions(agent_id: str, db: Session = Depends(get_db)
     ).update({"status": "rejected"})
     agent.has_pending_suggestions = False
     db.commit()
+    # Broadcast so AgentsContext subscribers drop the pending-suggestions
+    # badge across tabs/pages without waiting for the 5s poll.
+    asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
     return {"success": True}
 
 
@@ -2144,6 +2150,12 @@ async def regenerate_agent_insights(agent_id: str, db: Session = Depends(get_db)
 
     agent.insight_status = "generating"
     db.commit()
+    # Broadcast so AgentsContext subscribers see the generating spinner
+    # immediately. Background thread will emit the terminal state
+    # (done/failed) via routers/projects._set_insight_status.
+    asyncio.ensure_future(emit_agent_update(
+        agent.id, agent.status.value, agent.project, insight_status="generating",
+    ))
 
     thread = threading.Thread(
         target=_run_agent_summary_background,
