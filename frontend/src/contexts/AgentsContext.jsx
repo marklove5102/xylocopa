@@ -54,6 +54,10 @@ const initialState = {
   byId: new Map(),
   order: [],
   version: 0,
+  // Has the store been populated by at least one full fetch (seed or
+  // setMany)? Used by readers (e.g. ProjectDetailPage's skeleton) to
+  // distinguish "API hasn't fired yet" from "fetch returned 0 rows".
+  seeded: false,
 };
 
 function reducer(state, action) {
@@ -67,7 +71,7 @@ function reducer(state, action) {
         if (!byId.has(a.id)) order.push(a.id);
         byId.set(a.id, a);
       }
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: true };
     }
 
     case ACTION.SET_MANY: {
@@ -87,7 +91,7 @@ function reducer(state, action) {
         if (!byId.has(a.id)) order.unshift(a.id);
         byId.set(a.id, a);
       }
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: true };
     }
 
     case ACTION.PREPEND: {
@@ -97,7 +101,7 @@ function reducer(state, action) {
       const byId = new Map(state.byId);
       byId.set(brief.id, brief);
       const order = [brief.id, ...state.order];
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: state.seeded };
     }
 
     case ACTION.PATCH_ONE: {
@@ -114,14 +118,14 @@ function reducer(state, action) {
           if (partial[k] !== undefined) next[k] = partial[k];
         }
         byId.set(id, next);
-        return { byId, order: state.order, version: state.version + 1 };
+        return { byId, order: state.order, version: state.version + 1, seeded: state.seeded };
       }
       // Unknown id: upsert as a partial row so a direct-URL load that
       // races the seed still gets the WS update applied. Order rule:
       // append at the front (same as PREPEND).
       byId.set(id, { id, ...(partial || {}) });
       const order = [id, ...state.order];
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: state.seeded };
     }
 
     case ACTION.UPSERT: {
@@ -131,7 +135,7 @@ function reducer(state, action) {
       const order = state.order.slice();
       if (!byId.has(brief.id)) order.unshift(brief.id);
       byId.set(brief.id, brief);
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: state.seeded };
     }
 
     case ACTION.REMOVE: {
@@ -140,7 +144,7 @@ function reducer(state, action) {
       const byId = new Map(state.byId);
       byId.delete(id);
       const order = state.order.filter((x) => x !== id);
-      return { byId, order, version: state.version + 1 };
+      return { byId, order, version: state.version + 1, seeded: state.seeded };
     }
 
     default:
@@ -216,6 +220,12 @@ export function useAgents(filter) {
 export function useAgent(id) {
   const ctx = useContext(AgentsStateContext) || _fallbackState;
   return ctx.byId.get(id);
+}
+
+/** Has the store been populated by at least one fetch? */
+export function useAgentsSeeded() {
+  const ctx = useContext(AgentsStateContext) || _fallbackState;
+  return ctx.seeded;
 }
 
 /** Get the dispatcher (stable identity). Use in writers — AgentsPage today. */

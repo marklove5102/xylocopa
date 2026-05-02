@@ -13,6 +13,7 @@ import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
 import { cacheAgentBriefs } from "../lib/detailCache";
+import { useAgents, useAgentsActions } from "../contexts/AgentsContext";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
@@ -25,7 +26,12 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const location = useLocation();
   const visible = usePageVisible();
-  const [agents, setAgents] = useState([]);
+  // Stage-2 pilot: agents now live in AgentsContext (single source of
+  // truth shared with ProjectDetailPage). AgentsPage remains the only
+  // writer — every setMany / seed / patchOne / prepend below is the
+  // mutation it used to do via local setAgents.
+  const agents = useAgents();
+  const agentsActions = useAgentsActions();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useDraft("ui:agents:filter", "ALL");
@@ -86,13 +92,16 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
 
   const [refreshing, setRefreshing] = useState(false);
 
+  // Authoritative full-replace fetch. Used for initial mount + every
+  // explicit invalidation (refresh button, agents-data-changed,
+  // post-bulk-op reloads). Drops deleted rows.
   const load = useCallback(async () => {
     const t0 = performance.now();
     try {
       const data = await fetchAgents();
       const t1 = performance.now();
       const list = Array.isArray(data) ? data : [];
-      setAgents(list);
+      agentsActions.seed(list);
       // Seed the brief cache so AgentChatPage can paint its header
       // (name / project / status) without waiting for fetchAgent.
       cacheAgentBriefs(list);
@@ -103,7 +112,23 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [agentsActions]);
+
+  // Background 5s poll. Uses merge semantics so a transient API miss
+  // doesn't blow away rows held by the store (e.g. a partial response
+  // mid-write). Deletes are surfaced via the explicit-invalidation
+  // path above (agents-data-changed → load() → seed()).
+  const pollTick = useCallback(async () => {
+    try {
+      const data = await fetchAgents();
+      const list = Array.isArray(data) ? data : [];
+      agentsActions.setMany(list, "merge");
+      cacheAgentBriefs(list);
+    } catch (err) {
+      // Silent — periodic poll, the next tick will retry.
+      console.warn("[agents] poll failed:", err.message);
+    }
+  }, [agentsActions]);
 
   // --- Unlinked sessions ---
   const [unlinked, setUnlinked] = useState([]);
@@ -144,7 +169,7 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     const onStarChanged = (e) => {
       const { agentId, starred } = e.detail || {};
       if (!agentId) return;
-      setAgents((prev) => prev.map((a) => a.id === agentId ? { ...a, starred } : a));
+      agentsActions.patchOne(agentId, { starred });
     };
     window.addEventListener("agent-notifs-changed", onNotifsChanged);
     window.addEventListener("agents-data-changed", onDataChanged);
@@ -167,35 +192,50 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     setTimeout(() => setRefreshing(false), 400);
   }, [load, loadUnlinked]);
 
+  // Initial seed — fires on first AgentsPage mount regardless of
+  // isActive/visible. The store is the source of truth for both this
+  // page AND ProjectDetailPage (Stage-2 pilot); if the user lands on
+  // /projects/foo first, AgentsPage is keep-mounted under the page
+  // shell but never visible/isActive — without this, the project
+  // page's filtered view would be empty until the user switched tabs.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    clog("[agents] initial seed");
+    load();
+    loadUnlinked();
+  }, [load, loadUnlinked]);
+
+  // Periodic 5s poll — gated on visibility + active so we don't burn
+  // CPU on pages the user isn't looking at. WS handles the
+  // foreground-update path; this is just the safety net.
   useEffect(() => {
     if (!visible || !isActive) return;
     clog(`[agents] activate visible=${visible} isActive=${isActive}`);
-    load();
-    loadUnlinked();
-    pollRef.current = setInterval(() => { load(); loadUnlinked(); }, POLL_INTERVAL);
+    pollRef.current = setInterval(() => { pollTick(); loadUnlinked(); }, POLL_INTERVAL);
     return () => clearInterval(pollRef.current);
-  }, [load, loadUnlinked, visible, isActive]);
+  }, [pollTick, loadUnlinked, visible, isActive]);
 
   // Real-time status updates via WebSocket (agent_update events).
   // Backend now attaches unread_count / last_message_preview / last_message_at
   // so the badge and preview update without waiting for the 5s poll tick.
+  // patchOne() preserves keys the WS payload doesn't carry — important
+  // because emit_agent_update sends sparse fields, not the full brief.
   useWsEvent(useCallback((event) => {
     if (event.type !== "agent_update") return;
     const d = event.data || {};
     const { agent_id } = d;
     if (!agent_id) return;
-    setAgents((prev) =>
-      prev.map((a) => {
-        if (a.id !== agent_id) return a;
-        const next = { ...a };
-        if (d.status !== undefined) next.status = d.status;
-        if (d.unread_count !== undefined) next.unread_count = d.unread_count;
-        if (d.last_message_preview !== undefined) next.last_message_preview = d.last_message_preview;
-        if (d.last_message_at !== undefined) next.last_message_at = d.last_message_at;
-        return next;
-      })
-    );
-  }, []));
+    const partial = {};
+    if (d.status !== undefined) partial.status = d.status;
+    if (d.unread_count !== undefined) partial.unread_count = d.unread_count;
+    if (d.last_message_preview !== undefined) partial.last_message_preview = d.last_message_preview;
+    if (d.last_message_at !== undefined) partial.last_message_at = d.last_message_at;
+    if (d.has_pending_suggestions !== undefined) partial.has_pending_suggestions = d.has_pending_suggestions;
+    if (d.insight_status !== undefined) partial.insight_status = d.insight_status;
+    if (Object.keys(partial).length > 0) agentsActions.patchOne(agent_id, partial);
+  }, [agentsActions]));
 
   // New agent appearance via WebSocket (agent_created events).
   // Backend emits this right after a new Agent row is committed, with the
@@ -206,11 +246,8 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     const newAgent = event.data;
     if (!newAgent?.id) return;
     console.log('[ws] agent_created', newAgent.id?.slice(0, 8), newAgent.status, newAgent.project);
-    setAgents((prev) => {
-      if (prev.some((a) => a.id === newAgent.id)) return prev;
-      return [newAgent, ...prev];
-    });
-  }, []));
+    agentsActions.prepend(newAgent);
+  }, [agentsActions]));
 
   // Double-tap nav: scroll to first unread agent
   useEffect(() => {
