@@ -34,7 +34,6 @@ export default function FluentEmoji({ char, size = 18, className = "", title }) 
       height={size}
       className={className}
       style={{ display: "inline-block" }}
-      loading="lazy"
       draggable={false}
       onError={() => setErrored(true)}
       title={title || char}

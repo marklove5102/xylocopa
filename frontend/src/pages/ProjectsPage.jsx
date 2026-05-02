@@ -42,10 +42,10 @@ function projectsAnimateLayoutChanges(args) {
   return _projectsDragging || args.wasDragging;
 }
 
-function SortableFolderCard(props) {
+function SortableFolderCard({ hidden, dragDisabled, ...props }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.folder.name,
-    disabled: props.selecting,
+    disabled: dragDisabled || props.selecting,
     animateLayoutChanges: projectsAnimateLayoutChanges,
   });
   const style = {
@@ -54,10 +54,14 @@ function SortableFolderCard(props) {
     opacity: isDragging ? 0.4 : 1,
     WebkitUserSelect: "none",
     userSelect: "none",
+    ...(hidden ? { display: "none" } : null),
   };
   return (
     <div ref={setNodeRef} style={style}>
-      <FolderCard {...props} dragHandleProps={{ listeners, attributes }} />
+      <FolderCard
+        {...props}
+        dragHandleProps={dragDisabled ? null : { listeners, attributes }}
+      />
     </div>
   );
 }
@@ -371,9 +375,13 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const activeCount = folders.filter((f) => f.active).length;
   const inactiveCount = folders.filter((f) => !f.active).length;
 
-  const filtered = useMemo(() => {
-    clog(`[projects] filtered recompute (folders=${folders.length} filter=${filter} sortMode=${sortMode} customOrder.len=${customOrder.length})`);
-    const base = folders.filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active));
+  // sortedAll: all folders in the active sort order, NOT filtered.
+  // Filter is applied at render time via display:none so cards never
+  // unmount when user toggles ALL/Active/Inactive — keeps imgs and DOM
+  // stable, eliminating the per-filter-switch flicker.
+  const sortedAll = useMemo(() => {
+    clog(`[projects] sortedAll recompute (folders=${folders.length} sortMode=${sortMode} customOrder.len=${customOrder.length})`);
+    const base = folders;
     switch (sortMode) {
       case "name-asc":
         return [...base].sort((a, b) => (a.display_name || a.name).localeCompare(b.display_name || b.name));
@@ -404,7 +412,15 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
           return ai - bi;
         });
     }
-  }, [folders, filter, sortMode, customOrder]);
+  }, [folders, sortMode, customOrder]);
+
+  const isVisibleForFilter = useCallback((folder) =>
+    filter === "ALL" || (filter === "ACTIVE" ? folder.active : !folder.active),
+    [filter]);
+
+  // `filtered` kept for empty-state / select-all / bulk-action logic that
+  // operates only on currently visible projects.
+  const filtered = useMemo(() => sortedAll.filter(isVisibleForFilter), [sortedAll, isVisibleForFilter]);
 
   const FILTER_TABS = [
     { key: "ALL", label: "All" },
@@ -602,57 +618,53 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
         </div>
       )}
 
-      {sortMode === "custom" && filter === "ALL" ? (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          onDragCancel={handleDragCancel}
-        >
-          <SortableContext items={filtered.map((f) => f.name)} strategy={verticalListSortingStrategy}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filtered.map((folder) => (
-                <SortableFolderCard
-                  key={folder.name}
-                  folder={folder}
-                  onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
-                  hasPendingClaudeMd={pendingProjects.includes(folder.name)}
-                  selecting={selecting}
-                  selected={selected.has(folder.name)}
-                  onToggle={toggleOne}
-                  onEnterSelect={enterSelectMode}
-                />
-              ))}
-            </div>
-          </SortableContext>
-          <DragOverlay>
-            {activeDragId ? (
-              <div className="opacity-90 scale-105 shadow-xl rounded-xl">
-                <FolderCard
-                  folder={filtered.find((f) => f.name === activeDragId)}
-                  onClick={() => {}}
-                />
+      {/* Single render path: always render every folder card. The filter
+          (ALL/Active/Inactive) only flips display:none on each card via
+          SortableFolderCard's `hidden` prop. Cards never unmount on filter
+          change — keeps <img> elements stable, no per-frame re-paint flash.
+          dnd-kit drag-reorder is gated by `dragDisabled`: only enabled
+          when sortMode === "custom" AND filter === "ALL". */}
+      {!error && folders.length > 0 && (() => {
+        const dragEnabled = sortMode === "custom" && filter === "ALL";
+        return (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
+            <SortableContext items={sortedAll.map((f) => f.name)} strategy={verticalListSortingStrategy}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {sortedAll.map((folder) => (
+                  <SortableFolderCard
+                    key={folder.name}
+                    folder={folder}
+                    hidden={!isVisibleForFilter(folder)}
+                    dragDisabled={!dragEnabled}
+                    onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
+                    hasPendingClaudeMd={pendingProjects.includes(folder.name)}
+                    selecting={selecting}
+                    selected={selected.has(folder.name)}
+                    onToggle={toggleOne}
+                    onEnterSelect={enterSelectMode}
+                  />
+                ))}
               </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filtered.map((folder) => (
-            <FolderCard
-              key={folder.name}
-              folder={folder}
-              onClick={() => navigate(`/projects/${encodeURIComponent(folder.name)}`)}
-              hasPendingClaudeMd={pendingProjects.includes(folder.name)}
-              selecting={selecting}
-              selected={selected.has(folder.name)}
-              onToggle={toggleOne}
-              onEnterSelect={enterSelectMode}
-            />
-          ))}
-        </div>
-      )}
+            </SortableContext>
+            <DragOverlay>
+              {activeDragId ? (
+                <div className="opacity-90 scale-105 shadow-xl rounded-xl">
+                  <FolderCard
+                    folder={sortedAll.find((f) => f.name === activeDragId)}
+                    onClick={() => {}}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        );
+      })()}
 
       {trashCount > 0 && (
         <button
