@@ -8,6 +8,8 @@
 - Never guess. If unsure, read the code, check logs, or run a test first
 - Every task must produce a visual verification artifact (screenshot, plot, diff, rendered output)
 - If the goal or motivation is unclear, stop and discuss before writing code. If the goal is clear but the path isn't optimal, say so and suggest the better approach
+- For "does X cause Y in the UI" questions, trace the full chain: backend write → event emit → API caller → component state → render condition. Grepping the backend alone is insufficient — feedback often comes from local setState or per-entity refetch, not WS
+- Match assertion strength to evidence. If you only verified part of a claim, say so explicitly — don't write "❌ doesn't trigger" / "0–5s delay" when you only checked one of multiple paths. Downgrade language ("backend doesn't, frontend not checked") instead of presenting a partial check as complete
 
 ## Do NOT
 - Do not refactor or rename files unless the task explicitly requires it
@@ -59,6 +61,7 @@ See README.md for detailed project documentation.
 - SQLAlchemy: `metadata` is reserved — use alt attr name with explicit column
 - When fixing a helper, grep ALL call sites — don't assume you found them all
 - Queued messages use stop-hook dispatch: PENDING in DB → stop hook fires → send via tmux → UserPromptSubmit confirms delivery
+- Realtime UI follows three independent paths, all of which must be considered when diagnosing perceived latency: (1) WebSocket push (`emit_agent_update` carries status/unread_count/last_message_preview/last_message_at/has_pending_suggestions/insight_status; `emit_agent_created` only from `tasks.py:169`, NOT from `agents.py:518` create_agent or `:712` launch-tmux), (2) 5s list poll (`AgentsPage.fetchAgents`, `TasksPage.fetchTasksV2`, etc — wholesale replace), (3) caller-side feedback after a mutation (local `setState` + per-entity refetch via `loadData`/`fetchAgent(id)`, e.g. apply/discard insights uses this, NOT WS). When a user asks "why is X laggy" or "why is Y instant", check all three.
 
 ### Release conventions
 - Tag format: `v<major>.<minor>.<patch>`
