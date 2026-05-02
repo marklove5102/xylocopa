@@ -12,6 +12,7 @@ import useWebSocket, { useWsEvent, isAgentNotificationsEnabled, setAgentNotifica
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
+import { cacheAgentBriefs } from "../lib/detailCache";
 
 const FILTER_TABS = [
   { key: "ALL", label: "All" },
@@ -90,8 +91,12 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     try {
       const data = await fetchAgents();
       const t1 = performance.now();
-      setAgents(Array.isArray(data) ? data : []);
-      clog(`[agents] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
+      const list = Array.isArray(data) ? data : [];
+      setAgents(list);
+      // Seed the brief cache so AgentChatPage can paint its header
+      // (name / project / status) without waiting for fetchAgent.
+      cacheAgentBriefs(list);
+      clog(`[agents] fetch ${(t1 - t0).toFixed(0)}ms n=${list.length}`);
       setError(null);
     } catch (err) {
       setError(err.message);

@@ -43,3 +43,15 @@ export const projectDetailCache = makeCache();
 
 // Keys: task id. Value shape: { task, related, ts }
 export const taskDetailCache = makeCache();
+
+// Keys: agent id. Value shape: { ...agentBrief, ts }
+// Populated by AgentsPage / ProjectDetailPage when their lists load,
+// consumed by AgentChatPage to render the chat header (name / project /
+// status pill) immediately without waiting for fetchAgent to resolve.
+export const agentBriefCache = makeCache();
+export function cacheAgentBriefs(list) {
+  if (!Array.isArray(list)) return;
+  for (const a of list) {
+    if (a?.id) agentBriefCache.set(a.id, a);
+  }
+}

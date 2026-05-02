@@ -44,7 +44,7 @@ import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
-import { projectDetailCache } from "../lib/detailCache";
+import { projectDetailCache, cacheAgentBriefs } from "../lib/detailCache";
 import ProjectDetailSkeleton from "../components/skeletons/ProjectDetailSkeleton";
 
 const AGENT_TABS = [
@@ -410,6 +410,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       }
       setProject(folder);
       setAgents(agentList);
+      cacheAgentBriefs(agentList);
       if (stats) setProjectStats(stats);
       // Merge in tombstones (locally-removed rows the backend has already
       // dropped) so they stay visible until next mount.

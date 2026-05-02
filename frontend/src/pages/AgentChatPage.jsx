@@ -85,6 +85,7 @@ import useContextUsage from "../hooks/useContextUsage";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import ChatSkeleton from "../components/skeletons/ChatSkeleton";
+import { agentBriefCache } from "../lib/detailCache";
 
 const ACTIVE_AGENT_STATUSES = new Set(["EXECUTING", "IDLE"]);
 
@@ -2434,7 +2435,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const navigate = useNavigate();
   const location = useLocation();
   const visible = usePageVisible();
-  const [agent, setAgent] = useState(null);
+  // Seed from the brief cache (populated by AgentsPage / ProjectDetailPage)
+  // so the chat header — agent name, project, status pill — paints
+  // immediately without waiting for fetchAgent. Full agent data still
+  // arrives via loadData() and overwrites this seed.
+  const [agent, setAgent] = useState(() => agentBriefCache.get(id) || null);
   const [taskData, setTaskData] = useState(null);
   // Split source-of-truth: sentMessages mirrors /display/sent (file-backed,
   // append-only, byte-incremental); preSentMessages mirrors /display/pre-sent
@@ -3819,7 +3824,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     return () => clearTimeout(execTimerRef.current);
   }, [isExecutingRaw]);
 
-  if (loading) {
+  // Full-page skeleton only when we don't even have brief metadata yet.
+  // If `agent` is seeded from the brief cache, fall through and render
+  // the real layout — header / composer paint at once and the message
+  // area gets its own inline skeleton (see below) until messages arrive.
+  if (loading && !agent) {
     return <ChatSkeleton />;
   }
 
@@ -4248,7 +4257,25 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         style={{ overflowAnchor: "auto", overscrollBehavior: "contain" }}
       >
         <div className="mt-auto" />
-        {messages.length === 0 && agent.status === "STARTING" ? (
+        {loading && messages.length === 0 ? (
+          // Header rendered already (agent seeded from brief cache); just
+          // fill the scroll area with placeholder bubbles until /display/
+          // sent + /display/pre-sent resolve. Mirrors the bubble layout
+          // in ChatSkeleton so the transition is layout-stable.
+          <div className="space-y-3">
+            {[
+              { side: "left", w: "70%" },
+              { side: "right", w: "55%" },
+              { side: "left", w: "80%" },
+              { side: "right", w: "40%" },
+              { side: "left", w: "65%" },
+            ].map((b, i) => (
+              <div key={i} className={b.side === "right" ? "ml-auto" : ""} style={{ maxWidth: "85%", width: b.w }}>
+                <div className="rounded-2xl bg-surface animate-pulse" style={{ height: 56 }} />
+              </div>
+            ))}
+          </div>
+        ) : messages.length === 0 && agent.status === "STARTING" ? (
           <InitializingIndicator />
         ) : messages.length === 0 && agent.status === "IDLE" ? (
           <SyncPrompt agentId={id} onSync={refreshMessages} />
