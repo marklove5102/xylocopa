@@ -86,6 +86,7 @@ import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import ChatSkeleton from "../components/skeletons/ChatSkeleton";
 import { agentBriefCache } from "../lib/detailCache";
+import { consumePrefetch } from "../lib/chatPrefetch";
 
 const ACTIVE_AGENT_STATUSES = new Set(["EXECUTING", "IDLE"]);
 
@@ -2618,7 +2619,11 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
-  const contextUsage = useContextUsage(id);
+  // Gate non-critical fetches (context-usage, suggestions) until after the
+  // initial display load completes — keeps them off the critical path so
+  // they don't compete with /display/sent for backend workers.
+  const [criticalLoadDone, setCriticalLoadDone] = useState(false);
+  const contextUsage = useContextUsage(criticalLoadDone ? id : null);
 
   const showToast = useCallback((message, type = "success") => {
     if (type === "error") toastCtx.error(message);
@@ -2697,13 +2702,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     abortRef.current = controller;
     try {
       nextOffsetRef.current = 0;
-      const agentData = await fetchAgent(id);
-      if (controller.signal.aborted) return;
-      if (!agentData || !agentData.id) return;
-      setAgent(agentData);
-      if (agentData.task_id && !taskData) {
-        fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
-      }
 
       // Focus-id from URL: on first load, ask the backend for a slice
       // centered on this message instead of the file tail. Falls back
@@ -2712,15 +2710,33 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       const initialParams = focusId
         ? { tailBytes: 50000, focusId }
         : { tailBytes: 50000 };
-      const [sentData, preSentData] = await Promise.all([
+
+      // Critical-path fetches: only display data is needed for first-bubble.
+      // fetchAgent is moved off the critical path — the agent list endpoint
+      // already populated briefCache with everything we need (task_id, muted,
+      // has_pending_suggestions, etc.); the only chat-page-specific extra
+      // field is `successor_id`, which is fine to land a frame later.
+      const cachedBrief = agentBriefCache.get(id);
+      // Hover-prefetched? Only valid for the no-focus path (prefetch uses
+      // default tail params; with ?focus= we need a centered slice).
+      const prefetched = !focusId ? consumePrefetch(id) : null;
+      const [sentData, preSentData] = await (prefetched || Promise.all([
         fetchDisplaySent(id, initialParams),
         fetchDisplayPreSent(id),
-      ]);
+      ]));
       if (controller.signal.aborted) return;
+
+      // Apply display data immediately — this is what first-bubble needs.
       applySentData(sentData, { initial: true });
       applyPreSentData(preSentData);
       setHasMore(!!sentData.has_earlier);
       setHasLater(!!sentData.has_later);
+
+      // Use briefCache as the agent stand-in if available, so the conditional
+      // UI gates (status pill, ProgressSuggestionsCard, InsightsHistoryCard)
+      // can render correctly without waiting on fetchAgent.
+      if (cachedBrief) setAgent(cachedBrief);
+      setCriticalLoadDone(true);
 
       // Restore active tool state — check the last tool_activity in the
       // combined window for an unfinished one.
@@ -2733,12 +2749,26 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
           setToolStartTime(new Date(lastToolMsg.created_at).getTime());
         }
       }
-      if (!initialLoadDone.current && agentData.muted != null) {
-        setMuted(agentData.muted);
-        setAgentMuted(id, agentData.muted);
-      }
-      if (agentData.deferred_to !== undefined) {
-        setDeferredTo(agentData.deferred_to || null);
+
+      // Background-refresh the agent record. If briefCache was cold, this is
+      // also our authoritative load and gates the not-found early-return.
+      const agentData = await fetchAgent(id);
+      if (controller.signal.aborted) return;
+      if (!agentData || !agentData.id) {
+        // Only error out if we had nothing to render with in the first place.
+        if (!cachedBrief) return;
+      } else {
+        setAgent(agentData);
+        if (agentData.task_id && !taskData) {
+          fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
+        }
+        if (!initialLoadDone.current && agentData.muted != null) {
+          setMuted(agentData.muted);
+          setAgentMuted(id, agentData.muted);
+        }
+        if (agentData.deferred_to !== undefined) {
+          setDeferredTo(agentData.deferred_to || null);
+        }
       }
       initialLoadDone.current = true;
     } catch (err) {
@@ -4515,10 +4545,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         {agent?.status === "STOPPED" && agent?.insight_status === "failed" && (
           <InsightStatusCard status="failed" agentId={id} onRetry={loadData} />
         )}
-        {agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
+        {criticalLoadDone && agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <ProgressSuggestionsCard agentId={id} onDone={loadData} />
         )}
-        {!agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
+        {criticalLoadDone && !agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <InsightsHistoryCard agentId={id} />
         )}
 

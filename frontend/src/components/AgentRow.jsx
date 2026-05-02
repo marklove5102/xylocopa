@@ -6,6 +6,7 @@ import { modelDisplayName } from "../lib/constants";
 import useLongPress from "../hooks/useLongPress";
 import WorktreePill from "./WorktreePill";
 import { starSession, unstarSession } from "../lib/api";
+import { prefetchChatData } from "../lib/chatPrefetch";
 
 /**
  * Shared Chats-style agent row, used on both AgentsPage and inside
@@ -83,6 +84,8 @@ const AgentRow = memo(function AgentRow({
       type="button"
       data-agent-id={agent.id}
       data-unread={agent.unread_count > 0 ? "1" : undefined}
+      onMouseEnter={() => prefetchChatData(agent.id)}
+      onTouchStart={() => prefetchChatData(agent.id)}
       {...longPressHandlers}
       style={{ WebkitTapHighlightColor: "transparent" }}
       className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transform-gpu transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
