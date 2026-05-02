@@ -759,6 +759,23 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Add 5m / 1h cache_creation split columns to cc_sessions ---
+        # Anthropic charges 1h ephemeral cache writes at 2× input vs 1.25×
+        # for 5m. JSONL exposes the split via cache_creation.ephemeral_*_input_tokens.
+        cc_cols = _table_columns(conn, "cc_sessions")
+        if "total_cache_creation_5m_tokens" not in cc_cols:
+            conn.execute(text(
+                "ALTER TABLE cc_sessions ADD COLUMN total_cache_creation_5m_tokens "
+                "INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+        if "total_cache_creation_1h_tokens" not in cc_cols:
+            conn.execute(text(
+                "ALTER TABLE cc_sessions ADD COLUMN total_cache_creation_1h_tokens "
+                "INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+
         # --- Migrate SYNCING → IDLE agent status (tmux-only agents) ---
         _syncing_count = conn.execute(text(
             "SELECT COUNT(*) FROM agents WHERE status = 'SYNCING'"

@@ -65,6 +65,8 @@ _TOKEN_FIELDS = (
     "total_input_tokens",
     "total_output_tokens",
     "total_cache_creation_tokens",
+    "total_cache_creation_5m_tokens",
+    "total_cache_creation_1h_tokens",
     "total_cache_read_tokens",
 )
 
@@ -128,6 +130,12 @@ def _build_row(
         total_output_tokens=int(md.get("total_output_tokens", 0) or 0),
         total_cache_creation_tokens=int(
             md.get("total_cache_creation_tokens", 0) or 0
+        ),
+        total_cache_creation_5m_tokens=int(
+            md.get("total_cache_creation_5m_tokens", 0) or 0
+        ),
+        total_cache_creation_1h_tokens=int(
+            md.get("total_cache_creation_1h_tokens", 0) or 0
         ),
         total_cache_read_tokens=int(md.get("total_cache_read_tokens", 0) or 0),
         turn_count=int(md.get("turn_count", 0) or 0),

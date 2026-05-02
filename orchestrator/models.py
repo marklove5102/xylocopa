@@ -397,7 +397,15 @@ class CCSession(Base):
 
     total_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Sum of 5m + 1h. Maintained as a denormalized rollup for back-compat
+    # with code paths that read this column directly.
     total_cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Anthropic charges 5m and 1h ephemeral cache writes at different rates
+    # (1.25× input vs 2× input). JSONL `cache_creation` block exposes the
+    # split. Legacy rows have 0 in both columns; cost calc falls back to
+    # total_cache_creation_tokens at the 5m rate.
+    total_cache_creation_5m_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_cache_creation_1h_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

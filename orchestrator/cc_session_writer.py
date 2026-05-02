@@ -45,6 +45,8 @@ _LONG_TO_SHORT = {
     "input_tokens": "input",
     "output_tokens": "output",
     "cache_creation_input_tokens": "cache_creation",
+    "cache_creation_5m_tokens": "cache_create_5m",
+    "cache_creation_1h_tokens": "cache_create_1h",
     "cache_read_input_tokens": "cache_read",
 }
 
@@ -54,13 +56,15 @@ def _normalize_totals(totals: dict | None) -> dict[str, int]:
 
     Accepts either ``sum_jsonl_usage``-style long keys or the spec's
     short keys. Missing entries default to 0. Returned dict always
-    contains all five keys (input/output/cache_creation/cache_read/
-    turn_count).
+    contains: input/output/cache_creation/cache_create_5m/
+    cache_create_1h/cache_read/turn_count.
     """
     out: dict[str, int] = {
         "input": 0,
         "output": 0,
         "cache_creation": 0,
+        "cache_create_5m": 0,
+        "cache_create_1h": 0,
         "cache_read": 0,
         "turn_count": 0,
     }
@@ -78,6 +82,9 @@ def _normalize_totals(totals: dict | None) -> dict[str, int]:
                 out[k] = int(v or 0)
             except (TypeError, ValueError):
                 continue
+    # Maintain rollup invariant: cache_creation = 5m + 1h when split given
+    if (out["cache_create_5m"] or out["cache_create_1h"]):
+        out["cache_creation"] = out["cache_create_5m"] + out["cache_create_1h"]
     return out
 
 
@@ -145,6 +152,8 @@ def upsert_cc_session(
                 row.total_input_tokens = norm_totals["input"]
                 row.total_output_tokens = norm_totals["output"]
                 row.total_cache_creation_tokens = norm_totals["cache_creation"]
+                row.total_cache_creation_5m_tokens = norm_totals["cache_create_5m"]
+                row.total_cache_creation_1h_tokens = norm_totals["cache_create_1h"]
                 row.total_cache_read_tokens = norm_totals["cache_read"]
                 row.turn_count = norm_totals["turn_count"]
             db.add(row)
@@ -182,6 +191,8 @@ def upsert_cc_session(
                 row.total_input_tokens = norm_totals["input"]
                 row.total_output_tokens = norm_totals["output"]
                 row.total_cache_creation_tokens = norm_totals["cache_creation"]
+                row.total_cache_creation_5m_tokens = norm_totals["cache_create_5m"]
+                row.total_cache_creation_1h_tokens = norm_totals["cache_create_1h"]
                 row.total_cache_read_tokens = norm_totals["cache_read"]
                 row.turn_count = norm_totals["turn_count"]
             row.updated_at = _utcnow()

@@ -1,22 +1,41 @@
 """Model pricing lookup and cost math.
 
 USD per 1M tokens, Anthropic published rates (subject to change).
+Last verified against platform.claude.com/pricing on 2026-05-02.
+
+Cache create has TWO sub-rates because Anthropic charges 1h ephemeral
+cache writes at a higher rate than 5min:
+  cache_create_5m = 1.25× input
+  cache_create_1h = 2.00× input
+JSONL `usage.cache_creation` exposes the split:
+  ephemeral_5m_input_tokens, ephemeral_1h_input_tokens
+
+Cache read price is 0.10× input regardless of which TTL was used to write.
 """
 from __future__ import annotations
 
 
 # ---------------------------------------------------------------------------
-# Pricing — USD per 1M tokens. Anthropic published rates (subject to change).
+# Pricing — USD per 1M tokens.
 # ---------------------------------------------------------------------------
 PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-7":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
-    "claude-opus-4-6":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
-    "claude-opus-4-5":   {"input": 15.00, "cache_create": 18.75, "cache_read": 1.50, "output": 75.00},
-    "claude-sonnet-4-6": {"input":  3.00, "cache_create":  3.75, "cache_read": 0.30, "output": 15.00},
-    "claude-sonnet-4-5": {"input":  3.00, "cache_create":  3.75, "cache_read": 0.30, "output": 15.00},
-    "claude-haiku-4-5":  {"input":  1.00, "cache_create":  1.25, "cache_read": 0.10, "output":  5.00},
+    # --- Opus 4.5+ ($5/$25 — current generation) ---
+    "claude-opus-4-7":   {"input": 5.00,  "cache_create_5m": 6.25,  "cache_create_1h": 10.00, "cache_read": 0.50, "output": 25.00},
+    "claude-opus-4-6":   {"input": 5.00,  "cache_create_5m": 6.25,  "cache_create_1h": 10.00, "cache_read": 0.50, "output": 25.00},
+    "claude-opus-4-5":   {"input": 5.00,  "cache_create_5m": 6.25,  "cache_create_1h": 10.00, "cache_read": 0.50, "output": 25.00},
+    # --- Opus 4 / 4.1 (legacy $15/$75) ---
+    "claude-opus-4-1":   {"input": 15.00, "cache_create_5m": 18.75, "cache_create_1h": 30.00, "cache_read": 1.50, "output": 75.00},
+    "claude-opus-4":     {"input": 15.00, "cache_create_5m": 18.75, "cache_create_1h": 30.00, "cache_read": 1.50, "output": 75.00},
+    # --- Sonnet 4.x ($3/$15) ---
+    "claude-sonnet-4-6": {"input": 3.00,  "cache_create_5m": 3.75,  "cache_create_1h":  6.00, "cache_read": 0.30, "output": 15.00},
+    "claude-sonnet-4-5": {"input": 3.00,  "cache_create_5m": 3.75,  "cache_create_1h":  6.00, "cache_read": 0.30, "output": 15.00},
+    "claude-sonnet-4":   {"input": 3.00,  "cache_create_5m": 3.75,  "cache_create_1h":  6.00, "cache_read": 0.30, "output": 15.00},
+    # --- Haiku 4.5 ($1/$5) ---
+    "claude-haiku-4-5":  {"input": 1.00,  "cache_create_5m": 1.25,  "cache_create_1h":  2.00, "cache_read": 0.10, "output":  5.00},
+    # --- Haiku 3.5 ---
+    "claude-haiku-3-5":  {"input": 0.80,  "cache_create_5m": 1.00,  "cache_create_1h":  1.60, "cache_read": 0.08, "output":  4.00},
 }
-DEFAULT_PRICING = {"input": 3.00, "cache_create": 3.75, "cache_read": 0.30, "output": 15.00}
+DEFAULT_PRICING = {"input": 3.00, "cache_create_5m": 3.75, "cache_create_1h": 6.00, "cache_read": 0.30, "output": 15.00}
 
 
 def resolve_pricing(model: str | None) -> dict[str, float]:
@@ -36,14 +55,30 @@ def resolve_pricing(model: str | None) -> dict[str, float]:
 def compute_cost(usage: dict[str, int], model: str | None) -> float:
     """Compute USD cost for a single Anthropic `usage` block.
 
-    `usage` is the per-turn dict with keys: input_tokens, output_tokens,
-    cache_creation_input_tokens, cache_read_input_tokens. Missing keys are
-    treated as 0. Result is total USD (NOT rounded).
+    `usage` may carry the canonical fields:
+      input_tokens, output_tokens, cache_read_input_tokens
+    Plus EITHER the split fields (preferred):
+      cache_creation_5m_tokens, cache_creation_1h_tokens
+    OR the legacy rollup:
+      cache_creation_input_tokens   (treated as all-5m for back-compat)
+
+    Missing keys are treated as 0. Result is total USD (NOT rounded).
     """
     p = resolve_pricing(model)
+    # Prefer the explicit 5m/1h split when available; fall back to the
+    # legacy rollup (assume all-5m, the cheaper rate — preserves prior
+    # cost numbers for records produced before the split was tracked).
+    five_m = usage.get("cache_creation_5m_tokens")
+    one_h = usage.get("cache_creation_1h_tokens")
+    if five_m is None and one_h is None:
+        five_m = usage.get("cache_creation_input_tokens", 0)
+        one_h = 0
+    five_m = five_m or 0
+    one_h = one_h or 0
     return (
         usage.get("input_tokens", 0) * p["input"]
-        + usage.get("cache_creation_input_tokens", 0) * p["cache_create"]
+        + five_m * p["cache_create_5m"]
+        + one_h * p["cache_create_1h"]
         + usage.get("cache_read_input_tokens", 0) * p["cache_read"]
         + usage.get("output_tokens", 0) * p["output"]
     ) / 1_000_000

@@ -15,8 +15,13 @@ from context.pricing import (
 def test_resolve_pricing_opus_47_exact():
     p = resolve_pricing("claude-opus-4-7")
     assert p == PRICING["claude-opus-4-7"]
-    assert p["input"] == 15.00
-    assert p["output"] == 75.00
+    # Opus 4.5+ rates per Anthropic (verified 2026-05-02). Opus 4 / 4.1
+    # legacy were $15/$75; current generation is $5/$25.
+    assert p["input"] == 5.00
+    assert p["output"] == 25.00
+    assert p["cache_create_5m"] == 6.25
+    assert p["cache_create_1h"] == 10.00
+    assert p["cache_read"] == 0.50
 
 
 def test_resolve_pricing_opus_47_with_date_suffix():
@@ -60,7 +65,11 @@ def test_resolve_pricing_distinct_tiers():
 # compute_cost
 # ---------------------------------------------------------------------------
 def test_compute_cost_opus_full_usage():
-    """Math: input × 15 + cache_create × 18.75 + cache_read × 1.5 + output × 75, / 1M."""
+    """Opus 4.7: input × 5 + cache_create × 6.25 + cache_read × 0.5 + output × 25, / 1M.
+
+    Legacy rollup `cache_creation_input_tokens` (no 5m/1h split) is
+    treated as all-5m for back-compat — the cheaper rate.
+    """
     usage = {
         "input_tokens": 1_000_000,
         "cache_creation_input_tokens": 1_000_000,
@@ -68,7 +77,21 @@ def test_compute_cost_opus_full_usage():
         "output_tokens": 1_000_000,
     }
     cost = compute_cost(usage, "claude-opus-4-7")
-    expected = 15.00 + 18.75 + 1.50 + 75.00
+    expected = 5.00 + 6.25 + 0.50 + 25.00
+    assert abs(cost - expected) < 1e-9
+
+
+def test_compute_cost_opus_split_cache():
+    """When 5m/1h split is provided, each bucket gets its own rate."""
+    usage = {
+        "input_tokens": 1_000_000,
+        "cache_creation_5m_tokens": 1_000_000,   # 1M × $6.25
+        "cache_creation_1h_tokens": 1_000_000,   # 1M × $10.00
+        "cache_read_input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+    }
+    cost = compute_cost(usage, "claude-opus-4-7")
+    expected = 5.00 + 6.25 + 10.00 + 0.50 + 25.00
     assert abs(cost - expected) < 1e-9
 
 
@@ -77,9 +100,9 @@ def test_compute_cost_empty_usage_is_zero():
 
 
 def test_compute_cost_missing_keys_treated_as_zero():
-    """Only input present — others default to 0."""
+    """Only input present — others default to 0. Opus 4.7 input is $5/M."""
     cost = compute_cost({"input_tokens": 1_000_000}, "claude-opus-4-7")
-    assert cost == 15.00
+    assert cost == 5.00
 
 
 def test_compute_cost_unknown_model_uses_default_pricing():
@@ -102,9 +125,9 @@ def test_compute_cost_haiku_is_cheaper_than_opus():
 
 
 def test_compute_cost_partial_usage():
-    """Only cache_read populated."""
+    """Only cache_read populated. Opus 4.7 cache_read is $0.50/M."""
     cost = compute_cost(
         {"cache_read_input_tokens": 2_000_000}, "claude-opus-4-7"
     )
-    # 2M × $1.50 / 1M = $3.00
-    assert abs(cost - 3.00) < 1e-9
+    # 2M × $0.50 / 1M = $1.00
+    assert abs(cost - 1.00) < 1e-9

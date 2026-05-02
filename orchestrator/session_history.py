@@ -140,25 +140,46 @@ def read_history(agent_id: str) -> list[dict[str, Any]]:
 def sum_history_usage(agent_id: str) -> dict[str, int]:
     """Aggregate usage across an agent's entire ended-session history.
 
-    Returns a dict with the four usage keys plus `sessions` (count) and
-    `turn_count` (total assistant turns). Zero-init if no history.
+    Returns a dict with the four usage keys plus `sessions` (count),
+    `turn_count` (total assistant turns), and the 5m/1h cache_creation
+    split. Zero-init if no history.
     """
     cum: dict[str, int] = {k: 0 for k in _USAGE_KEYS}
     cum["sessions"] = 0
     cum["turn_count"] = 0
+    cum["cache_creation_5m_tokens"] = 0
+    cum["cache_creation_1h_tokens"] = 0
     for rec in read_history(agent_id):
         u = rec.get("usage", {}) or {}
         if not isinstance(u, dict):
             continue
         for k in _USAGE_KEYS:
             cum[k] += int(u.get(k, 0) or 0)
+        # Split cache fields may live either at top level (newer) or
+        # not at all (legacy records). Legacy records → assume all
+        # cache_creation was 5m (cheaper rate, preserves history).
+        if "cache_creation_5m_tokens" in u or "cache_creation_1h_tokens" in u:
+            cum["cache_creation_5m_tokens"] += int(u.get("cache_creation_5m_tokens", 0) or 0)
+            cum["cache_creation_1h_tokens"] += int(u.get("cache_creation_1h_tokens", 0) or 0)
+        else:
+            cum["cache_creation_5m_tokens"] += int(u.get("cache_creation_input_tokens", 0) or 0)
         cum["sessions"] += 1
         cum["turn_count"] += int(rec.get("turn_count", 0) or 0)
     return cum
 
 
 def sum_jsonl_usage(jsonl_path: str) -> dict[str, int]:
-    """Sum every assistant entry's `usage` block in a JSONL file.
+    """Sum every assistant message's `usage` block in a JSONL file.
+
+    Critical: dedupes by `message.id` because CC writes ONE assistant API
+    response across N JSONL entries — one per content block (thinking /
+    text / tool_use). Each entry carries the SAME `usage` block (it's the
+    one response). Naively summing every entry would inflate totals by
+    1.5–2× depending on how many tool calls a turn produced.
+
+    Also surfaces `cache_creation.ephemeral_5m_input_tokens` and
+    `ephemeral_1h_input_tokens` separately so cost calculation can apply
+    the correct rate (5m = 1.25× input, 1h = 2× input).
 
     Used for the CURRENT session running total — it is NOT yet in the
     history file (we only write on rotation). Per-call cost is one
@@ -166,8 +187,11 @@ def sum_jsonl_usage(jsonl_path: str) -> dict[str, int]:
     """
     cum: dict[str, int] = {k: 0 for k in _USAGE_KEYS}
     cum["turn_count"] = 0
+    cum["cache_creation_5m_tokens"] = 0
+    cum["cache_creation_1h_tokens"] = 0
     if not jsonl_path or not os.path.isfile(jsonl_path):
         return cum
+    seen_msg_ids: set[str] = set()
     try:
         with open(jsonl_path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -183,9 +207,32 @@ def sum_jsonl_usage(jsonl_path: str) -> dict[str, int]:
                 u = msg.get("usage")
                 if not isinstance(u, dict):
                     continue
+                # Dedupe: one message.id == one billable API response,
+                # even though CC may emit it as multiple JSONL lines
+                # (one per content block).
+                mid = msg.get("id")
+                if mid:
+                    if mid in seen_msg_ids:
+                        continue
+                    seen_msg_ids.add(mid)
                 cum["turn_count"] += 1
                 for k in _USAGE_KEYS:
                     cum[k] += int(u.get(k, 0) or 0)
+                cc = u.get("cache_creation")
+                if isinstance(cc, dict):
+                    cum["cache_creation_5m_tokens"] += int(
+                        cc.get("ephemeral_5m_input_tokens", 0) or 0
+                    )
+                    cum["cache_creation_1h_tokens"] += int(
+                        cc.get("ephemeral_1h_input_tokens", 0) or 0
+                    )
+                else:
+                    # Legacy: no nested split. Treat all cache_creation
+                    # as 5m (cheaper rate — preserves prior behaviour
+                    # when split data is unavailable).
+                    cum["cache_creation_5m_tokens"] += int(
+                        u.get("cache_creation_input_tokens", 0) or 0
+                    )
     except OSError as e:
         logger.debug("sum_jsonl_usage: read failed for %s: %s", jsonl_path, e)
     return cum

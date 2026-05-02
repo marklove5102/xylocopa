@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _USAGE_KEYS = (
     "input_tokens", "output_tokens",
     "cache_creation_input_tokens", "cache_read_input_tokens",
+    "cache_creation_5m_tokens", "cache_creation_1h_tokens",
 )
 
 
@@ -29,11 +30,17 @@ def _empty_totals() -> dict[str, int]:
 
 
 def _row_usage(row) -> dict[str, int]:
-    """Coerce a CCSession row into the four-key ``usage`` shape."""
+    """Coerce a CCSession row into the usage shape consumed by compute_cost.
+
+    Carries both the legacy rollup `cache_creation_input_tokens` and the
+    5m/1h split. compute_cost prefers the split when present.
+    """
     return {
         "input_tokens": int(row.total_input_tokens or 0),
         "output_tokens": int(row.total_output_tokens or 0),
         "cache_creation_input_tokens": int(row.total_cache_creation_tokens or 0),
+        "cache_creation_5m_tokens": int(getattr(row, "total_cache_creation_5m_tokens", 0) or 0),
+        "cache_creation_1h_tokens": int(getattr(row, "total_cache_creation_1h_tokens", 0) or 0),
         "cache_read_input_tokens": int(row.total_cache_read_tokens or 0),
     }
 
@@ -60,7 +67,15 @@ def _row_to_node(row, model_for_cost: str | None) -> dict[str, Any]:
         "model": row.model,
         "is_subagent_session": bool(row.is_subagent_session),
         "totals": totals,
-        "total_tokens": sum(totals.values()),
+        # Avoid double-counting: cache_creation_5m + cache_creation_1h is
+        # the SAME content as cache_creation_input_tokens (rollup). Sum
+        # only the four canonical kinds.
+        "total_tokens": (
+            totals["input_tokens"]
+            + totals["output_tokens"]
+            + totals["cache_creation_input_tokens"]
+            + totals["cache_read_input_tokens"]
+        ),
         "cost_usd": round(cost, 6),
         "turn_count": int(row.turn_count or 0),
         "sub_sessions": [],
@@ -140,7 +155,14 @@ def _current_session_running_node(
         "model": model,
         "is_subagent_session": False,
         "totals": totals,
-        "total_tokens": sum(totals.values()),
+        # Same de-dup rule as _row_to_node: only sum the four canonical
+        # kinds (the 5m/1h split is a sub-breakdown of cache_creation).
+        "total_tokens": (
+            totals["input_tokens"]
+            + totals["output_tokens"]
+            + totals["cache_creation_input_tokens"]
+            + totals["cache_read_input_tokens"]
+        ),
         "cost_usd": round(cost, 6),
         "turn_count": turn_count,
         "sub_sessions": [],
@@ -213,7 +235,14 @@ def get_lifetime(
                 tree.append(cur_node)
                 top_level_count += 1
 
-        total_tokens = sum(totals.values())
+        # Sum only the four canonical kinds — 5m+1h is a breakdown of
+        # cache_creation, not additional content.
+        total_tokens = (
+            totals["input_tokens"]
+            + totals["output_tokens"]
+            + totals["cache_creation_input_tokens"]
+            + totals["cache_read_input_tokens"]
+        )
         cost_usd = compute_cost(totals, model)
         pricing = resolve_pricing(model)
 

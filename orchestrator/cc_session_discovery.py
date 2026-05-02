@@ -131,6 +131,12 @@ def parse_jsonl_metadata(jsonl_path: str) -> dict | None:
         "total_cache_creation_tokens": int(
             usage.get("cache_creation_input_tokens", 0) or 0
         ),
+        "total_cache_creation_5m_tokens": int(
+            usage.get("cache_creation_5m_tokens", 0) or 0
+        ),
+        "total_cache_creation_1h_tokens": int(
+            usage.get("cache_creation_1h_tokens", 0) or 0
+        ),
         "total_cache_read_tokens": int(
             usage.get("cache_read_input_tokens", 0) or 0
         ),
