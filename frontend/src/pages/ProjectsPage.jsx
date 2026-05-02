@@ -518,12 +518,6 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
       <div className="pb-24 p-4 max-w-2xl mx-auto w-full">
 
-      {loading && folders.length === 0 && (
-        <div className="flex justify-center py-12">
-          <span className="text-dim text-sm animate-pulse">Loading projects...</span>
-        </div>
-      )}
-
       {error && (
         <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 mb-4">
           <p className="text-red-400 text-sm">Failed to fetch projects: {error}</p>

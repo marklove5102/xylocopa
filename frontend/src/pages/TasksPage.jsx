@@ -319,11 +319,6 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
         <div className="max-w-2xl mx-auto w-full">
           <CardSwipeContext.Provider value={null}>
             <div className="pb-24 px-4 py-3">
-              {loading && tasks.length === 0 && (
-                <div className="flex justify-center py-12">
-                  <span className="text-dim text-sm animate-pulse">Loading...</span>
-                </div>
-              )}
               {!loading && (
                 <InboxView
                   tasks={tasks}

@@ -619,12 +619,6 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
 
       {/* Agent list */}
       <div className={`${selecting ? "pb-32" : "pb-24"} px-4 py-2 space-y-3`}>
-        {loading && agents.length === 0 && (
-          <div className="flex justify-center py-12">
-            <span className="text-dim text-sm animate-pulse">Loading agents...</span>
-          </div>
-        )}
-
         {error && (
           <div className="bg-red-950/40 border border-red-800 rounded-xl p-4">
             <p className="text-red-400 text-sm">Failed to fetch agents: {error}</p>
