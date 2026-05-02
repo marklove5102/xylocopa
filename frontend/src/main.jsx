@@ -5,6 +5,11 @@ import "katex/dist/katex.min.css";
 import "./index.css";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
+import { setupFrameLogger } from "./lib/frameLogger";
+
+// Frame-by-frame DOM mutation logger (off by default).
+// Enable: localStorage.setItem("ah:frame-log", "1") then reload.
+setupFrameLogger();
 
 // Mark non-mobile Linux as glass-incapable: backdrop-filter parses on
 // Linux Chrome/Firefox so @supports reports true, but the GPU compositor
