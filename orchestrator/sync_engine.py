@@ -942,6 +942,11 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             ad._emit(emit_new_message(
                 agent.id, "sync", ctx.agent_name, ctx.agent_project,
             ))
+            # Push an updated token-budget snapshot whenever a new assistant
+            # turn lands — its `usage` block is what context_usage reads.
+            if any(r == "assistant" for r, *_ in new_turns):
+                from websocket import emit_context_usage as _emit_ctx
+                ad._emit(_emit_ctx(agent.id))
 
         # Notify for unanswered interactive items
         _notify_interactive(ad, agent, new_turns)

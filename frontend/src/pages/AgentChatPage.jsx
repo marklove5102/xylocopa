@@ -76,10 +76,12 @@ import {
 import { DATE_SHORT, TIME_SHORT } from "../lib/formatters";
 import VoiceRecorder from "../components/VoiceRecorder";
 import WorktreePill from "../components/WorktreePill";
+import ContextUsagePill from "../components/ContextUsagePill";
 import useDraft from "../hooks/useDraft";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 import useWebSocket, { useWsEvent, isAgentMuted, setAgentMuted, clearAgentNotified, registerViewing, unregisterViewing, touchAgentInteraction } from "../hooks/useWebSocket";
 import useHealthStatus from "../hooks/useHealthStatus";
+import useContextUsage from "../hooks/useContextUsage";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 
@@ -2610,6 +2612,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const messagesEndRef = useRef(null);
   const health = useHealthStatus();
+  const contextUsage = useContextUsage(id);
 
   const showToast = useCallback((message, type = "success") => {
     if (type === "error") toastCtx.error(message);
@@ -3997,6 +4000,8 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                     Stop
                   </button>
                 )}
+
+                <ContextUsagePill usage={contextUsage} />
 
                 <button
                   type="button"

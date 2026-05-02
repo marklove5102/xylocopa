@@ -415,6 +415,23 @@ async def emit_progress_suggestions_ready(agent_id: str, count: int, project: st
     })
 
 
+async def emit_context_usage(agent_id: str):
+    """Signal: token-budget snapshot updated for agent.
+
+    Recomputed from latest assistant JSONL entry's usage block. Frontend
+    pill in AgentChatPage subscribes to refresh its current %.
+    """
+    try:
+        from context_usage import get_context_usage
+        snap = get_context_usage(agent_id)
+    except Exception:
+        logger.warning("emit_context_usage: snapshot failed for %s",
+                       agent_id[:8], exc_info=True)
+        return
+    payload = {"agent_id": agent_id, **snap}
+    await ws_manager.broadcast("context_usage_update", payload)
+
+
 def _tool_input_summary(tool_name: str, tool_input: dict) -> str:
     """Build a short human-readable summary from tool input."""
     if tool_name == "Bash":

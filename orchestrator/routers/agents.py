@@ -1788,6 +1788,20 @@ async def search_messages(
     return MessageSearchResponse(results=results, total=total)
 
 
+@router.get("/api/agents/{agent_id}/context-usage")
+async def get_context_usage_endpoint(agent_id: str, db: Session = Depends(get_db)):
+    """Headline token budget for an agent.
+
+    Reads the latest assistant entry's `message.usage` from the session
+    JSONL and returns total/limit/percent/model. Used by the chat header
+    pill — Phase 1 of the in-app /context dashboard.
+    """
+    if not db.get(Agent, agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    from context_usage import get_context_usage
+    return get_context_usage(agent_id)
+
+
 @router.get("/api/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
     """Get full agent details."""
