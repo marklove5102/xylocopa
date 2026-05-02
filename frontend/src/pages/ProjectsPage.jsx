@@ -622,10 +622,12 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
           (ALL/Active/Inactive) only flips display:none on each card via
           SortableFolderCard's `hidden` prop. Cards never unmount on filter
           change — keeps <img> elements stable, no per-frame re-paint flash.
-          dnd-kit drag-reorder is gated by `dragDisabled`: only enabled
-          when sortMode === "custom" AND filter === "ALL". */}
+          dnd-kit drag-reorder works in any filter when sortMode==="custom":
+          customOrder is the global order, so dragging a visible card past
+          another visible card just rearranges those two in customOrder
+          while hidden (filtered-out) cards in between keep their position. */}
       {!error && folders.length > 0 && (() => {
-        const dragEnabled = sortMode === "custom" && filter === "ALL";
+        const dragEnabled = sortMode === "custom";
         return (
           <DndContext
             sensors={sensors}
