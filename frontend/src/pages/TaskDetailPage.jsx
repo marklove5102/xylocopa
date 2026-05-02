@@ -11,13 +11,16 @@ import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks 
 import { useToast } from "../contexts/ToastContext";
 import useDraft from "../hooks/useDraft";
 import { forwardState } from "../lib/nav";
+import { taskDetailCache } from "../lib/detailCache";
 
 export default function TaskDetailPage({ theme, onToggleTheme }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const [task, setTask] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from module-level cache so re-entering paints instantly.
+  const initialCached = taskDetailCache.get(id);
+  const [task, setTask] = useState(initialCached?.task || null);
+  const [loading, setLoading] = useState(!initialCached);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -39,6 +42,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     try {
       const data = await fetchTaskV2(id);
       setTask(data);
+      taskDetailCache.set(id, { task: data });
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -91,6 +95,7 @@ export default function TaskDetailPage({ theme, onToggleTheme }) {
     setActionLoading(true);
     try {
       await cancelTask(id);
+      taskDetailCache.invalidate(id);
       navigate("/tasks", { replace: true });
     } catch (err) {
       toast.error(err.message);

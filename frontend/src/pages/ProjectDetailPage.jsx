@@ -44,6 +44,7 @@ import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
+import { projectDetailCache } from "../lib/detailCache";
 
 const AGENT_TABS = [
   { key: "all", label: "All" },
@@ -233,15 +234,20 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     sessionStorage.removeItem("returnedFrom:projects");
   }, [name]);
 
-  const [project, setProject] = useState(null);
-  const [agents, setAgents] = useState([]);
-  const [bookmarks, setBookmarks] = useState([]);
+  // Seed initial state from module-level cache so re-entering a recently
+  // viewed project paints instantly. loadData() still runs in the
+  // background to refresh against the latest data.
+  const initialCached = projectDetailCache.get(name);
+  const [project, setProject] = useState(initialCached?.project || null);
+  const [agents, setAgents] = useState(initialCached?.agents || []);
+  const [bookmarks, setBookmarks] = useState(initialCached?.bookmarks || []);
   // Rows the user removed in this mount session. We re-inject them into the
   // displayed list after every poll so they don't vanish under their finger
   // when the 5s loadData() refresh comes back without them. Cleared on
   // navigate-away (component unmount) or full page reload.
   const removedTombstonesRef = useRef(new Map());
-  const [loading, setLoading] = useState(true);
+  // Cache hit → no spinner, just paint cached data and refetch silently.
+  const [loading, setLoading] = useState(!initialCached);
   const [loadError, setLoadError] = useState(null);
   const [agentTab, setAgentTab] = useDraft(`ui:project:${name}:tab`, "active");
 
@@ -301,7 +307,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
 
   // Task stats popover
   const [showStats, setShowStats] = useState(false);
-  const [projectStats, setProjectStats] = useState(null);
+  const [projectStats, setProjectStats] = useState(initialCached?.stats || null);
   const statsRingRef = useRef(null);
 
   // Activate / Archive / Delete
@@ -350,6 +356,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     try {
       const displayName = nameDraft.trim() !== slug ? nameDraft.trim() : undefined;
       await renameProjectApi(name, slug, displayName);
+      // Both old and new keys are now stale; drop them so the next
+      // mount fetches fresh under the new name.
+      projectDetailCache.invalidate(name);
+      projectDetailCache.invalidate(slug);
       showToast("Project renamed!");
       setShowRenameConfirm(false);
 
@@ -414,6 +424,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         : fresh;
       setBookmarks(merged);
       setLoadError(null);
+      // Update module-level cache so the next mount of this project
+      // paints from cache instead of showing the loading state.
+      // Tombstones intentionally NOT cached — they're per-mount session.
+      projectDetailCache.set(name, {
+        project: folder,
+        agents: agentList,
+        stats: stats || null,
+        bookmarks: fresh,
+      });
     } catch (err) {
       console.error("Failed to load project data:", err);
       setLoadError(err.message || "Failed to load project data");
@@ -821,6 +840,7 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     setDeleting(true);
     try {
       await deleteProjectApi(name);
+      projectDetailCache.invalidate(name);
       navigate("/projects", { replace: true });
     } catch (err) {
       showToast("Delete failed: " + err.message, "error");
