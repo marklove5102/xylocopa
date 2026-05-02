@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   fetchAllFolders,
-  fetchProjectAgents,
   createAgent,
   createProject,
   deleteProject as deleteProjectApi,
@@ -28,6 +27,7 @@ import {
   deleteAgent,
   markAgentRead,
 } from "../lib/api";
+import { useAgents, useAgentsSeeded } from "../contexts/AgentsContext";
 import BotIcon from "../components/BotIcon";
 import ProjectRing from "../components/ProjectRing";
 import EmojiPicker from "../components/EmojiPicker";
@@ -44,7 +44,7 @@ import TaskGraphSection from "../components/TaskGraphSection";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
 import { forwardState } from "../lib/nav";
-import { projectDetailCache, cacheAgentBriefs, projectBriefCache, agentBriefCache } from "../lib/detailCache";
+import { projectDetailCache, projectBriefCache, agentBriefCache } from "../lib/detailCache";
 import ProjectDetailSkeleton from "../components/skeletons/ProjectDetailSkeleton";
 
 const AGENT_TABS = [
@@ -242,7 +242,20 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   // visited project paints its header from the folder list snapshot.
   const initialCached = projectDetailCache.get(name);
   const [project, setProject] = useState(initialCached?.project || projectBriefCache.get(name) || null);
-  const [agents, setAgents] = useState(initialCached?.agents || []);
+  // Stage-2 pilot: agents come from AgentsContext (single source of
+  // truth shared with AgentsPage, the only writer). Filter by project
+  // name; defensive `!is_subagent` keeps parity with the old
+  // fetchProjectAgents endpoint which excludes subagents by default.
+  // The filter ref keeps identity stable across renders so the
+  // memoized selector inside useAgents() doesn't churn.
+  const agentFilterRef = useRef(null);
+  if (!agentFilterRef.current || agentFilterRef.current.__name !== name) {
+    const f = (a) => a.project === name && !a.is_subagent;
+    f.__name = name;
+    agentFilterRef.current = f;
+  }
+  const agents = useAgents(agentFilterRef.current);
+  const agentsSeeded = useAgentsSeeded();
   const [bookmarks, setBookmarks] = useState(initialCached?.bookmarks || []);
   // Rows the user removed in this mount session. We re-inject them into the
   // displayed list after every poll so they don't vanish under their finger
@@ -420,12 +433,15 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     }
   };
 
-  // Fetch project + agents
+  // Fetch project + stats + bookmarks. Agents come from AgentsContext
+  // (Stage-2 pilot) — AgentsPage is the sole owner of the agents fetch
+  // and seeds the store. ProjectDetailPage no longer fetches agents,
+  // doesn't seed agentBriefCache (AgentsPage does that), and doesn't
+  // re-fetch on its 5s loadData tick.
   const loadData = useCallback(async () => {
     try {
-      const [folders, agentList, stats, bookmarkList] = await Promise.all([
+      const [folders, stats, bookmarkList] = await Promise.all([
         fetchAllFolders(),
-        fetchProjectAgents(name),
         fetchTaskCounts(name).catch(() => null),
         fetchProjectBookmarks(name).catch(() => []),
       ]);
@@ -435,8 +451,6 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         return;
       }
       setProject(folder);
-      setAgents(agentList);
-      cacheAgentBriefs(agentList);
       if (stats) setProjectStats(stats);
       // Merge in tombstones (locally-removed rows the backend has already
       // dropped) so they stay visible until next mount.
@@ -455,9 +469,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       // Update module-level cache so the next mount of this project
       // paints from cache instead of showing the loading state.
       // Tombstones intentionally NOT cached — they're per-mount session.
+      // Agents intentionally NOT cached here either — they come from the
+      // AgentsContext, which itself is seeded by AgentsPage.
       projectDetailCache.set(name, {
         project: folder,
-        agents: agentList,
         stats: stats || null,
         bookmarks: fresh,
       });
@@ -774,13 +789,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const selectAll = useCallback(() => setSelected(new Set(filtered.map((a) => a.id))), [filtered]);
   const deselectAll = useCallback(() => setSelected(new Set()), []);
 
-  const reloadAgents = useCallback(async () => {
-    try {
-      const data = await fetchProjectAgents(name);
-      setAgents(Array.isArray(data) ? data : []);
-    } catch { /* swallow — caller toasts */ }
-  }, [name]);
-
+  // Stage-2 pilot: ProjectDetailPage is read-only on the agent list.
+  // Bulk actions dispatch 'agents-data-changed' which AgentsPage's
+  // listener picks up and turns into a fresh seed() on the shared
+  // store. No local refetch here — single-writer rule.
   const handleBulkMarkRead = useCallback(async () => {
     if (unreadSelected.length === 0 || bulkBusy) return;
     setBulkBusy(true);
@@ -792,9 +804,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     if (failed > 0) toast.error(`Marked ${ok} read, failed ${failed}`);
     else toast.success(`Marked ${ok} agent${ok !== 1 ? "s" : ""} as read`);
     exitSelectMode();
-    reloadAgents();
     window.dispatchEvent(new CustomEvent("agents-data-changed"));
-  }, [unreadSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+  }, [unreadSelected, bulkBusy, toast, exitSelectMode]);
 
   const handleBulkStop = useCallback(async () => {
     if (stoppableSelected.length === 0 || bulkBusy) return;
@@ -807,9 +818,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     if (failed > 0) toast.error(`Stopped ${ok}, failed ${failed}`);
     else toast.success(`Stopped ${ok} agent${ok !== 1 ? "s" : ""}`);
     exitSelectMode();
-    reloadAgents();
     window.dispatchEvent(new CustomEvent("agents-data-changed"));
-  }, [stoppableSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+  }, [stoppableSelected, bulkBusy, toast, exitSelectMode]);
 
   const handleBulkDelete = useCallback(async () => {
     if (deletableSelected.length === 0 || bulkBusy) return;
@@ -823,9 +833,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     if (failed > 0) toast.error(`Deleted ${ok}, failed ${failed}`);
     else toast.success(`Deleted ${ok} agent${ok !== 1 ? "s" : ""}`);
     exitSelectMode();
-    reloadAgents();
     window.dispatchEvent(new CustomEvent("agents-data-changed"));
-  }, [deletableSelected, bulkBusy, toast, exitSelectMode, reloadAgents]);
+  }, [deletableSelected, bulkBusy, toast, exitSelectMode]);
 
   // Tab counts
   const tabCounts = {
@@ -1212,10 +1221,11 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
       {/* Agent list (hidden on Graph tab) */}
       {agentTab !== "graph" && (
         <div>
-          {loading && agents.length === 0 ? (
-            // Header was seeded from briefCache; only the agent list area
-            // is waiting on fetchProjectAgents. Show row placeholders that
-            // match AgentRow's height so the layout doesn't jump.
+          {(loading || !agentsSeeded) && agents.length === 0 ? (
+            // Header was seeded from briefCache; the agent list comes from
+            // AgentsContext and may be empty until AgentsPage's first
+            // fetch completes. Show row placeholders that match AgentRow's
+            // height so the layout doesn't jump.
             <div className="space-y-3">
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="rounded-2xl bg-surface px-5 py-[18px] flex items-start gap-3 animate-pulse">
