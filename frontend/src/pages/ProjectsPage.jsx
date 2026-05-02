@@ -602,7 +602,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
         </div>
       )}
 
-      {sortMode === "custom" ? (
+      {sortMode === "custom" && filter === "ALL" ? (
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
