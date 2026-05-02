@@ -1803,6 +1803,31 @@ async def get_context_usage_endpoint(agent_id: str, db: Session = Depends(get_db
     return get_context_breakdown(agent_id)
 
 
+@router.get("/api/agents/{agent_id}/cc-sessions")
+async def get_agent_cc_sessions(agent_id: str, db: Session = Depends(get_db)):
+    """Tree of CC sessions (top-level + sub-sessions) for one agent.
+
+    Returns the same shape as ``lifetime.cc_sessions`` but standalone for
+    clients that just want the drill-down without the rest of the
+    lifetime payload. Top-level sessions appear at the top of ``sessions``;
+    sub-sessions are nested under their parent's ``sub_sessions`` array.
+    """
+    from models import CCSession
+    from context.lifetime import build_cc_session_tree
+
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    rows = (
+        db.query(CCSession)
+        .filter(CCSession.agent_id == agent_id)
+        .order_by(CCSession.started_at)
+        .all()
+    )
+    tree = build_cc_session_tree(rows, agent.model)
+    return {"sessions": tree}
+
+
 @router.get("/api/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, request: Request, db: Session = Depends(get_db)):
     """Get full agent details."""

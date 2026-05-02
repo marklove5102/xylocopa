@@ -426,10 +426,47 @@ async def lifespan(app: FastAPI):
 
     daily_heartbeat_task = asyncio.create_task(_daily_heartbeat_loop())
 
+    # CC-session JSONL → cc_sessions reconcile.
+    # One sweep at startup catches anything written while we were offline,
+    # then a periodic background loop keeps the table in sync with on-disk
+    # JSONL growth. Pure-additive: only inserts missing rows + bumps token
+    # totals; never touches metadata.
+    async def _cc_session_reconcile_loop():
+        from cc_session_reconcile import reconcile_all
+        # Initial sweep — runs in a thread so we don't stall the loop on
+        # slow disk scans.
+        try:
+            totals = await asyncio.to_thread(reconcile_all)
+            logger.info(
+                "cc_session reconcile (startup): agents=%d disc=%d ins=%d upd=%d skp=%d",
+                totals.get("agents", 0), totals.get("discovered", 0),
+                totals.get("inserted", 0), totals.get("updated", 0),
+                totals.get("skipped", 0),
+            )
+        except Exception:
+            logger.exception("cc_session reconcile startup sweep failed (non-fatal)")
+        # Periodic — every 30 minutes is plenty for a backstop reconcile;
+        # the dispatcher writes rows live on rotation/end so this only
+        # cleans up sessions the live writer missed.
+        while True:
+            await asyncio.sleep(1800)
+            try:
+                totals = await asyncio.to_thread(reconcile_all)
+                if totals.get("inserted") or totals.get("updated"):
+                    logger.info(
+                        "cc_session reconcile: ins=%d upd=%d (disc=%d)",
+                        totals["inserted"], totals["updated"],
+                        totals.get("discovered", 0),
+                    )
+            except Exception:
+                logger.exception("cc_session reconcile loop failed (non-fatal)")
+
+    cc_session_reconcile_task = asyncio.create_task(_cc_session_reconcile_loop())
+
     yield
 
     # Shutdown
-    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task, view_track_task, daily_heartbeat_task):
+    for task in (agent_dispatch_task, backup_task, session_cache_task, ws_prune_task, view_track_task, daily_heartbeat_task, cc_session_reconcile_task):
         if task:
             task.cancel()
             try:

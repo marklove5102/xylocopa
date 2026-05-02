@@ -764,6 +764,83 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             except (DatabaseError, IntegrityError):
                 db.rollback()  # pointer write is non-critical; will retry next cycle
 
+        # cc_sessions live-event bookkeeping. Best-effort — wrapped in a
+        # broad try/except since this is a side-table. Skipped silently
+        # if the writer module isn't importable yet.
+        if _actually_inserted > 0:
+            try:
+                import cc_session_writer as _ccw
+                from session_history import sum_jsonl_usage as _sum_usage
+
+                # Pull current totals from the JSONL we just imported
+                # from. The file was already read by the parser so the
+                # OS page cache is hot — this scan is cheap.
+                _cc_totals = _sum_usage(ctx.jsonl_path)
+
+                # Determine started_at from the first turn's timestamp
+                # (only meaningful on insert; upsert ignores None on
+                # update so passing it on every batch is safe).
+                _started_at = None
+                if turns:
+                    _ts0 = turns[0][5] if len(turns[0]) > 5 else None
+                    _started_at = _parse_jsonl_ts(_ts0)
+
+                # Pull worktree for this agent — needed for the row
+                # (read once per batch).
+                _agent_for_cc = db.get(Agent, ctx.agent_id)
+                _worktree_for_cc = _agent_for_cc.worktree if _agent_for_cc else None
+                _model_for_cc = _agent_for_cc.model if _agent_for_cc else None
+
+                _ccw.upsert_cc_session(
+                    session_id=ctx.session_id,
+                    agent_id=ctx.agent_id,
+                    project_path=ctx.project_path,
+                    worktree=_worktree_for_cc,
+                    started_at=_started_at,
+                    end_reason="active",
+                    model=_model_for_cc,
+                    totals=_cc_totals,
+                )
+
+                # Sub-session detection: scan once per sync batch (NOT
+                # per-turn). Triggered when this batch contains any
+                # tool_result OR a Task tool_use — both indicate a Task
+                # call may have just completed and emitted a JSONL of
+                # its own.
+                _saw_task_tool = any(
+                    (len(_t) > 4 and _t[4] in ("tool_use", "tool_result"))
+                    and (
+                        # Look for Task tool by name in metadata
+                        isinstance(_t[2], dict)
+                        and _t[2].get("tool_name") == "Task"
+                    )
+                    for _t in new_turns
+                )
+                # Fallback: any tool_result also triggers a scan, since
+                # the sub-session JSONL is most reliably present after
+                # the result lands.
+                _saw_any_tool_result = any(
+                    (len(_t) > 4 and _t[4] == "tool_result")
+                    for _t in new_turns
+                )
+                if _saw_task_tool or _saw_any_tool_result:
+                    try:
+                        _ccw.detect_and_record_subsessions(
+                            ctx.jsonl_path, ctx.session_id, ctx.agent_id,
+                            project_path=ctx.project_path,
+                            worktree=_worktree_for_cc,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "cc_session_writer.detect_and_record_subsessions failed",
+                            exc_info=True,
+                        )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "cc_session bookkeeping failed for agent %s",
+                    ctx.agent_id[:8], exc_info=True,
+                )
+
         # Sent rows already carry display_seq from the promote-to-sent
         # step. update_last appends a _replace line reflecting the new
         # status (delivered/completed), so the display file transitions

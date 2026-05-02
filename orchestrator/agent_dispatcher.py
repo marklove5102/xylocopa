@@ -3874,6 +3874,27 @@ Here are the day's conversations (with timestamps):
                         agent_id[:8], exc_info=True,
                     )
 
+                # Mirror the rotation snapshot into the cc_sessions table.
+                # Bookkeeping only — never let a failure here block the
+                # actual session rotation.
+                try:
+                    import cc_session_writer as _ccw
+                    _ccw.upsert_cc_session(
+                        session_id=old_sid,
+                        agent_id=agent_id,
+                        project_path=project_path,
+                        worktree=agent.worktree,
+                        ended_at=_utcnow(),
+                        end_reason="rotation",
+                        model=agent.model,
+                        totals=old_totals,
+                    )
+                except Exception:
+                    logger.warning(
+                        "_rotate_agent_session: cc_session upsert (old) failed for %s",
+                        agent_id[:8], exc_info=True,
+                    )
+
             agent.session_id = new_sid
             new_fpath = _resolve_session_jsonl(
                 new_sid, project_path, worktree or agent.worktree,
@@ -3933,6 +3954,33 @@ Here are the day's conversations (with timestamps):
         # already present in the DB.
         self._cancel_sync_task(agent_id)
         self.start_session_sync(agent_id, new_sid, project_path)
+
+        # Record the freshly-started session in cc_sessions. Best-effort
+        # — if the row insert fails, sync_engine's first-turn path will
+        # still create it on the next assistant reply.
+        try:
+            import cc_session_writer as _ccw
+            _ccw.upsert_cc_session(
+                session_id=new_sid,
+                agent_id=agent_id,
+                project_path=project_path,
+                worktree=worktree,
+                started_at=_utcnow(),
+                end_reason="active",
+                totals={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "turn_count": 0,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "_rotate_agent_session: cc_session upsert (new) failed for %s",
+                agent_id[:8], exc_info=True,
+            )
+
         return True
 
     async def _sync_session_loop(

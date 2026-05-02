@@ -173,7 +173,6 @@ function ContextUsagePopover({ usage, agentId, onClose }) {
 
 function LifetimeSection({ lifetime }) {
   const [expanded, setExpanded] = useState(false);
-  const fmt = (n) => (n || 0).toLocaleString();
   const fmtTok = (n) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -186,6 +185,7 @@ function LifetimeSection({ lifetime }) {
   const sessionStr = sc <= 1 ? "current session" : `${sc} CC sessions (${hc} historical)`;
   const byKind = lifetime.by_kind || {};
   const pricing = lifetime.pricing_per_million || {};
+  const ccSessions = Array.isArray(lifetime.cc_sessions) ? lifetime.cc_sessions : null;
 
   return (
     <div className="mt-3 pt-2 border-t border-divider">
@@ -222,6 +222,142 @@ function LifetimeSection({ lifetime }) {
               Pricing for {lifetime.pricing_model} (USD/M tokens)
             </div>
           )}
+
+          {ccSessions && (
+            <BySessionList
+              sessions={ccSessions}
+              fmtTok={fmtTok}
+              fmtCost={fmtCost}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const END_REASON_STYLE = {
+  active:        { dot: "bg-emerald-500", label: "active" },
+  rotation:      { dot: "bg-cyan-500",    label: "rotation" },
+  compact:       { dot: "bg-cyan-500",    label: "compact" },
+  clear:         { dot: "bg-cyan-500",    label: "clear" },
+  reconciled:    { dot: "bg-cyan-500",    label: "reconciled" },
+  subagent_done: { dot: "bg-violet-500",  label: "subagent" },
+  stopped:       { dot: "bg-gray-500",    label: "stopped" },
+  error:         { dot: "bg-gray-500",    label: "error" },
+};
+
+function _endReasonStyle(reason) {
+  return END_REASON_STYLE[reason] || { dot: "bg-gray-400", label: reason || "unknown" };
+}
+
+function _shortId(id) {
+  if (!id) return "";
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
+
+function BySessionList({ sessions, fmtTok, fmtCost }) {
+  const [open, setOpen] = useState(false);
+  const totalTurns = sessions.reduce((acc, s) => {
+    const subTurns = (s.sub_sessions || []).reduce((a, x) => a + (x.turn_count || 0), 0);
+    return acc + (s.turn_count || 0) + subTurns;
+  }, 0);
+  const topCount = sessions.length;
+  const summaryStr = topCount === 1
+    ? `1 session · ${totalTurns} turns`
+    : `${topCount} sessions · ${totalTurns} turns`;
+
+  return (
+    <div className="mt-2 pt-1.5 border-t border-divider">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between py-0.5 hover:bg-input rounded px-1 -mx-1"
+      >
+        <span className="flex items-center gap-1.5">
+          <span className="font-semibold text-body">By session</span>
+          <svg className={`w-3 h-3 text-dim transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <span className="text-[10px] text-dim tabular-nums">{summaryStr}</span>
+      </button>
+      {open && (
+        <div className="mt-1 space-y-0.5">
+          {sessions.length === 0 && (
+            <div className="text-[10px] text-faint italic px-1">No sessions persisted yet.</div>
+          )}
+          {sessions.map((s) => (
+            <SessionRow
+              key={s.session_id}
+              session={s}
+              fmtTok={fmtTok}
+              fmtCost={fmtCost}
+              depth={0}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionRow({ session, fmtTok, fmtCost, depth }) {
+  const subs = Array.isArray(session.sub_sessions) ? session.sub_sessions : [];
+  const hasSubs = subs.length > 0;
+  const [open, setOpen] = useState(false);
+  const style = _endReasonStyle(session.end_reason);
+  const tokens = session.total_tokens != null
+    ? session.total_tokens
+    : Object.values(session.totals || {}).reduce((a, b) => a + (b || 0), 0);
+  const cost = session.cost_usd || 0;
+  const turns = session.turn_count || 0;
+  const indent = depth === 0 ? "" : "ml-3 pl-2 border-l border-divider";
+  const subTotalTokens = subs.reduce((a, s) =>
+    a + (s.total_tokens != null ? s.total_tokens : Object.values(s.totals || {}).reduce((x, y) => x + (y || 0), 0)),
+    0,
+  );
+  const subTotalCost = subs.reduce((a, s) => a + (s.cost_usd || 0), 0);
+
+  return (
+    <div className={indent}>
+      <button
+        type="button"
+        onClick={hasSubs ? () => setOpen((v) => !v) : undefined}
+        disabled={!hasSubs}
+        className={`w-full flex items-center justify-between gap-1 py-0.5 px-1 -mx-1 rounded ${hasSubs ? "hover:bg-input" : ""}`}
+        title={`${session.session_id} (${style.label})`}
+      >
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${style.dot}`} />
+          <span className="font-mono text-[10px] text-body truncate">{_shortId(session.session_id)}</span>
+          <span className="text-faint text-[10px] shrink-0">({style.label})</span>
+          {hasSubs && (
+            <svg className={`w-2.5 h-2.5 shrink-0 text-dim transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          )}
+        </span>
+        <span className="tabular-nums text-[10px] text-dim shrink-0">
+          {fmtTok(tokens)} <span className="text-faint">·</span> {fmtCost(cost)} <span className="text-faint">·</span> {turns}<span className="text-faint">⌶</span>
+        </span>
+      </button>
+      {hasSubs && !open && (
+        <div className="ml-3.5 text-[10px] text-faint pl-2">
+          ▸ {subs.length} sub{subs.length === 1 ? "" : "s"} ({fmtTok(subTotalTokens)} · {fmtCost(subTotalCost)})
+        </div>
+      )}
+      {hasSubs && open && (
+        <div className="mt-0.5 space-y-0.5">
+          {subs.map((sub) => (
+            <SessionRow
+              key={sub.session_id}
+              session={sub}
+              fmtTok={fmtTok}
+              fmtCost={fmtCost}
+              depth={depth + 1}
+            />
+          ))}
         </div>
       )}
     </div>

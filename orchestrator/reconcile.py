@@ -336,6 +336,25 @@ def _scan_residue(db: SASession, trash_days: int = TRASH_STALE_DAYS) -> dict[str
 # Top-level
 # ---------------------------------------------------------------------------
 
+def _scan_cc_sessions(db: SASession) -> dict[str, Any]:
+    """Sweep on-disk JSONLs into the ``cc_sessions`` table.
+
+    Unlike the rest of the reconcile pipeline (which is dry-run by
+    default), this scan is the only writer for ``cc_sessions`` and runs
+    immediately — there's no destructive behaviour to gate. Idempotent:
+    re-running without new disk state is a no-op.
+    """
+    try:
+        from cc_session_reconcile import reconcile_all
+        return reconcile_all(db=db)
+    except Exception as e:
+        logger.exception("cc_session reconcile sweep failed: %s", e)
+        return {
+            "agents": 0, "discovered": 0, "inserted": 0,
+            "updated": 0, "skipped": 0, "error": str(e),
+        }
+
+
 def scan_all(db: SASession) -> dict[str, Any]:
     return {
         "projects": _scan_projects(db),
@@ -344,6 +363,7 @@ def scan_all(db: SASession) -> dict[str, Any]:
         "files": scan_orphans(),
         "stale_agents": scan_stale_agents(db),
         "residue": _scan_residue(db),
+        "cc_sessions": _scan_cc_sessions(db),
     }
 
 
@@ -445,6 +465,16 @@ def render_report(result: dict[str, Any]) -> str:
     buf.append(f"  Orphan subagents:       {SA['orphan_subagent_count']}\n")
     buf.append(f"  Skipped (starred):      {SA['skipped_starred']}\n")
     buf.append(f"  Skipped (active tmux):  {SA['skipped_tmux']}\n")
+
+    buf.append("\n=== CC sessions (JSONL → cc_sessions reconcile) ===\n")
+    CC = result.get("cc_sessions") or {}
+    buf.append(f"  Agents swept:    {CC.get('agents', 0)}\n")
+    buf.append(f"  JSONLs scanned:  {CC.get('discovered', 0)}\n")
+    buf.append(f"  Rows inserted:   {CC.get('inserted', 0)}\n")
+    buf.append(f"  Rows updated:    {CC.get('updated', 0)}\n")
+    buf.append(f"  Rows skipped:    {CC.get('skipped', 0)}\n")
+    if CC.get("error"):
+        buf.append(f"  Error: {CC['error']}\n")
 
     buf.append("\n=== Residue (report only) ===\n")
     R = result["residue"]
