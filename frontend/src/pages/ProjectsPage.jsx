@@ -181,16 +181,37 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const [scanResult, setScanResult] = useState(null);
   const [filter, setFilter] = useDraft("ui:projects:filter", "ALL");
 
-  // Render+layout timing — fires after every commit. Tag with filter so switches are obvious in the log.
+  // Render counter + change detector — fires after every commit. Tag what
+  // changed so a recurring flash is traceable to a specific setState source.
   const renderStartRef = useRef(performance.now());
   renderStartRef.current = performance.now();
-  const lastFilterRef = useRef(filter);
+  const renderCountRef = useRef(0);
+  const lastStateRef = useRef({});
+  renderCountRef.current += 1;
   useLayoutEffect(() => {
     const dt = performance.now() - renderStartRef.current;
-    const filterChanged = lastFilterRef.current !== filter;
-    lastFilterRef.current = filter;
+    const prev = lastStateRef.current;
+    const changes = [];
+    if (prev.filter !== filter) changes.push(`filter ${prev.filter}→${filter}`);
+    if (prev.foldersRef !== folders) changes.push(`folders ref (n=${folders.length})`);
+    if (prev.foldersLen !== folders.length) changes.push(`folders len ${prev.foldersLen}→${folders.length}`);
+    if (prev.loading !== loading) changes.push(`loading ${prev.loading}→${loading}`);
+    if (prev.refreshing !== refreshing) changes.push(`refreshing ${prev.refreshing}→${refreshing}`);
+    if (prev.error !== error) changes.push(`error ${prev.error ? "set" : "clr"}→${error ? "set" : "clr"}`);
+    if (prev.pendingLen !== pendingProjects.length) changes.push(`pending ${prev.pendingLen}→${pendingProjects.length}`);
+    if (prev.sortMode !== sortMode) changes.push(`sortMode ${prev.sortMode}→${sortMode}`);
+    if (prev.customOrderRef !== customOrder) changes.push(`customOrder ref`);
+    if (prev.selecting !== selecting) changes.push(`selecting ${prev.selecting}→${selecting}`);
+    if (prev.activeDragId !== activeDragId) changes.push(`drag ${prev.activeDragId || "-"}→${activeDragId || "-"}`);
+    lastStateRef.current = {
+      filter, foldersRef: folders, foldersLen: folders.length,
+      loading, refreshing, error,
+      pendingLen: pendingProjects.length,
+      sortMode, customOrderRef: customOrder,
+      selecting, activeDragId,
+    };
     // eslint-disable-next-line no-console
-    console.log(`[projects] render+layout ${dt.toFixed(1)}ms filter=${filter}${filterChanged ? " (filter changed)" : ""}`);
+    console.log(`[projects] render #${renderCountRef.current} +${dt.toFixed(1)}ms ${changes.length ? "Δ " + changes.join(", ") : "(no state change — parent re-render)"}`);
   });
   const [trashCount, setTrashCount] = useState(0);
   const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
@@ -249,6 +270,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
     return () => window.removeEventListener("nav-scroll-to-unread", handler);
   }, []);
 
+  const prevFoldersHashRef = useRef("");
   const load = useCallback(async () => {
     const t0 = performance.now();
     try {
@@ -257,10 +279,18 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
         fetchTrashFolders(),
       ]);
       const t1 = performance.now();
-      setFolders(data);
-      setTrashCount(trash.length);
+      const arr = Array.isArray(data) ? data : [];
+      // Hash by id+last_activity+active+name so we can tell if data actually
+      // changed vs just got a new array reference. If unchanged, skip setState.
+      const hash = arr.map((f) => `${f.name}|${f.last_activity || ""}|${f.active ? 1 : 0}`).join(",");
+      const dataChanged = hash !== prevFoldersHashRef.current;
+      prevFoldersHashRef.current = hash;
       // eslint-disable-next-line no-console
-      console.log(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${Array.isArray(data) ? data.length : 0}`);
+      console.log(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${arr.length} dataChanged=${dataChanged}`);
+      if (dataChanged) {
+        setFolders(arr);
+      }
+      setTrashCount(trash.length);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -345,6 +375,8 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const inactiveCount = folders.filter((f) => !f.active).length;
 
   const filtered = useMemo(() => {
+    // eslint-disable-next-line no-console
+    console.log(`[projects] filtered recompute (folders=${folders.length} filter=${filter} sortMode=${sortMode} customOrder.len=${customOrder.length})`);
     const base = folders.filter((f) => filter === "ALL" || (filter === "ACTIVE" ? f.active : !f.active));
     switch (sortMode) {
       case "name-asc":
