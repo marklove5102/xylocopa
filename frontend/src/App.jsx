@@ -246,20 +246,28 @@ function AppRoutes({ themeProps }) {
   // Dynamic routes render only when the active path is not one of the keep-mounted tabs.
   const showingDynamic = keepMountedActive === null;
 
+  // Hide inactive keep-mounted tabs via `visibility:hidden + position:absolute`
+  // rather than `display:none`. CSS keyframe animations (animate-ping,
+  // animate-glow) restart from frame 0 whenever an element flips from
+  // `display:none` to `display:block` — which produced a visible flash on
+  // every tab switch back into Projects/Agents/Tasks/Git. visibility keeps
+  // the rendering tree intact so animations stay in-phase across switches.
+  const tabStyle = (active) => active ? null : { position: "absolute", inset: 0, visibility: "hidden", pointerEvents: "none" };
+
   return (
-    <>
+    <div className="relative h-full">
       {/* Keep-mounted main tabs — always rendered, visibility toggled by CSS.
           Each receives `isActive` so its polling/effects pause when hidden. */}
-      <div className="h-full" hidden={keepMountedActive !== "projects"}>
+      <div className="h-full" style={tabStyle(keepMountedActive === "projects")}>
         <ProjectsPage {...themeProps} isActive={keepMountedActive === "projects"} />
       </div>
-      <div className="h-full" hidden={keepMountedActive !== "agents"}>
+      <div className="h-full" style={tabStyle(keepMountedActive === "agents")}>
         <AgentsPage {...themeProps} isActive={keepMountedActive === "agents"} />
       </div>
-      <div className="h-full" hidden={keepMountedActive !== "tasks"}>
+      <div className="h-full" style={tabStyle(keepMountedActive === "tasks")}>
         <TasksPage {...themeProps} isActive={keepMountedActive === "tasks"} />
       </div>
-      <div className="h-full" hidden={keepMountedActive !== "git"}>
+      <div className="h-full" style={tabStyle(keepMountedActive === "git")}>
         <GitPage {...themeProps} isActive={keepMountedActive === "git"} />
       </div>
 
@@ -285,7 +293,7 @@ function AppRoutes({ themeProps }) {
           <Route path="/new/task" element={<NewTaskPage />} />
         </Routes>
       )}
-    </>
+    </div>
   );
 }
 
