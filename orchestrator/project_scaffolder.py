@@ -27,6 +27,90 @@ IGNORED_DIRS = {
     "backups", "uploads",
 }
 
+DEFAULT_UNIVERSAL = """\
+## Universal Rules
+- Think from first principles. Don't assume the user knows exactly what they want or the best way to get it. Start from the original requirement, question the approach, and suggest a better path if one exists
+- Think step by step. Investigate before coding — read relevant code, trace the full flow, print findings before proposing a fix
+- When a task is complex, break it into sub-tasks and spawn sub-agents to work in parallel
+- Never guess. If unsure, read the code, check logs, or run a test first
+- Every task must produce a visual verification artifact (screenshot, plot, diff, rendered output)
+- If the goal or motivation is unclear, stop and discuss before writing code. If the goal is clear but the path isn't optimal, say so and suggest the better approach
+
+## Do NOT
+- Do not refactor or rename files unless the task explicitly requires it
+- Do not delete or modify tests unless asked
+- Do not change dependencies/package versions without explicit approval
+- Do not modify CLAUDE.md
+- Do not write to memory files (.claude/memory/, MEMORY.md) — only the orchestrator manages persistent memory
+
+## Output Rules
+- Keep responses concise — no long explanations unless asked
+- For large outputs (logs, data), write to a file instead of printing to stdout
+- Truncate error logs to the relevant section, don't paste entire stack traces
+
+## Git Conventions
+- Commit message format: `[scope] brief description` (e.g. `[frontend] fix image zoom gesture`)
+- Commit frequently — small atomic commits, not one giant commit at the end
+- Commit to master directly when appropriate
+
+## Concurrency Rules
+- Check which files other agents are currently modifying before editing shared files
+- Prefer creating new files over modifying existing shared ones when possible
+
+## Code Style
+- Follow existing patterns in the codebase — don't introduce new conventions
+- Match the indentation, naming, and structure of surrounding code
+"""
+
+DEFAULT_PROGRESS = """\
+# PROGRESS.md
+{{TEMPLATE_HEADER}}. Append only, never delete entries.
+> Updated when tasks complete — contains what worked, what failed, and why.
+
+## {{PROJECT_NAME}} — Lessons Learned
+
+<!-- Entry format:
+### YYYY-MM-DD | Task: {title} | Status: success/abandoned
+- What: (one line summary)
+- Attempts: (what was tried)
+- Resolution: (what finally worked)
+- Lesson: (what future agents should know)
+-->
+"""
+
+
+def _load_template(name: str, default: str) -> str:
+    """Load a template from .xylo-internal/templates/<name>.
+
+    Falls back to default if the file is missing or empty, and writes the
+    default to disk so subsequent reads succeed (idempotent self-heal).
+    """
+    from config import PROJECTS_DIR
+    from routers.projects import INTERNAL_PROJECT_NAME
+
+    projects_dir = PROJECTS_DIR or "/projects"
+    tmpl_path = os.path.join(projects_dir, INTERNAL_PROJECT_NAME, "templates", name)
+
+    try:
+        with open(tmpl_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if content.strip():
+            return content
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+    try:
+        os.makedirs(os.path.dirname(tmpl_path), exist_ok=True)
+        with open(tmpl_path, "w", encoding="utf-8") as f:
+            f.write(default)
+        logger.info("Self-healed missing template: %s", tmpl_path)
+    except OSError as e:
+        logger.warning("Could not write self-healed template %s: %s", tmpl_path, e)
+
+    return default
+
 
 def _needs_scaffold(filepath: str) -> bool:
     """Return True if the file is missing or doesn't match the template header."""
@@ -380,41 +464,14 @@ def scaffold_project(project_name: str, project_path: str,
         # Build short project-specific section
         rules_section = project_rules if project_rules else ""
 
+        universal_section = _load_template("claude-md-universal.md", DEFAULT_UNIVERSAL).replace(
+            "{{TEMPLATE_HEADER}}", TEMPLATE_HEADER
+        )
+
         claude_content = f"""# CLAUDE.md
 {TEMPLATE_HEADER}. Rarely modified — only update when project structure or conventions change.
 
-## Universal Rules
-- Think from first principles. Don't assume the user knows exactly what they want or the best way to get it. Start from the original requirement, question the approach, and suggest a better path if one exists
-- Think step by step. Investigate before coding — read relevant code, trace the full flow, print findings before proposing a fix
-- When a task is complex, break it into sub-tasks and spawn sub-agents to work in parallel
-- Never guess. If unsure, read the code, check logs, or run a test first
-- Every task must produce a visual verification artifact (screenshot, plot, diff, rendered output)
-- If the goal or motivation is unclear, stop and discuss before writing code. If the goal is clear but the path isn't optimal, say so and suggest the better approach
-
-## Do NOT
-- Do not refactor or rename files unless the task explicitly requires it
-- Do not delete or modify tests unless asked
-- Do not change dependencies/package versions without explicit approval
-- Do not modify CLAUDE.md
-- Do not write to memory files (.claude/memory/, MEMORY.md) — only the orchestrator manages persistent memory
-
-## Output Rules
-- Keep responses concise — no long explanations unless asked
-- For large outputs (logs, data), write to a file instead of printing to stdout
-- Truncate error logs to the relevant section, don't paste entire stack traces
-
-## Git Conventions
-- Commit message format: `[scope] brief description` (e.g. `[frontend] fix image zoom gesture`)
-- Commit frequently — small atomic commits, not one giant commit at the end
-- Commit to master directly when appropriate
-
-## Concurrency Rules
-- Check which files other agents are currently modifying before editing shared files
-- Prefer creating new files over modifying existing shared ones when possible
-
-## Code Style
-- Follow existing patterns in the codebase — don't introduce new conventions
-- Match the indentation, naming, and structure of surrounding code
+{universal_section.rstrip()}
 
 ## Project: {project_name}
 - Tech Stack: {tech_stack}
@@ -470,20 +527,12 @@ def scaffold_project(project_name: str, project_path: str,
             else:
                 existing_entries = f"\n{existing_progress}\n"
 
-        progress_content = f"""# PROGRESS.md
-{TEMPLATE_HEADER}. Append only, never delete entries.
-> Updated when tasks complete — contains what worked, what failed, and why.
-
-## {project_name} — Lessons Learned
-
-<!-- Entry format:
-### YYYY-MM-DD | Task: {{title}} | Status: success/abandoned
-- What: (one line summary)
-- Attempts: (what was tried)
-- Resolution: (what finally worked)
-- Lesson: (what future agents should know)
--->
-{existing_entries}"""
+        progress_tmpl = _load_template("progress-md-template.md", DEFAULT_PROGRESS)
+        progress_content = (
+            progress_tmpl
+            .replace("{{TEMPLATE_HEADER}}", TEMPLATE_HEADER)
+            .replace("{{PROJECT_NAME}}", project_name)
+        ) + existing_entries
 
         try:
             with open(progress_path, "w", encoding="utf-8") as f:
