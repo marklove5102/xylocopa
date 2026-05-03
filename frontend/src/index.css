@@ -291,6 +291,51 @@ html.eink :where(
   border-width: 1px !important;
 }
 
+/* Popover buttons (long-press action menu, dropdown items): the
+   codebase pattern is `text-{color}-{shade} hover:bg-{color}-{shade}/{N}`
+   — bg only on hover. But my saturated bg rule substring-matches the
+   `hover:bg-{color}-600` class name unconditionally, painting the
+   button solid heading even when not hovered. The bookmark button in
+   the message-action popover got this — solid black middle button
+   with invisible icon.
+
+   Force all popover-internal buttons transparent (matching the popover
+   page-bg), and re-pin their text/SVG to heading so they're visible
+   on the white popover. */
+html.eink :where(
+  [class*="shadow-lg"][class*="border-divider"],
+  [class*="shadow-xl"][class*="border-divider"],
+  [class*="shadow-popover"][class*="border-divider"],
+  [class*="shadow-md"][class*="border-divider"]
+) button {
+  background-color: transparent !important;
+  color: var(--color-heading) !important;
+}
+html.eink :where(
+  [class*="shadow-lg"][class*="border-divider"],
+  [class*="shadow-xl"][class*="border-divider"],
+  [class*="shadow-popover"][class*="border-divider"],
+  [class*="shadow-md"][class*="border-divider"]
+) button * {
+  color: var(--color-heading) !important;
+}
+html.eink :where(
+  [class*="shadow-lg"][class*="border-divider"],
+  [class*="shadow-xl"][class*="border-divider"],
+  [class*="shadow-popover"][class*="border-divider"],
+  [class*="shadow-md"][class*="border-divider"]
+) button :where(svg[fill]:not([fill="none"]), svg [fill]:not([fill="none"])) {
+  fill: var(--color-heading) !important;
+}
+html.eink :where(
+  [class*="shadow-lg"][class*="border-divider"],
+  [class*="shadow-xl"][class*="border-divider"],
+  [class*="shadow-popover"][class*="border-divider"],
+  [class*="shadow-md"][class*="border-divider"]
+) button :where(svg[stroke]:not([stroke="none"]), svg [stroke]:not([stroke="none"])) {
+  stroke: var(--color-heading) !important;
+}
+
 /* Toast pills (ToastContext.jsx) use inline styles — rgba(255,255,255,0.95)
    bg + box-shadow as a hairline ring + backdrop-filter blur. With our
    global no-shadow rule the hairline ring disappears, leaving the
