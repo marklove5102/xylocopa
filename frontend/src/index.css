@@ -273,6 +273,24 @@ html.eink :where(.bg-surface, .bg-elevated, .bg-input, .bg-inset) {
   border: 1px solid var(--color-edge);
 }
 
+/* Popovers / floating menus / dropdowns: any element that combines a
+   popover shadow (shadow-lg / shadow-xl / shadow-popover) with a
+   border-divider gets a STRONG heading-color border in eink so the
+   popover boundary is unambiguous against the page bg. shadow-* is
+   removed by the no-shadow rule earlier, so border becomes the only
+   visual cue. Also ensure page bg in case the surface token resolved
+   weirdly. */
+html.eink :where(
+  [class*="shadow-lg"][class*="border-divider"],
+  [class*="shadow-xl"][class*="border-divider"],
+  [class*="shadow-popover"][class*="border-divider"],
+  [class*="shadow-md"][class*="border-divider"]
+) {
+  background-color: var(--color-page) !important;
+  border-color: var(--color-heading) !important;
+  border-width: 1px !important;
+}
+
 /* Inline code (formatters.jsx renders <code class="bg-input ...">):
    the auto-border above wraps it in a heavy 1px solid edge box that
    reads as too prominent for inline elements. Drop the border, give
