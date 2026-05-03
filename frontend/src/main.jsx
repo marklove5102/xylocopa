@@ -21,13 +21,17 @@ prefetchHeavyChunks();
 // Linux Chrome/Firefox so @supports reports true, but the GPU compositor
 // frequently fails to actually render the blur (X11 + lots of driver
 // combos), so chat history bleeds through translucent surfaces. Mobile
-// platforms (iOS, Android) and macOS/Windows render glass correctly.
+// platforms (iOS, Android phones) and macOS/Windows render glass correctly.
+// E-ink Android tablets (BOOX/Onyx, Kindle, reMarkable, PocketBook,
+// Likebook) share the same failure mode — UA-sniff them as a fallback for
+// devices whose browser doesn't honor `@media (update: slow)`.
 (function tagGlassCapability() {
   try {
     const ua = navigator.userAgent || "";
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
     const isLinux = /Linux/i.test(ua) && !/Android/i.test(ua);
-    if (isLinux && !isMobile) {
+    const isEInk = /Onyx|BOOX|Kindle|Silk|reMarkable|PocketBook|Likebook|InkPad|MEEbook/i.test(ua);
+    if ((isLinux && !isMobile) || isEInk) {
       document.documentElement.classList.add("no-glass");
     }
   } catch { /* best-effort */ }

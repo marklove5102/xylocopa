@@ -86,6 +86,23 @@ html.no-glass.dark {
   --color-glass-nav: #283246;
 }
 
+/* E-ink / low-refresh-rate displays (BOOX, Onyx, Kindle, reMarkable, etc.):
+   backdrop-filter parses on their Android Chromium build so @supports reports
+   true, but the e-ink compositor doesn't actually render the blur, so the
+   translucent rgba above lets chat content bleed through the input bar.
+   `(update: slow)` is the W3C-standard media feature for this class of
+   device. Pin back to opaque values, same as html.no-glass. */
+@media (update: slow) {
+  :root {
+    --color-glass:     #e6e9ee;
+    --color-glass-nav: #f0f2f5;
+  }
+  .dark {
+    --color-glass:     #1e293b;
+    --color-glass-nav: #283246;
+  }
+}
+
 /* SVG <text> doesn't inherit font-family by default in several browsers
    (notably Safari, which falls back to Times). Force inheritance so
    inline SVG labels match the rest of the UI's system-ui stack. */
