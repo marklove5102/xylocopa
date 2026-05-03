@@ -448,7 +448,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
                   </div>
                 </div>
               ) : (
-                <p className="text-base font-medium leading-snug text-heading truncate transition-all duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)]">
+                <p className="text-base font-medium leading-snug text-heading truncate">
                   {task.title}
                 </p>
               )}
