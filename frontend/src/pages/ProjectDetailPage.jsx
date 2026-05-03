@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
-  fetchAllFolders,
   createAgent,
   createProject,
   deleteProject as deleteProjectApi,
@@ -28,6 +27,7 @@ import {
   markAgentRead,
 } from "../lib/api";
 import { useAgents, useAgentsSeeded } from "../contexts/AgentsContext";
+import { useFolders } from "../contexts/FoldersContext";
 import BotIcon from "../components/BotIcon";
 import ProjectRing from "../components/ProjectRing";
 import EmojiPicker from "../components/EmojiPicker";
@@ -227,6 +227,8 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
   const navigate = useNavigate();
   const location = useLocation();
   const visible = usePageVisible();
+  // Read shared folder list from context — no per-mount fetchAllFolders.
+  const { folders, seeded: foldersSeeded } = useFolders();
 
   // Remember last-viewed project so the tab bar can auto-navigate back.
   // Clear returnedFrom since the user is actively viewing a project.
@@ -433,27 +435,17 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     }
   };
 
-  // Fetch project + stats + bookmarks. Agents come from AgentsContext
-  // (Stage-2 pilot) — AgentsPage is the sole owner of the agents fetch
-  // and seeds the store. ProjectDetailPage no longer fetches agents,
-  // doesn't seed agentBriefCache (AgentsPage does that), and doesn't
-  // re-fetch on its 5s loadData tick.
+  // Fetch stats + bookmarks. Folders come from FoldersContext (provider
+  // owns the /api/projects fetch + 10s polling). Agents come from
+  // AgentsContext. ProjectDetailPage owns nothing list-shaped — only the
+  // per-project stats and bookmarks endpoints, which are scoped to `name`.
   const loadData = useCallback(async () => {
     try {
-      const [folders, stats, bookmarkList] = await Promise.all([
-        fetchAllFolders(),
+      const [stats, bookmarkList] = await Promise.all([
         fetchTaskCounts(name).catch(() => null),
         fetchProjectBookmarks(name).catch(() => []),
       ]);
-      const folder = folders.find((f) => f.name === name);
-      if (!folder) {
-        navigate("/projects", { replace: true });
-        return;
-      }
-      setProject(folder);
       if (stats) setProjectStats(stats);
-      // Merge in tombstones (locally-removed rows the backend has already
-      // dropped) so they stay visible until next mount.
       const fresh = bookmarkList || [];
       const freshIds = new Set(fresh.map((b) => b.message_id));
       const ghosts = [];
@@ -466,13 +458,10 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
         : fresh;
       setBookmarks(merged);
       setLoadError(null);
-      // Update module-level cache so the next mount of this project
-      // paints from cache instead of showing the loading state.
-      // Tombstones intentionally NOT cached — they're per-mount session.
-      // Agents intentionally NOT cached here either — they come from the
-      // AgentsContext, which itself is seeded by AgentsPage.
+      // Update module-level cache so the next mount paints from cache.
+      // Tombstones / agents intentionally NOT cached here.
       projectDetailCache.set(name, {
-        project: folder,
+        project: projectDetailCache.get(name)?.project || null,
         stats: stats || null,
         bookmarks: fresh,
       });
@@ -482,7 +471,29 @@ export default function ProjectDetailPage({ theme, onToggleTheme }) {
     } finally {
       setLoading(false);
     }
-  }, [name, navigate]);
+  }, [name]);
+
+  // Derive `project` from context folders. Sync state on every change so
+  // header/badges stay live when other panes mutate the project list.
+  // Redirect to /projects only after the first fetch resolved (seeded)
+  // and the project genuinely isn't in the list — avoids racing the
+  // initial load.
+  useEffect(() => {
+    const folder = folders.find((f) => f.name === name);
+    if (folder) {
+      setProject(folder);
+      const cached = projectDetailCache.get(name);
+      projectDetailCache.set(name, {
+        project: folder,
+        stats: cached?.stats || null,
+        bookmarks: cached?.bookmarks || [],
+      });
+      return;
+    }
+    if (foldersSeeded) {
+      navigate("/projects", { replace: true });
+    }
+  }, [folders, foldersSeeded, name, navigate]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);

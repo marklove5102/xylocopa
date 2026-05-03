@@ -175,7 +175,7 @@ const SORT_OPTIONS = [
   { value: "updated-old", label: "Oldest" },
 ];
 
-export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) {
+function ProjectsPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const navType = useNavigationType();
   const visible = usePageVisible();
@@ -691,3 +691,9 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
     </div>
   );
 }
+
+// memo guards against parent-only re-renders. Props are { theme: string,
+// onToggleTheme: stable callback, isActive: boolean } — all shallow-equal-
+// safe. Caller must keep onToggleTheme stable (App.jsx uses useCallback,
+// SplitScreenPage's PaneShell forwards via ref; both are stable today).
+export default memo(ProjectsPage);
