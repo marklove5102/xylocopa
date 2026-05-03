@@ -263,15 +263,28 @@ html.eink .bg-skel {
   animation: none !important;
 }
 
-/* Tailwind cyan accents map to a strong grayscale value. Keep them
-   distinct from body text but not pure black/white (so they read as
-   "accent" rather than "heading"). */
-html.eink :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: #2a2a2a !important; }
-html.eink.dark :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: #d5d5d5 !important; }
-html.eink :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #2a2a2a !important; }
-html.eink.dark :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #d5d5d5 !important; }
-html.eink :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #2a2a2a !important; }
-html.eink.dark :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #d5d5d5 !important; }
+/* All Tailwind blue-family text → strong grayscale. On grayscale e-ink
+   light cyan/sky/blue render as a faint mid-gray that looks washed out
+   and "wrong"; map them all to a near-heading dark value so they read
+   as strong text instead of as colored accents. Covers the full 50–900
+   range across cyan, sky, blue, indigo, teal, violet (which can also
+   render as light blue on partial refresh). */
+html.eink :where(
+  [class*="text-cyan-"], [class*="text-sky-"], [class*="text-blue-"],
+  [class*="text-indigo-"], [class*="text-teal-"], [class*="text-violet-"]
+) { color: var(--color-heading) !important; }
+html.eink :where(
+  [class*="bg-cyan-"], [class*="bg-sky-"], [class*="bg-blue-"],
+  [class*="bg-indigo-"], [class*="bg-teal-"], [class*="bg-violet-"]
+) { background-color: var(--color-heading) !important; }
+html.eink :where(
+  [class*="border-cyan-"], [class*="border-sky-"], [class*="border-blue-"],
+  [class*="border-indigo-"], [class*="border-teal-"], [class*="border-violet-"]
+) { border-color: var(--color-heading) !important; }
+
+/* Catch raw color values too — anchor tag default link color is a
+   browser-level light blue that bypasses Tailwind classes entirely. */
+html.eink :where(a:not([class*="text-"])) { color: var(--color-heading); }
 
 /* Tailwind direct gray text utilities bypass our token system. File
    paths, "N tool calls" counters, and other secondary text often use
