@@ -313,16 +313,20 @@ html.eink .toast-pill svg {
 }
 
 /* Inline code (formatters.jsx renders <code class="bg-input ...">):
-   the auto-border above wraps it in a heavy 1px solid edge box that
-   reads as too prominent for inline elements. Drop the border, give
-   it a subtle gray fill instead so the code is still distinguishable
-   from surrounding prose. Block code (inside <pre>) keeps its border. */
+   give it a darker gray fill + thin divider-color border so it's
+   still visible on devices with poor grayscale rendering (some e-ink
+   panels can't tell #f5/#eb apart from #ff). Border uses divider
+   color (light gray, subtle) — much lighter than the auto-border
+   edge color so the code doesn't feel boxed-in. Block code (inside
+   <pre>) keeps its larger border via the surface auto-border rule. */
 html.eink code:not(pre code) {
-  border: none !important;
-  background-color: #ebebeb !important;
+  background-color: #d8d8d8 !important;
+  border: 1px solid var(--color-divider) !important;
+  border-radius: 3px;
 }
 html.eink.dark code:not(pre code) {
-  background-color: #1c1c1c !important;
+  background-color: #2a2a2a !important;
+  border: 1px solid var(--color-divider) !important;
 }
 
 /* All Tailwind colored utilities → grayscale. On e-ink, color coding

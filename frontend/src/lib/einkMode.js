@@ -25,11 +25,15 @@ function isStandalone() {
   }
 }
 
+function isFullscreen() {
+  if (typeof document === "undefined") return false;
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
 function tryEnterFullscreen() {
   if (typeof document === "undefined") return;
   if (isStandalone()) return;
-  // Already in fullscreen?
-  if (document.fullscreenElement || document.webkitFullscreenElement) return;
+  if (isFullscreen()) return;
   try {
     const el = document.documentElement;
     const req = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -42,13 +46,63 @@ function tryEnterFullscreen() {
 function tryExitFullscreen() {
   if (typeof document === "undefined") return;
   if (isStandalone()) return;
-  if (!document.fullscreenElement && !document.webkitFullscreenElement) return;
+  if (!isFullscreen()) return;
   try {
     const exit = document.exitFullscreen || document.webkitExitFullscreen;
     if (!exit) return;
     const result = exit.call(document);
     if (result && typeof result.catch === "function") result.catch(() => {});
   } catch { /* best-effort */ }
+}
+
+// Arm a one-shot listener that triggers fullscreen on the user's next
+// interaction. Required because requestFullscreen() can only be invoked
+// from a user gesture. Self-removes after firing.
+let armedListenerActive = false;
+function armNextGestureFullscreen() {
+  if (typeof document === "undefined") return;
+  if (armedListenerActive) return;
+  armedListenerActive = true;
+  const trigger = () => {
+    armedListenerActive = false;
+    tryEnterFullscreen();
+    document.removeEventListener("click", trigger, true);
+    document.removeEventListener("touchend", trigger, true);
+    document.removeEventListener("keydown", trigger, true);
+  };
+  document.addEventListener("click", trigger, true);
+  document.addEventListener("touchend", trigger, true);
+  document.addEventListener("keydown", trigger, true);
+}
+
+// Auto-recovery: when user exits fullscreen (system back gesture, swipe
+// down, Escape key, etc.) and eink mode is still on, re-arm the
+// one-shot listener so the next interaction puts them back in fullscreen.
+// Set up once at startup, lives for the SPA lifetime.
+let fullscreenChangeBound = false;
+function setupFullscreenAutoRecover() {
+  if (typeof document === "undefined") return;
+  if (fullscreenChangeBound) return;
+  fullscreenChangeBound = true;
+  const handler = () => {
+    if (!getEinkMode()) return;
+    if (isStandalone()) return;
+    if (!isFullscreen()) {
+      // Just exited; re-arm for next gesture.
+      armNextGestureFullscreen();
+    }
+  };
+  document.addEventListener("fullscreenchange", handler);
+  document.addEventListener("webkitfullscreenchange", handler);
+  // Visibility recovery: returning to the tab from background may also
+  // drop fullscreen on some Android browsers — re-arm on visibility
+  // change too.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && getEinkMode()
+        && !isStandalone() && !isFullscreen()) {
+      armNextGestureFullscreen();
+    }
+  });
 }
 
 export function getEinkMode() {
@@ -66,10 +120,13 @@ export function setEinkMode(on) {
   } catch { /* localStorage may be blocked (private mode) */ }
   applyEinkMode(on);
   // setEinkMode is always called from a click handler in MonitorPage —
-  // that user gesture is what unlocks the Fullscreen API. Direct call
-  // here, no need for a deferred listener.
-  if (on) tryEnterFullscreen();
-  else tryExitFullscreen();
+  // that user gesture is what unlocks the Fullscreen API.
+  if (on) {
+    tryEnterFullscreen();
+    setupFullscreenAutoRecover();
+  } else {
+    tryExitFullscreen();
+  }
 }
 
 export function applyEinkMode(on) {
@@ -88,22 +145,8 @@ export function applyEinkMode(on) {
 export function applyEinkModeFromStorage() {
   const on = getEinkMode();
   applyEinkMode(on);
-  // On startup we can't request fullscreen directly — it requires a
-  // user gesture. Instead, wire a one-shot listener that fires on the
-  // first interaction. Skipped in standalone (PWA install already has
-  // no browser chrome).
   if (on && !isStandalone() && typeof document !== "undefined") {
-    let fired = false;
-    const trigger = () => {
-      if (fired) return;
-      fired = true;
-      tryEnterFullscreen();
-      document.removeEventListener("click", trigger, true);
-      document.removeEventListener("touchend", trigger, true);
-      document.removeEventListener("keydown", trigger, true);
-    };
-    document.addEventListener("click", trigger, true);
-    document.addEventListener("touchend", trigger, true);
-    document.addEventListener("keydown", trigger, true);
+    armNextGestureFullscreen();
+    setupFullscreenAutoRecover();
   }
 }
