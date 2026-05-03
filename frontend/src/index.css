@@ -340,9 +340,39 @@ html.eink :where(
 
 /* text-white / text-black map to heading/page so children of inverted
    pills inherit readable text (e.g. white-on-cyan icon labels become
-   black-on-white after the inversion above). */
-html.eink :where(.text-white) { color: var(--color-heading) !important; }
-html.eink :where(.text-black) { color: var(--color-page) !important; }
+   black-on-white after the inversion above). [class*=...] catches the
+   alpha variants too: text-white/40, text-white/60, text-white/80 etc.
+   used on chat bubble metadata (timestamp, source badge, "queued"
+   status). */
+html.eink :where([class*="text-white"]) { color: var(--color-heading) !important; }
+html.eink :where([class*="text-black"]) { color: var(--color-page) !important; }
+
+/* Chat bubble metadata uses light tints (text-cyan-200, text-amber-200,
+   text-gray-100, text-cyan-300/70) intended to contrast with the
+   original cyan-600 bubble fill. With our saturated-pill inversion
+   (bg becomes page color), those tints would collapse — re-pin them
+   to heading color for solid contrast. Bump font-weight too: tiny
+   text (text-xs / text-[10px]) blurs on partial refresh.
+
+   alpha variants (text-cyan-300/70 etc.) are already caught by the
+   broader [class*="text-cyan-"] catch-all earlier; this block adds
+   font-weight without re-fighting color. */
+html.eink :where(
+  [class*="text-cyan-100"], [class*="text-cyan-200"], [class*="text-cyan-300"],
+  [class*="text-amber-100"], [class*="text-amber-200"], [class*="text-amber-300"],
+  [class*="text-emerald-100"], [class*="text-emerald-200"], [class*="text-emerald-300"],
+  [class*="text-red-100"], [class*="text-red-200"], [class*="text-red-300"],
+  [class*="text-gray-100"], [class*="text-gray-200"]
+) {
+  color: var(--color-heading) !important;
+  font-weight: 600 !important;
+}
+
+/* Tiny text (timestamps, source badges, "N of M queued") gets a
+   weight bump in eink mode — thin strokes ghost on partial refresh. */
+html.eink :where(.text-xs, .text-\[10px\], .text-\[11px\]) {
+  font-weight: 700;
+}
 
 /* Catch raw color values too — anchor tag default link color is a
    browser-level light blue that bypasses Tailwind classes entirely. */
