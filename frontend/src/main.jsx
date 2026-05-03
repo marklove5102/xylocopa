@@ -30,7 +30,7 @@ prefetchHeavyChunks();
     const ua = navigator.userAgent || "";
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
     const isLinux = /Linux/i.test(ua) && !/Android/i.test(ua);
-    const isEInk = /Onyx|BOOX|Kindle|Silk|reMarkable|PocketBook|Likebook|InkPad|MEEbook/i.test(ua);
+    const isEInk = /Onyx|BOOX|Kindle|Silk|reMarkable|PocketBook|Likebook|InkPad|MEEbook|Bigme|Hisense.*ink|Meebook|iReader/i.test(ua);
     if ((isLinux && !isMobile) || isEInk) {
       document.documentElement.classList.add("no-glass");
     }
