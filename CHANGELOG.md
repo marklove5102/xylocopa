@@ -22,15 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bookmarks (continued from 0.9.x).** Project rename data-migration chain now includes `bookmarked_messages` (FK deferred for safe rename).
 - **Frame-by-frame DOM mutation logger** (`frameLogger.js`) for diagnosing UI flicker.
 
+### Performance
+
+- **Chat-page open is materially faster.** Parallel fetches in place of serial waterfalls; hover prefetch on agent rows so the next chat is warm by the time you tap; idle-prefetch of heavy lazy chunks (chat / project / task / new-task) so route transitions don't pay the chunk-download cost; `briefCache` so detail pages paint the real header from cached project/task data instead of showing a centered spinner.
+- **Route-aware skeletons** replace top-level "Loading…" spinners on main tabs. Skeletons leave the middle blank while keeping header + composer chrome, so the chat shell paints instantly.
+- **Keep-mounted main tabs.** Inbox / Projects / Agents / Git / Monitor stay mounted across navigation (visibility toggle instead of `display:none` / unmount), eliminating the loading-flash on tab switches and re-fetch-on-return.
+- **ESC endpoint.** Latency cut from ~1.4s to ~570ms; double-tap Esc + safety Esc replaces `C-l`; 100ms buffer before status flips to IDLE and dispatch fires.
+- **Context-usage value paints immediately on chat open** — persisted on the agent row + early `setLoading(false)` so the pill doesn't hold up the rest of the header.
+- **Faster agent launch + thread-safety hardening** (carried in from 0.9.6 / 0.9.7 work and stabilized this cycle).
+
 ### Changed
 
-- **Chat-page open is faster.** Parallel fetches, hover prefetch, idle-prefetch of heavy lazy chunks (chat / project / task / new-task), `briefCache` so detail pages paint a real header instead of a centered spinner. Route-aware skeletons replace top-level "Loading…" spinners on main tabs. Main tabs stay mounted across navigation (visibility instead of `display:none`).
 - **AgentsContext / context-provider refactor.** Folders, inbox-tasks, agents, and health-status polling lifted into shared providers; AgentsPage / ProjectDetailPage / ProjectsPage read from context instead of duplicating fetches. Agents-page tasks fetch limit raised from 100 to the backend max (1000).
 - **Inbox card UX overhaul.** Title becomes inline-block `contentEditable` for native cursor placement; click on empty title-row / timestamp / gap / any empty area collapses the expanded card; iOS word-snap caret placement overridden; transitions tightened to avoid jitter.
 - **MCP enforcement.** `task_create` / `task_update` now require `model` and `effort` tags.
 - **WebSocket realtime.** `emit_agent_update` short-circuits for synthetic subagents; `agent_update` re-emitted on insights apply / discard / generate-done so other clients flip the pill without a refetch; `new_message` emit centralized in `flush_agent`.
-- **ESC endpoint.** Latency cut from ~1.4s to ~570ms; double-tap Esc + safety Esc replaces `C-l`; 100ms buffer before status flips to IDLE and dispatch fires.
-- **Skeletons** leave the middle blank while keeping header + composer chrome, so the chat shell paints instantly.
 - **Token-counts popover** notes that values come directly from the CC session JSONL, and labels Xylo vs. CC sessions explicitly.
 
 ### Fixed
