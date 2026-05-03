@@ -1,45 +1,14 @@
-import { useState, useEffect, useRef } from "react";
-import { fetchHealth } from "../lib/api";
+import { useHealthContext } from "../contexts/HealthContext";
 
-/** Polls /api/health — every 3s when unhealthy, every 15s when healthy. */
+/**
+ * Returns the global system health snapshot (or null before first resolve).
+ *
+ * Backward-compatible wrapper around HealthContext: previously this hook
+ * owned its own state + polling, which caused the OK chip to flicker on
+ * every consumer mount (each chat-page open re-fetched /api/health). Now
+ * the polling lives in HealthProvider; this hook just reads from it so
+ * subsequent mounts see the already-resolved value.
+ */
 export default function useHealthStatus() {
-  const [health, setHealth] = useState(null);
-  const intervalRef = useRef(null);
-  const healthyRef = useRef(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const schedule = (ms) => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(check, ms);
-    };
-
-    const check = async () => {
-      try {
-        const data = await fetchHealth();
-        if (cancelled) return;
-        setHealth(data);
-        const ok = data?.status === "ok";
-        if (ok !== healthyRef.current) {
-          healthyRef.current = ok;
-          schedule(ok ? 15000 : 3000);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        console.warn("useHealthStatus: health check failed:", err);
-        setHealth({ status: "error", db: "unknown", claude_cli: "unknown" });
-        if (healthyRef.current) {
-          healthyRef.current = false;
-          schedule(3000);
-        }
-      }
-    };
-
-    check();
-    schedule(15000);
-    return () => { cancelled = true; clearInterval(intervalRef.current); };
-  }, []);
-
-  return health;
+  return useHealthContext();
 }

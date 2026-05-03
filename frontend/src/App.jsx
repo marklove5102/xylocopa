@@ -13,6 +13,7 @@ import { ToastProvider } from "./contexts/ToastContext";
 import { WebSocketProvider } from "./contexts/WebSocketContext";
 import { UnreadProvider, useUnread } from "./contexts/UnreadContext";
 import { AgentsProvider } from "./contexts/AgentsContext";
+import { HealthProvider } from "./contexts/HealthContext";
 import AttentionButton from "./components/AttentionButton";
 import BottomNavBar from "./components/BottomNavBar";
 import RouteFallback from "./components/skeletons/RouteFallback";
@@ -587,6 +588,7 @@ export default function App() {
             element={
               <AuthGuard>
                 <WebSocketProvider>
+                <HealthProvider>
                 <MonitorProvider>
                 <UnreadProvider>
                 <AgentsProvider>
@@ -594,6 +596,7 @@ export default function App() {
                 </AgentsProvider>
                 </UnreadProvider>
                 </MonitorProvider>
+                </HealthProvider>
                 </WebSocketProvider>
               </AuthGuard>
             }
