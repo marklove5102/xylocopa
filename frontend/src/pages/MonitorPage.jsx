@@ -729,10 +729,12 @@ export default function MonitorPage({ theme, onToggleTheme }) {
         <section className="rounded-xl bg-surface shadow-card p-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-heading">墨水屏模式 / E-ink mode</h3>
+              <h3 className="text-sm font-medium text-heading">E-ink mode</h3>
               <p className="text-xs text-dim mt-1 leading-relaxed">
-                为低刷新率 / 灰阶屏（Bigme、BOOX、Kindle 等）优化：去除毛玻璃、阴影、动画与渐变，
-                改为纯黑/白高对比 + 实线边框，避免 partial refresh 残影。
+                Optimized for low-refresh-rate grayscale displays (Bigme, BOOX,
+                Kindle, reMarkable). Disables blur, shadows, animations and
+                gradients; uses a layered grayscale palette and slightly heavier
+                font weight to keep strokes crisp under partial refresh.
               </p>
             </div>
             <button

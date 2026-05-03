@@ -108,69 +108,87 @@ html.no-glass.dark {
    Android Chrome UA and don't honor (update: slow) or (monochrome).
    Users opt in via toggle.
 
-   Design principles (from researching e-ink web frameworks):
-   - Pure black/white; no grayscale fills (e-ink ghosts on partial refresh)
-   - Borders, not shadows (gradients render poorly)
-   - Zero animation/transition (refresh is 120-450ms, motion is jarring)
-   - Static skeletons (shimmer animation = constant repaint)
-   - System fonts only (already the case via Tailwind defaults)
+   Design principles:
+   - Use the device's full grayscale range (modern e-ink = ~16 levels).
+     Reserve pure black for primary text/icons; lean on mid grays for
+     hierarchy (secondary text, borders, hover surfaces). Pure-B/W-only
+     wireframe look is harsh and wastes panel capability.
+   - Heavier font weight (500 body / 700 headings). Thin strokes ghost
+     and blur on partial refresh; medium weight stays crisp.
+   - Borders, not shadows (gradients render as gray bands).
+   - Zero animation/transition (refresh is 120-450ms, motion is jarring).
+   - Static skeletons (shimmer = continuous full-panel repaint).
+   - System fonts only (already the case via Tailwind defaults).
 */
 html.eink {
+  /* Layered grayscale: page < surface < elevated < hover, each one
+     step darker. Not pure white-on-white. */
   --color-page:       #ffffff;
-  --color-surface:    #ffffff;
+  --color-surface:    #f5f5f5;
   --color-input:      #ffffff;
-  --color-elevated:   #ffffff;
-  --color-hover:      #f0f0f0;
+  --color-elevated:   #ebebeb;
+  --color-hover:      #dcdcdc;
   --color-inset:      #ffffff;
 
+  /* Text hierarchy: heading pure black, body near-black, then steps
+     down through darker → mid grays. */
   --color-heading:    #000000;
-  --color-body:       #000000;
-  --color-label:      #000000;
-  --color-dim:        #333333;
-  --color-faint:      #555555;
-  --color-ghost:      #888888;
+  --color-body:       #1a1a1a;
+  --color-label:      #2a2a2a;
+  --color-dim:        #555555;
+  --color-faint:      #777777;
+  --color-ghost:      #999999;
 
-  --color-divider:    #000000;
-  --color-edge:       #000000;
-  --color-ring-hover: #000000;
+  /* Borders: subtle mid-gray separators, not pure black. */
+  --color-divider:    #c8c8c8;
+  --color-edge:       #999999;
+  --color-ring-hover: #555555;
 
-  --color-hint:       #555555;
+  --color-hint:       #777777;
   --color-shadow:     transparent;
-  --color-skel:       #d0d0d0;
-  --color-glass:      #ffffff;
-  --color-glass-nav:  #ffffff;
-  --color-glass-edge: #000000;
+  --color-skel:       #d8d8d8;
+  --color-glass:      #f5f5f5;
+  --color-glass-nav:  #f5f5f5;
+  --color-glass-edge: #999999;
 }
 html.eink.dark {
   --color-page:       #000000;
-  --color-surface:    #000000;
+  --color-surface:    #111111;
   --color-input:      #000000;
-  --color-elevated:   #000000;
-  --color-hover:      #1a1a1a;
+  --color-elevated:   #1c1c1c;
+  --color-hover:      #2a2a2a;
   --color-inset:      #000000;
 
   --color-heading:    #ffffff;
-  --color-body:       #ffffff;
-  --color-label:      #ffffff;
-  --color-dim:        #cccccc;
-  --color-faint:      #aaaaaa;
-  --color-ghost:      #777777;
+  --color-body:       #ededed;
+  --color-label:      #d5d5d5;
+  --color-dim:        #a5a5a5;
+  --color-faint:      #888888;
+  --color-ghost:      #666666;
 
-  --color-divider:    #ffffff;
-  --color-edge:       #ffffff;
-  --color-ring-hover: #ffffff;
+  --color-divider:    #333333;
+  --color-edge:       #555555;
+  --color-ring-hover: #888888;
 
-  --color-hint:       #aaaaaa;
+  --color-hint:       #888888;
   --color-shadow:     transparent;
   --color-skel:       #2a2a2a;
-  --color-glass:      #000000;
-  --color-glass-nav:  #000000;
-  --color-glass-edge: #ffffff;
+  --color-glass:      #111111;
+  --color-glass-nav:  #111111;
+  --color-glass-edge: #555555;
 }
 
-/* Kill all animations / transitions globally. :where() keeps specificity
-   at (0,0,0) so individual component rules can still opt back in if a
-   specific interaction genuinely needs motion. */
+/* Heavier baseline font weight for crisp strokes on partial refresh.
+   :where() keeps specificity at (0,0,0) so any explicit font-weight
+   utility (font-bold, font-semibold) still wins. */
+html.eink :where(body) {
+  font-weight: 500;
+}
+html.eink :where(h1, h2, h3, h4, h5, h6, .font-medium) {
+  font-weight: 700;
+}
+
+/* Kill all animations / transitions globally. */
 html.eink :where(*),
 html.eink :where(*::before),
 html.eink :where(*::after) {
@@ -192,25 +210,26 @@ html.eink .glass-bar,
 html.eink .glass-bar-nav {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  background: var(--color-page) !important;
+  background: var(--color-surface) !important;
   border: 1px solid var(--color-edge) !important;
   box-shadow: none !important;
 }
 
-/* Skeleton loading: replace shimmer with a solid block. Shimmer
-   animates background-position, which would trigger continuous e-ink
-   repaint and visible flashing across the screen. */
+/* Skeleton loading: solid block, no shimmer. */
 html.eink .bg-skel {
   background-image: none !important;
   animation: none !important;
 }
 
-/* Reinforce contrast on common Tailwind cyan accents — they show as
-   near-white on grayscale e-ink. Use pure black instead (or pure white
-   in dark mode). */
-html.eink :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: var(--color-heading) !important; }
-html.eink :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: var(--color-heading) !important; }
-html.eink :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: var(--color-heading) !important; }
+/* Tailwind cyan accents map to a strong grayscale value. Keep them
+   distinct from body text but not pure black/white (so they read as
+   "accent" rather than "heading"). */
+html.eink :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: #2a2a2a !important; }
+html.eink.dark :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: #d5d5d5 !important; }
+html.eink :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #2a2a2a !important; }
+html.eink.dark :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #d5d5d5 !important; }
+html.eink :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #2a2a2a !important; }
+html.eink.dark :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #d5d5d5 !important; }
 
 /* SVG <text> doesn't inherit font-family by default in several browsers
    (notably Safari, which falls back to Times). Force inheritance so
