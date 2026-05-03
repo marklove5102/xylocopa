@@ -390,10 +390,16 @@ html.eink :where(
   color: var(--color-page) !important;
 }
 
-/* …unless they're inside a saturated dark bg (user message bubbles,
-   status pills, primary buttons) — then re-pin to page color so they
-   read as light text on the dark fill. Same shade list, gated by an
-   ancestor selector listing every saturated bg the bubbles can use. */
+/* Universal contrast rule: ANY descendant inside a saturated dark bg
+   container gets pinned to page color. Catches every edge case:
+   - text-green-400 (delivered checkmark) inside bg-cyan-600 user bubble
+   - text-emerald-300 (queued) inside bg-cyan-600
+   - SVG strokes via stroke="currentColor" inheritance
+   - Tailwind text-* utilities at any shade (not just 100-300)
+   - Token-based text classes (text-body, text-dim, etc.)
+   The universal `*` descendant selector keeps specificity at (0,0,2)
+   thanks to :where() wrapping the parent list, and !important
+   ensures it beats the catch-all text-* -> heading rule above. */
 html.eink :where(
   [class*="bg-cyan-500"], [class*="bg-cyan-600"], [class*="bg-cyan-700"],
   [class*="bg-blue-500"], [class*="bg-blue-600"], [class*="bg-blue-700"],
@@ -404,15 +410,7 @@ html.eink :where(
   [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"],
   [class*="bg-amber-500"], [class*="bg-amber-600"], [class*="bg-amber-700"],
   [class*="bg-orange-500"], [class*="bg-orange-600"], [class*="bg-orange-700"]
-) :where(
-  [class*="text-red-100"], [class*="text-red-200"], [class*="text-red-300"],
-  [class*="text-amber-100"], [class*="text-amber-200"], [class*="text-amber-300"],
-  [class*="text-emerald-100"], [class*="text-emerald-200"], [class*="text-emerald-300"],
-  [class*="text-cyan-100"], [class*="text-cyan-200"], [class*="text-cyan-300"],
-  [class*="text-blue-100"], [class*="text-blue-200"], [class*="text-blue-300"],
-  [class*="text-indigo-100"], [class*="text-indigo-200"], [class*="text-indigo-300"],
-  [class*="text-gray-100"], [class*="text-gray-200"], [class*="text-gray-300"]
-) {
+) * {
   color: var(--color-page) !important;
 }
 
@@ -478,20 +476,29 @@ html.eink :where(.bg-amber-500, .bg-yellow-500) { background-color: #5a5a5a !imp
 html.eink :where(.bg-gray-500) { background-color: #999999 !important; }
 
 /* Agent status dots (AgentRow.jsx:119, AgentChatPage.jsx:3993,
-   ProjectsPage.jsx:124). Semantic mapping per user request:
-     EXECUTING / active / attention-needed -> solid black (heading)
-     IDLE / quiet                          -> mid gray (ghost)
-     ERROR                                 -> solid black (still loud)
-     other (STARTING, COMPLETE, etc.)      -> light gray (faint)
-   Must come after the catch-all bg-* override so it wins on source
-   order. Border override too — border-cyan-400 wraps the bg-cyan-400
-   chosen-state ring at AgentChatPage.jsx:441. */
-html.eink :where(.bg-cyan-400) { background-color: var(--color-heading) !important; }
+   ProjectsPage.jsx:124). Per user: executing = solid black dot,
+   idle = hollow black circle (border only, no fill). The two
+   together form a clear visual distinction between "active" and
+   "quiet" without relying on color or animation. */
+html.eink :where(.bg-cyan-400) {
+  background-color: var(--color-heading) !important;
+}
 html.eink :where(.border-cyan-400) { border-color: var(--color-heading) !important; }
-html.eink :where([class~="bg-cyan-300/50"]) { background-color: var(--color-ghost) !important; }
+/* IDLE: w-2.5 h-2.5 = 10px circle. Transparent fill + 1.5px
+   heading-color border = hollow ring. */
+html.eink :where([class~="bg-cyan-300/50"]) {
+  background-color: transparent !important;
+  border: 1.5px solid var(--color-heading) !important;
+}
+/* ERROR: solid black, same prominence as executing. */
 html.eink :where(.bg-red-400) { background-color: var(--color-heading) !important; }
 html.eink :where(.border-red-400) { border-color: var(--color-heading) !important; }
-html.eink :where([class~="bg-zinc-400/50"]) { background-color: var(--color-faint) !important; }
+/* Other transient states (STARTING, COMPLETE) — also hollow ring,
+   slightly lighter border to distinguish from idle. */
+html.eink :where([class~="bg-zinc-400/50"]) {
+  background-color: transparent !important;
+  border: 1.5px solid var(--color-faint) !important;
+}
 
 /* Tailwind direct gray text utilities bypass our token system. File
    paths, "N tool calls" counters, and other secondary text often use
