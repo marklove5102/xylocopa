@@ -317,11 +317,11 @@ html.eink :where(
 ) { border-color: var(--color-edge) !important; }
 
 /* Saturated badges/pills/buttons (status indicators, number badges,
-   primary action buttons): instead of solid heading-color fills (which
-   ghost on partial e-ink refresh and look like black blobs), invert
-   them to outlined chips — page-color fill + heading-color border +
-   heading-color text. Reads as a high-contrast outlined pill, much
-   friendlier on e-ink. */
+   user message bubbles, primary action buttons): solid heading-color
+   fill with page-color text. Per user: keep these as solid filled
+   chips (not outlined). On e-ink that means a dark bubble with crisp
+   white text in light mode, or a light bubble with crisp black text
+   in dark mode. */
 html.eink :where(
   [class*="bg-cyan-500"], [class*="bg-cyan-600"], [class*="bg-cyan-700"],
   [class*="bg-blue-500"], [class*="bg-blue-600"], [class*="bg-blue-700"],
@@ -333,38 +333,44 @@ html.eink :where(
   [class*="bg-amber-500"], [class*="bg-amber-600"], [class*="bg-amber-700"],
   [class*="bg-orange-500"], [class*="bg-orange-600"], [class*="bg-orange-700"]
 ) {
-  background-color: var(--color-page) !important;
-  color: var(--color-heading) !important;
-  border: 1px solid var(--color-heading) !important;
+  background-color: var(--color-heading) !important;
+  color: var(--color-page) !important;
 }
 
-/* text-white / text-black map to heading/page so children of inverted
-   pills inherit readable text (e.g. white-on-cyan icon labels become
-   black-on-white after the inversion above). [class*=...] catches the
-   alpha variants too: text-white/40, text-white/60, text-white/80 etc.
-   used on chat bubble metadata (timestamp, source badge, "queued"
-   status). */
-html.eink :where([class*="text-white"]) { color: var(--color-heading) !important; }
-html.eink :where([class*="text-black"]) { color: var(--color-page) !important; }
+/* text-white / text-black: white text → page color (so it stays white
+   on dark bubble in light mode, becomes black on light bubble in dark
+   mode). [class*=...] catches alpha variants (text-white/40, /60, /80
+   used on chat bubble timestamps and metadata). */
+html.eink :where([class*="text-white"]) { color: var(--color-page) !important; }
+html.eink :where([class*="text-black"]) { color: var(--color-heading) !important; }
 
-/* Chat bubble metadata uses light tints (text-cyan-200, text-amber-200,
-   text-gray-100, text-cyan-300/70) intended to contrast with the
-   original cyan-600 bubble fill. With our saturated-pill inversion
-   (bg becomes page color), those tints would collapse — re-pin them
-   to heading color for solid contrast. Bump font-weight too: tiny
-   text (text-xs / text-[10px]) blurs on partial refresh.
-
-   alpha variants (text-cyan-300/70 etc.) are already caught by the
-   broader [class*="text-cyan-"] catch-all earlier; this block adds
-   font-weight without re-fighting color. */
+/* Light-tint text classes (shades 50-300 across all color families) are
+   ALWAYS used as light text on saturated dark fills — chat bubble
+   timestamps (text-cyan-200), queued status (text-cyan-300/70), badges
+   on dark cards (text-emerald-300, text-amber-300, text-indigo-300),
+   etc. Map them to page color so they invert correctly with the dark
+   bubble. Source-order placed AFTER the catch-all that maps text-*
+   to heading, so it wins on equal specificity. */
 html.eink :where(
-  [class*="text-cyan-100"], [class*="text-cyan-200"], [class*="text-cyan-300"],
-  [class*="text-amber-100"], [class*="text-amber-200"], [class*="text-amber-300"],
-  [class*="text-emerald-100"], [class*="text-emerald-200"], [class*="text-emerald-300"],
-  [class*="text-red-100"], [class*="text-red-200"], [class*="text-red-300"],
-  [class*="text-gray-100"], [class*="text-gray-200"]
+  [class*="text-red-50"], [class*="text-red-100"], [class*="text-red-200"], [class*="text-red-300"],
+  [class*="text-rose-50"], [class*="text-rose-100"], [class*="text-rose-200"], [class*="text-rose-300"],
+  [class*="text-pink-50"], [class*="text-pink-100"], [class*="text-pink-200"], [class*="text-pink-300"],
+  [class*="text-orange-50"], [class*="text-orange-100"], [class*="text-orange-200"], [class*="text-orange-300"],
+  [class*="text-amber-50"], [class*="text-amber-100"], [class*="text-amber-200"], [class*="text-amber-300"],
+  [class*="text-yellow-50"], [class*="text-yellow-100"], [class*="text-yellow-200"], [class*="text-yellow-300"],
+  [class*="text-green-50"], [class*="text-green-100"], [class*="text-green-200"], [class*="text-green-300"],
+  [class*="text-emerald-50"], [class*="text-emerald-100"], [class*="text-emerald-200"], [class*="text-emerald-300"],
+  [class*="text-lime-50"], [class*="text-lime-100"], [class*="text-lime-200"], [class*="text-lime-300"],
+  [class*="text-teal-50"], [class*="text-teal-100"], [class*="text-teal-200"], [class*="text-teal-300"],
+  [class*="text-cyan-50"], [class*="text-cyan-100"], [class*="text-cyan-200"], [class*="text-cyan-300"],
+  [class*="text-sky-50"], [class*="text-sky-100"], [class*="text-sky-200"], [class*="text-sky-300"],
+  [class*="text-blue-50"], [class*="text-blue-100"], [class*="text-blue-200"], [class*="text-blue-300"],
+  [class*="text-indigo-50"], [class*="text-indigo-100"], [class*="text-indigo-200"], [class*="text-indigo-300"],
+  [class*="text-violet-50"], [class*="text-violet-100"], [class*="text-violet-200"], [class*="text-violet-300"],
+  [class*="text-purple-50"], [class*="text-purple-100"], [class*="text-purple-200"], [class*="text-purple-300"],
+  [class*="text-fuchsia-50"], [class*="text-fuchsia-100"], [class*="text-fuchsia-200"], [class*="text-fuchsia-300"]
 ) {
-  color: var(--color-heading) !important;
+  color: var(--color-page) !important;
   font-weight: 600 !important;
 }
 
