@@ -234,6 +234,11 @@ async def emit_system_alert(message: str, level: str = "warning"):
 
 async def emit_agent_update(agent_id: str, status: str, project: str,
                             insight_status: str | None = None):
+    # TODO: insight_status / has_pending_suggestions belong in a separate
+    # insight_update event — they're an insights-domain concern, not agent
+    # lifecycle. Today they ride here for convenience, which has caused
+    # repeated "forgot to pass insight_status kwarg" bugs (see commits
+    # ac8fd64, 3450014). Split when the insights module is next refactored.
     data = {
         "agent_id": agent_id,
         "status": status,
