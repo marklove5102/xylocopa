@@ -415,9 +415,22 @@ html.eink :where(
   [class*="bg-teal-500"], [class*="bg-teal-600"], [class*="bg-teal-700"],
   [class*="bg-violet-500"], [class*="bg-violet-600"], [class*="bg-violet-700"],
   [class*="bg-purple-500"], [class*="bg-purple-600"], [class*="bg-purple-700"],
-  [class*="bg-fuchsia-500"], [class*="bg-fuchsia-600"], [class*="bg-fuchsia-700"]
+  [class*="bg-fuchsia-500"], [class*="bg-fuchsia-600"], [class*="bg-fuchsia-700"],
+  [class*="bg-gradient-"]
 ) * {
   color: var(--color-page) !important;
+}
+
+/* Gradient bg utilities (bg-gradient-to-r, bg-gradient-to-l etc.) —
+   used by AI/sparkle buttons (TasksPage.jsx:292 'bg-gradient-to-r
+   from-cyan-500/15 to-blue-500/15'). Smooth gradients ghost on
+   partial refresh anyway; collapse to solid heading-color fill for
+   consistency with other primary action chips. `background:`
+   shorthand resets background-image (the gradient) too. */
+html.eink :where([class*="bg-gradient-"]) {
+  background: var(--color-heading) !important;
+  color: var(--color-page) !important;
+  border: none !important;
 }
 
 /* User bubble (.user-md) inline code: original styling is rgba-white
