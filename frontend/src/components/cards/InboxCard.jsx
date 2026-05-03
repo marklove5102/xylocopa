@@ -112,27 +112,13 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   // --- inline title editing ---
   const [titleEditing, setTitleEditing] = useState(false);
   const titleRef = useRef(null);
-  // Captured at mousedown — true if another contentEditable in the card was
-  // focused when the click started (so the click is a focus transition, not
-  // a fresh empty-area click).
-  const titleMouseDownInEditRef = useRef(false);
-
-  const handleTitleMouseDown = () => {
-    const ae = document.activeElement;
-    titleMouseDownInEditRef.current =
-      !!ae && (ae === editRef.current || ae === titleRef.current);
-  };
 
   const startTitleEditing = (e) => {
     e.stopPropagation();
-    const wasInEdit = titleMouseDownInEditRef.current;
-    titleMouseDownInEditRef.current = false;
     if (!isExpanded || titleEditing) return;
     const { clientX, clientY } = e;
-    // Click on empty space within the title row (past the text) → collapse card.
-    // Skip the collapse if the click is a focus transition from another
-    // contentEditable (e.g. user was typing in the description).
-    if (!wasInEdit && !isPointOnText(titleRef.current, clientX, clientY)) {
+    // Click on empty space within the title row (past the text) → collapse card
+    if (!isPointOnText(titleRef.current, clientX, clientY)) {
       onExpand?.(task.id);
       return;
     }
@@ -143,6 +129,14 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
       el.focus();
       placeCaretAtPoint(el, clientX, clientY);
     });
+  };
+
+  // Click on the timestamp / gap area of the title row (anywhere not on the
+  // title text or timestamp text) → collapse card. Title's own onClick stops
+  // propagation, so clicks on the title text won't bubble here.
+  const handleTitleRowClick = (e) => {
+    if (!isExpanded || titleEditing) return;
+    onExpand?.(task.id);
   };
 
   const saveTitle = useCallback(async () => {
@@ -451,14 +445,12 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
           )}
           <div className={`flex-1 min-w-0 ${isExpanded ? "flex flex-col" : ""}`}>
             {/* Title + time — pinned to top */}
-            <div className="flex items-start justify-between gap-3 shrink-0">
+            <div className="flex items-start justify-between gap-3 shrink-0" onClick={handleTitleRowClick}>
               {isExpanded ? (
                 <div
                   ref={titleRef}
                   contentEditable={titleEditing}
                   suppressContentEditableWarning
-                  onMouseDown={handleTitleMouseDown}
-                  onTouchStart={handleTitleMouseDown}
                   onClick={startTitleEditing}
                   onBlur={saveTitle}
                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); titleRef.current?.blur(); } }}
