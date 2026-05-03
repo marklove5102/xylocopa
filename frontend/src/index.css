@@ -121,15 +121,16 @@ html.no-glass.dark {
    - System fonts only (already the case via Tailwind defaults).
 */
 html.eink {
-  /* Layered grayscale for backgrounds — uses panel grayscale capability
-     for hierarchy. Text colors push much closer to pure black than a
-     screen palette would, because mid-grays appear noticeably fainter
-     on e-ink than on emissive displays. */
+  /* Surfaces flatten to page color — light grays (#f5/#ebeb) are
+     indistinguishable from white on e-ink panels under typical
+     contrast. Cards, chips, pills get a 1px border-edge instead
+     (rule below). Hover keeps a darker tone so touch feedback
+     remains visible. */
   --color-page:       #ffffff;
-  --color-surface:    #f5f5f5;
+  --color-surface:    #ffffff;
   --color-input:      #ffffff;
-  --color-elevated:   #ebebeb;
-  --color-hover:      #dcdcdc;
+  --color-elevated:   #ffffff;
+  --color-hover:      #d8d8d8;
   --color-inset:      #ffffff;
 
   --color-heading:    #000000;
@@ -152,9 +153,9 @@ html.eink {
 }
 html.eink.dark {
   --color-page:       #000000;
-  --color-surface:    #111111;
+  --color-surface:    #000000;
   --color-input:      #000000;
-  --color-elevated:   #1c1c1c;
+  --color-elevated:   #000000;
   --color-hover:      #2a2a2a;
   --color-inset:      #000000;
 
@@ -261,6 +262,15 @@ html.eink .glass-bar-nav {
 html.eink .bg-skel {
   background-image: none !important;
   animation: none !important;
+}
+
+/* Surfaces are now flat white/black — replace the lost fill cue with
+   a 1px border-edge so cards / chips / pills / inputs still have a
+   visible boundary. :where() keeps specificity at 0,0,0,0 so explicit
+   border utilities (border-2, border-cyan-500, border-none) all win
+   when components opt out. */
+html.eink :where(.bg-surface, .bg-elevated, .bg-input, .bg-inset) {
+  border: 1px solid var(--color-edge);
 }
 
 /* All Tailwind colored utilities → grayscale. On e-ink, color coding
