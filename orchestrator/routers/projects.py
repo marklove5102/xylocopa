@@ -682,12 +682,19 @@ Agent: {agent_name} | Task: {task_title}
         finally:
             own_db.close()
 
-        # Emit WS event (from background thread → use stored main event loop)
-        from websocket import emit_progress_suggestions_ready
+        # Emit WS events (from background thread → use stored main event loop):
+        #   - progress_suggestions_ready: AgentChatPage shows the new card + toast
+        #   - agent_update: AgentsPage / ProjectDetailPage flip the badge from
+        #     "generating" to "insights" without waiting for the 5s poll
+        from websocket import emit_progress_suggestions_ready, emit_agent_update
         loop = _main_event_loop
         if loop and loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 emit_progress_suggestions_ready(agent_id, len(insight_items), project_name),
+                loop,
+            )
+            asyncio.run_coroutine_threadsafe(
+                emit_agent_update(agent_id, "STOPPED", project_name, insight_status=""),
                 loop,
             )
         else:

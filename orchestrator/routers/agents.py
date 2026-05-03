@@ -2106,6 +2106,10 @@ async def apply_agent_suggestions(agent_id: str, body: _ApplySuggestionsBody,
     agent.has_pending_suggestions = False
     db.commit()
 
+    # Push has_pending_suggestions=False so AgentsPage / ProjectDetailPage
+    # drop the Insights badge in real-time instead of waiting for the 5s poll.
+    asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
+
     # Write accepted insights to PROGRESS.md
     if accepted_contents:
         from agent_dispatcher import store_insights
@@ -2153,6 +2157,11 @@ async def discard_agent_suggestions(agent_id: str, db: Session = Depends(get_db)
     ).update({"status": "rejected"})
     agent.has_pending_suggestions = False
     db.commit()
+
+    # Push has_pending_suggestions=False so AgentsPage / ProjectDetailPage
+    # drop the Insights badge in real-time instead of waiting for the 5s poll.
+    asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
+
     return {"success": True}
 
 
