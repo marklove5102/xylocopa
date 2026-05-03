@@ -263,28 +263,73 @@ html.eink .bg-skel {
   animation: none !important;
 }
 
-/* All Tailwind blue-family text → strong grayscale. On grayscale e-ink
-   light cyan/sky/blue render as a faint mid-gray that looks washed out
-   and "wrong"; map them all to a near-heading dark value so they read
-   as strong text instead of as colored accents. Covers the full 50–900
-   range across cyan, sky, blue, indigo, teal, violet (which can also
-   render as light blue on partial refresh). */
+/* All Tailwind colored utilities → grayscale. On e-ink, color coding
+   is meaningless (everything renders as mid-gray) and worse, light
+   tints look washed out and broken. Collapse the entire palette to
+   neutral grayscale tokens so tags/badges/chips/status pills read as
+   plain gray pills — still distinguishable by their text label, just
+   not by hue.
+
+   Covers all blueish + warm + cool color families (red/rose/pink/
+   orange/amber/yellow/green/emerald/lime/teal/cyan/sky/blue/indigo/
+   violet/purple/fuchsia) across the full 50–900 shade range via
+   substring matching on Tailwind class names.
+
+   Two-tier mapping: text/border → heading (strong); bg → elevated
+   surface (subtle pill). This gives tags a readable label on a soft
+   chip background instead of either invisible (washed out) or jarring
+   (saturated solid). */
 html.eink :where(
-  [class*="text-cyan-"], [class*="text-sky-"], [class*="text-blue-"],
-  [class*="text-indigo-"], [class*="text-teal-"], [class*="text-violet-"]
+  [class*="text-red-"], [class*="text-rose-"], [class*="text-pink-"],
+  [class*="text-orange-"], [class*="text-amber-"], [class*="text-yellow-"],
+  [class*="text-green-"], [class*="text-emerald-"], [class*="text-lime-"],
+  [class*="text-teal-"], [class*="text-cyan-"], [class*="text-sky-"],
+  [class*="text-blue-"], [class*="text-indigo-"], [class*="text-violet-"],
+  [class*="text-purple-"], [class*="text-fuchsia-"]
 ) { color: var(--color-heading) !important; }
+
 html.eink :where(
-  [class*="bg-cyan-"], [class*="bg-sky-"], [class*="bg-blue-"],
-  [class*="bg-indigo-"], [class*="bg-teal-"], [class*="bg-violet-"]
-) { background-color: var(--color-heading) !important; }
+  [class*="bg-red-"], [class*="bg-rose-"], [class*="bg-pink-"],
+  [class*="bg-orange-"], [class*="bg-amber-"], [class*="bg-yellow-"],
+  [class*="bg-green-"], [class*="bg-emerald-"], [class*="bg-lime-"],
+  [class*="bg-teal-"], [class*="bg-cyan-"], [class*="bg-sky-"],
+  [class*="bg-blue-"], [class*="bg-indigo-"], [class*="bg-violet-"],
+  [class*="bg-purple-"], [class*="bg-fuchsia-"]
+) { background-color: var(--color-elevated) !important; }
+
 html.eink :where(
-  [class*="border-cyan-"], [class*="border-sky-"], [class*="border-blue-"],
-  [class*="border-indigo-"], [class*="border-teal-"], [class*="border-violet-"]
-) { border-color: var(--color-heading) !important; }
+  [class*="border-red-"], [class*="border-rose-"], [class*="border-pink-"],
+  [class*="border-orange-"], [class*="border-amber-"], [class*="border-yellow-"],
+  [class*="border-green-"], [class*="border-emerald-"], [class*="border-lime-"],
+  [class*="border-teal-"], [class*="border-cyan-"], [class*="border-sky-"],
+  [class*="border-blue-"], [class*="border-indigo-"], [class*="border-violet-"],
+  [class*="border-purple-"], [class*="border-fuchsia-"]
+) { border-color: var(--color-edge) !important; }
+
+/* Solid-fill action buttons (the cyan/blue submit/primary action ones)
+   need a darker bg to keep them visually distinct from neutral chips —
+   override the elevated default for the saturated 400–700 shades. */
+html.eink :where(
+  [class*="bg-cyan-500"], [class*="bg-cyan-600"], [class*="bg-cyan-700"],
+  [class*="bg-blue-500"], [class*="bg-blue-600"], [class*="bg-blue-700"],
+  [class*="bg-sky-500"], [class*="bg-sky-600"], [class*="bg-sky-700"],
+  [class*="bg-indigo-500"], [class*="bg-indigo-600"], [class*="bg-indigo-700"],
+  [class*="bg-emerald-500"], [class*="bg-emerald-600"], [class*="bg-emerald-700"],
+  [class*="bg-green-500"], [class*="bg-green-600"], [class*="bg-green-700"],
+  [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"]
+) { background-color: var(--color-heading) !important; color: var(--color-page) !important; }
 
 /* Catch raw color values too — anchor tag default link color is a
    browser-level light blue that bypasses Tailwind classes entirely. */
 html.eink :where(a:not([class*="text-"])) { color: var(--color-heading); }
+
+/* Health-status dot helpers (green/red/amber/gray fill circles) defined
+   inline at MonitorPage.jsx:11 — flatten to grayscale tones so the
+   status dots are still distinguishable but not jarring color blobs. */
+html.eink :where(.bg-green-500) { background-color: var(--color-heading) !important; }
+html.eink :where(.bg-red-500) { background-color: #2a2a2a !important; }
+html.eink :where(.bg-amber-500, .bg-yellow-500) { background-color: #5a5a5a !important; }
+html.eink :where(.bg-gray-500) { background-color: #999999 !important; }
 
 /* Tailwind direct gray text utilities bypass our token system. File
    paths, "N tool calls" counters, and other secondary text often use
