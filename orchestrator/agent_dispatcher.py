@@ -2523,19 +2523,26 @@ Here are the day's conversations (with timestamps):
         # No wake event → sync loop is dead.  Restart if possible.
         return self._ensure_sync_running(agent_id)
 
-    async def _drain_session_sync(self, agent_id: str) -> bool:
+    async def _drain_session_sync(self, agent_id: str, run_compact_full_scan: bool = False) -> bool:
         """Synchronously import any pending JSONL turns for an agent.
 
         Called from PreCompact hook before compact_notified pauses the sync
         loop — ensures the old session's final turns land in the DB (with
         created_at reflecting their true time) before the JSONL is rewritten.
+
+        When run_compact_full_scan=True (PostCompact path), also runs
+        sync_full_scan(reason="compact") in the same lock so the /compact
+        user msg flips to COMPLETED, the boundary + summary sys bubbles
+        land in DB, and the compact tool_activity row is finalized — all
+        before the hook returns.
+
         Returns True if the drain ran, False if no sync context/lock exists.
         """
         ctx = self._sync_contexts.get(agent_id)
         sync_lock = self._sync_locks.get(agent_id)
         if ctx is None or sync_lock is None:
             return False
-        from sync_engine import sync_import_new_turns
+        from sync_engine import sync_import_new_turns, sync_full_scan
         async with sync_lock:
             try:
                 result = await sync_import_new_turns(self, ctx)
@@ -2543,6 +2550,12 @@ Here are the day's conversations (with timestamps):
                     "drain_session_sync: agent %s result=%s",
                     agent_id[:8], result,
                 )
+                if run_compact_full_scan:
+                    await sync_full_scan(self, ctx, reason="compact")
+                    logger.info(
+                        "drain_session_sync: agent %s compact full_scan done",
+                        agent_id[:8],
+                    )
             except Exception:
                 logger.exception(
                     "drain_session_sync failed for agent %s", agent_id[:8],
@@ -4075,7 +4088,7 @@ Here are the day's conversations (with timestamps):
         sync_lock = asyncio.Lock()
         self._sync_locks[agent_id] = sync_lock
 
-        from websocket import emit_agent_update, emit_new_message
+        from websocket import emit_agent_update
 
         # Cache agent name/project for notification payloads
         _worktree = None
@@ -4393,7 +4406,7 @@ Here are the day's conversations (with timestamps):
         Returns True if the sync loop should break, False to continue.
         """
         from sync_engine import sync_import_new_turns
-        from websocket import emit_agent_update, emit_new_message
+        from websocket import emit_agent_update
 
         # Final sync — uses sync_import_new_turns (has UUID dedup)
         async with sync_lock:
@@ -4439,7 +4452,10 @@ Here are the day's conversations (with timestamps):
                 self._emit(emit_agent_update(
                     agent.id, agent.status.value, agent.project
                 ))
-                self._emit(emit_new_message(agent.id, sys_msg.id, ctx.agent_name, ctx.agent_project))
+                # Flush the "CLI session ended" sys bubble. flush_agent
+                # auto-emits the new_message WS signal — no explicit emit.
+                from display_writer import flush_agent as _cli_end_flush
+                _cli_end_flush(agent.id)
 
                 from notify import notify
                 _in_use = self._is_agent_in_use(agent_id, agent.tmux_pane if agent else None)

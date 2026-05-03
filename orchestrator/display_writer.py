@@ -26,6 +26,7 @@ Functions:
     startup_rebuild_all    — rebuild all active agents on server startup
 """
 
+import asyncio
 import fcntl
 import json
 import logging
@@ -321,6 +322,15 @@ def flush_agent(agent_id: str):
             len(undisplayed), agent_id[:8],
             undisplayed[0].display_seq, undisplayed[-1].display_seq,
         )
+
+        # Single-source-of-truth WS signal: emit AFTER file write + DB commit
+        # so the frontend's refetch always sees the new lines. Centralizing
+        # here means callers can never forget to pair flush+emit. No-op
+        # flushes (empty undisplayed) skip the emit — they returned early.
+        from websocket import emit_new_message
+        asyncio.ensure_future(
+            emit_new_message(agent_id, undisplayed[-1].id)
+        )
     except Exception:
         db.rollback()
         logger.exception("Failed to flush display file for agent %s", agent_id[:8])
@@ -341,6 +351,7 @@ def update_last(agent_id: str, message_id: str):
     a seq and writes the message for the first time.
     """
     _needs_flush = False
+    _wrote_replace = False
     db = SessionLocal()
     try:
         msg = db.get(Message, message_id)
@@ -353,6 +364,7 @@ def update_last(agent_id: str, message_id: str):
             path = _display_path(agent_id)
             line = _serialize_message(msg, msg.display_seq, replace=True)
             _write_locked(path, [line])
+            _wrote_replace = True
     except Exception:
         logger.exception(
             "Failed to update display file for agent %s msg %s",
@@ -362,7 +374,11 @@ def update_last(agent_id: str, message_id: str):
         db.close()
 
     if _needs_flush:
-        flush_agent(agent_id)
+        flush_agent(agent_id)  # auto-emits inside
+    elif _wrote_replace:
+        # Replacement line written — still need to signal frontend refetch.
+        from websocket import emit_new_message
+        asyncio.ensure_future(emit_new_message(agent_id, message_id))
 
 
 def update_after_metadata_change(agent_id: str, message_id: str):

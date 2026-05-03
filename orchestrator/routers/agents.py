@@ -956,7 +956,7 @@ async def _launch_tmux_background(
         send_tmux_message,
     )
     from database import SessionLocal
-    from websocket import emit_agent_update, emit_new_message
+    from websocket import emit_agent_update
 
     def _mark_error(reason: str):
         """Transition agent to ERROR status on launch failure."""
@@ -1949,11 +1949,10 @@ async def stop_agent(agent_id: str, request: Request,
     db.refresh(agent)
     logger.info("Agent %s stopped", agent.id)
 
-    # Flush "Agent stopped" to display file + notify WS clients
+    # Flush "Agent stopped" to display file. flush_agent auto-emits the
+    # new_message WS signal — no explicit emit needed.
     from display_writer import flush_agent as _stop_flush
-    from websocket import emit_new_message as _stop_enm
     _stop_flush(agent.id)
-    asyncio.ensure_future(_stop_enm(agent.id, "sync", agent.name, agent.project))
 
     # Transition linked task based on user choice
     if agent.task_id:
@@ -2506,6 +2505,11 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
             detail="Session already owned by another agent",
         )
     db.refresh(agent)
+    # Flush the "Agent resumed" sys bubble to display file. flush_agent
+    # auto-emits the WS new_message signal so the chat updates immediately
+    # — without this the bubble waits for the next sync cycle to surface.
+    from display_writer import flush_agent as _resume_flush
+    _resume_flush(agent.id)
     asyncio.ensure_future(emit_agent_update(agent.id, agent.status.value, agent.project))
     logger.info("Agent %s resumed (sync=%s, mode=%s)", agent.id, resumed_sync, resume_mode)
     return agent

@@ -414,7 +414,6 @@ def _handle_streaming_update(ad, ctx: SyncContext, turns, current_size) -> str:
     Returns "turn_updated", "exit", or "no_change".
     """
     from jsonl_parser import merge_interactive_meta as _merge_interactive_meta
-    from websocket import emit_new_message
 
     last_turn = turns[-1]
     last_kind = last_turn[4] if len(last_turn) > 4 else None
@@ -461,13 +460,11 @@ def _handle_streaming_update(ad, ctx: SyncContext, turns, current_size) -> str:
         agent.last_message_at = _utcnow()
         db.commit()
 
-        # Update display file with replaced content
+        # Update display file with replaced content. update_last auto-emits
+        # the WS new_message signal, so no explicit emit needed here.
         from display_writer import update_last as _update_display
         _update_display(ctx.agent_id, last_msg.id)
 
-        ad._emit(emit_new_message(
-            agent.id, "sync", ctx.agent_name, ctx.agent_project,
-        ))
         ctx.last_content_hash = new_hash
         ctx.last_offset = current_size
         logger.info(
@@ -494,7 +491,7 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
         parse_session_turns as _parse_session_turns,
         merge_interactive_meta as _merge_interactive_meta,
     )
-    from websocket import emit_agent_update, emit_new_message
+    from websocket import emit_agent_update
     from thumbnails import generate_thumbnails_for_message
 
     # 1. Check file size for change detection
@@ -1008,17 +1005,10 @@ async def sync_import_new_turns(ad, ctx: SyncContext):
             len(new_turns), ctx.agent_id,
             [r for r, *_ in new_turns],
         )
-        # Emit on any actual insert. The original guard "skip if all turns
-        # are user role" was meant to suppress redundant emits for web-sent
-        # turns (already announced via emit_message_delivered). Promoted
-        # rows don't increment _actually_inserted, so this signal correctly
-        # excludes them while still firing for CLI-typed user input AND
-        # post-compact synthetic user-role summary turns (which never match
-        # a web row and would otherwise drop silently).
+        # new_message WS signal is now auto-emitted by flush_agent (called
+        # at line 855 above) whenever it actually wrote display lines —
+        # single source of truth, no explicit emit needed here.
         if _actually_inserted > 0:
-            ad._emit(emit_new_message(
-                agent.id, "sync", ctx.agent_name, ctx.agent_project,
-            ))
             # Push an updated token-budget snapshot whenever a new assistant
             # turn lands — its `usage` block is what context_usage reads.
             if any(r == "assistant" for r, *_ in new_turns):
@@ -1055,7 +1045,6 @@ async def sync_full_scan(ad, ctx: SyncContext, reason: str = "startup"):
     - NEVER creates or updates regular messages from JSONL.
     """
     from jsonl_parser import parse_session_turns as _parse_session_turns
-    from websocket import emit_new_message
 
     logger.info("Full scan for agent %s (reason=%s)", ctx.agent_id, reason)
 

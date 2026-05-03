@@ -578,6 +578,13 @@ def parse_session_turns_from_lines(
             # Skip subagent messages
             if entry.get("parent_tool_use_id"):
                 continue
+            # Skip CC's internal bootstrap synthetic ack
+            # ("No response requested." paired with isMeta user
+            # "Continue from where you left off."). model="<synthetic>"
+            # is CC's sentinel — the meta user is already dropped by
+            # is_hidden_meta_entry above, this drops the matching ack.
+            if msg.get("model") == "<synthetic>":
+                continue
             # Rate limit error → system message with kind="rate_limit"
             if entry.get("isApiErrorMessage") and entry.get("error") == "rate_limit":
                 flush_all()

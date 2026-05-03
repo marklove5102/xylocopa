@@ -315,16 +315,25 @@ async def hook_agent_post_compact(request: Request):
         ctx.compact_end_emitted = True  # prevent duplicate from sync engine
         ctx.compact_detected_at = 0.0
 
-        async def _post_compact_sync(_aid):
-            from config import JSONL_FLUSH_DELAY
-            await asyncio.sleep(JSONL_FLUSH_DELAY)
-            ad.wake_sync(_aid)
-        asyncio.ensure_future(_post_compact_sync(agent_id))
-
     # "Compact end" tool activity WS event — transient UI signal, not DB.
-    from websocket import emit_tool_activity
+    from websocket import emit_tool_activity, emit_context_usage
     await emit_tool_activity(agent_id, "Compact", "end",
                              tool_output="context compacted")
+
+    # Synchronously drain JSONL and run compact full_scan BEFORE returning.
+    # This guarantees: /compact user msg flips to COMPLETED double-check,
+    # the boundary + summary sys bubbles land in DB, the compact tool_activity
+    # row is finalized — all visible by the time the hook returns.
+    if ctx:
+        from config import JSONL_FLUSH_DELAY
+        await asyncio.sleep(JSONL_FLUSH_DELAY)
+        await ad._drain_session_sync(agent_id, run_compact_full_scan=True)
+
+    # Compact resets the in-session running counter (in-place rotation);
+    # push a fresh breakdown so the pill's 5-component view shrinks
+    # immediately. Emitted AFTER the drain so the snapshot reflects the
+    # post-compact JSONL, not stale pre-compact bytes.
+    await emit_context_usage(agent_id)
 
     # Hook only wakes sync — sync_full_scan(reason="compact") reads
     # ctx.compact_trigger (stashed by PreCompact) and decides:
@@ -540,7 +549,7 @@ async def hook_agent_tool_activity(request: Request):
         if ad and sub_agent_id:
             from database import SessionLocal as _SL
             from agent_dispatcher import _parse_session_turns
-            from websocket import emit_agent_update as _eau, emit_new_message as _enm
+            from websocket import emit_agent_update as _eau
             known = ad._known_subagents.get(agent_id, {})
             info = known.get(sub_agent_id)
             if not info:
@@ -575,7 +584,11 @@ async def hook_agent_tool_activity(request: Request):
                         _db.commit()
                         _project_name = sub_ag.project or ""
                         ad._emit(_eau(sub_db_id, "STOPPED", _project_name))
-                        ad._emit(_enm(sub_db_id, "sync", sub_ag.name, _project_name))
+                        # Flush the subagent's "stopped" sys message to its
+                        # display file. flush_agent auto-emits new_message,
+                        # so no explicit _enm needed.
+                        from display_writer import flush_agent as _sub_flush
+                        _sub_flush(sub_db_id)
                         logger.info(
                             "SubagentStop hook: marked subagent %s STOPPED",
                             sub_db_id,
@@ -629,6 +642,35 @@ async def hook_agent_tool_activity(request: Request):
             await ad._drain_session_sync(agent_id)
             # Now pause sync — JSONL is about to be rewritten
             ad._sync_contexts[agent_id].compact_notified = True
+        # Write a SYSTEM "Compacting context..." bubble immediately so the
+        # user sees pre-compact feedback. Hook-owned: synthetic uuid keeps
+        # sync's UUID-dedup from collision; source="hook" keeps compact
+        # full_scan's cli-orphan purge from deleting it. The matching
+        # "Conversation compacted" + summary bubbles arrive post-compact
+        # via sync_full_scan import of JSONL boundary entries.
+        from uuid import uuid4 as _uuid4
+        _db_pre = SessionLocal()
+        try:
+            _pre_msg = Message(
+                agent_id=agent_id,
+                role=MessageRole.SYSTEM,
+                kind="compact_start",
+                content="Compacting context...",
+                source="hook",
+                status=MessageStatus.COMPLETED,
+                jsonl_uuid=f"pre-compact-{_uuid4().hex[:12]}",
+                created_at=_utcnow(),
+                completed_at=_utcnow(),
+                delivered_at=_utcnow(),
+            )
+            _db_pre.add(_pre_msg)
+            _db_pre.commit()
+            from display_writer import flush_agent as _flush_pre
+            _flush_pre(agent_id)
+        except Exception:
+            logger.exception("PreCompact: failed to write sys bubble for %s", agent_id[:8])
+        finally:
+            _db_pre.close()
         # Drain finished — mark /compact delivered (single check in UI).
         import slash_commands as _sc
         _sc.mark_delivered(agent_id, "/compact")
@@ -1193,6 +1235,47 @@ async def hook_agent_session_start(request: Request):
         if source == "clear":
             import slash_commands as _sc
             _sc.mark_delivered_and_completed(agent_id, "/clear")
+            # Write a SYSTEM "Context cleared" bubble so the chat shows a
+            # visible boundary between the old and new session. Hook-owned:
+            # synthetic uuid keeps sync's UUID-dedup from collision;
+            # source="hook" exempts it from cli-orphan purge.
+            from uuid import uuid4 as _uuid4
+            _db_clear = SessionLocal()
+            try:
+                _clear_msg = Message(
+                    agent_id=agent_id,
+                    role=MessageRole.SYSTEM,
+                    kind="clear",
+                    content="Context cleared — new session",
+                    source="hook",
+                    status=MessageStatus.COMPLETED,
+                    jsonl_uuid=f"clear-{_uuid4().hex[:12]}",
+                    created_at=_utcnow(),
+                    completed_at=_utcnow(),
+                    delivered_at=_utcnow(),
+                )
+                _db_clear.add(_clear_msg)
+                _db_clear.commit()
+                from display_writer import flush_agent as _flush_clear
+                _flush_clear(agent_id)
+            except Exception:
+                logger.exception("SessionStart(clear): failed to write sys bubble for %s", agent_id[:8])
+            finally:
+                _db_clear.close()
+            # Sleep + drain (mirrors PostCompact pattern). The new session
+            # is brand-new and typically empty, so drain is mostly defensive
+            # — but it gives the rotation-signal pipeline time to install
+            # the new sync ctx and ensures emit_context_usage below sees
+            # the post-clear breakdown, not the stale pre-clear one.
+            ad_clear = getattr(request.app.state, "agent_dispatcher", None)
+            if ad_clear:
+                from config import JSONL_FLUSH_DELAY
+                await asyncio.sleep(JSONL_FLUSH_DELAY)
+                await ad_clear._drain_session_sync(agent_id)
+            # /clear resets the in-session running counter to 0; push a fresh
+            # breakdown so the pill shrinks immediately.
+            from websocket import emit_context_usage as _emit_ctx
+            await _emit_ctx(agent_id)
 
         # Guard: ignore SessionStart from subprocesses (Agent tool inherits
         # XY_AGENT_ID).  Accept if awaiting_rotation (set by SessionEnd)
