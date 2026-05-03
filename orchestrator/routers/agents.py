@@ -2193,6 +2193,14 @@ async def regenerate_agent_insights(agent_id: str, db: Session = Depends(get_db)
     agent.insight_status = "generating"
     db.commit()
 
+    # Push insight_status=generating so other clients (AgentsPage,
+    # ProjectDetailPage, other tabs) flip the pill from "failed" to
+    # "generating" immediately. Local tab already refreshes via onRetry.
+    asyncio.ensure_future(emit_agent_update(
+        agent.id, agent.status.value, agent.project,
+        insight_status="generating",
+    ))
+
     thread = threading.Thread(
         target=_run_agent_summary_background,
         args=(agent.id, agent.name, _task_title, agent.project, _project_path),
