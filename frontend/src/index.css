@@ -316,9 +316,12 @@ html.eink :where(
   [class*="border-purple-"], [class*="border-fuchsia-"]
 ) { border-color: var(--color-edge) !important; }
 
-/* Solid-fill action buttons (the cyan/blue submit/primary action ones)
-   need a darker bg to keep them visually distinct from neutral chips —
-   override the elevated default for the saturated 400–700 shades. */
+/* Saturated badges/pills/buttons (status indicators, number badges,
+   primary action buttons): instead of solid heading-color fills (which
+   ghost on partial e-ink refresh and look like black blobs), invert
+   them to outlined chips — page-color fill + heading-color border +
+   heading-color text. Reads as a high-contrast outlined pill, much
+   friendlier on e-ink. */
 html.eink :where(
   [class*="bg-cyan-500"], [class*="bg-cyan-600"], [class*="bg-cyan-700"],
   [class*="bg-blue-500"], [class*="bg-blue-600"], [class*="bg-blue-700"],
@@ -326,8 +329,20 @@ html.eink :where(
   [class*="bg-indigo-500"], [class*="bg-indigo-600"], [class*="bg-indigo-700"],
   [class*="bg-emerald-500"], [class*="bg-emerald-600"], [class*="bg-emerald-700"],
   [class*="bg-green-500"], [class*="bg-green-600"], [class*="bg-green-700"],
-  [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"]
-) { background-color: var(--color-heading) !important; color: var(--color-page) !important; }
+  [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"],
+  [class*="bg-amber-500"], [class*="bg-amber-600"], [class*="bg-amber-700"],
+  [class*="bg-orange-500"], [class*="bg-orange-600"], [class*="bg-orange-700"]
+) {
+  background-color: var(--color-page) !important;
+  color: var(--color-heading) !important;
+  border: 1px solid var(--color-heading) !important;
+}
+
+/* text-white / text-black map to heading/page so children of inverted
+   pills inherit readable text (e.g. white-on-cyan icon labels become
+   black-on-white after the inversion above). */
+html.eink :where(.text-white) { color: var(--color-heading) !important; }
+html.eink :where(.text-black) { color: var(--color-page) !important; }
 
 /* Catch raw color values too — anchor tag default link color is a
    browser-level light blue that bypasses Tailwind classes entirely. */
