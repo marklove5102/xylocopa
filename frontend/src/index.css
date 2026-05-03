@@ -121,8 +121,10 @@ html.no-glass.dark {
    - System fonts only (already the case via Tailwind defaults).
 */
 html.eink {
-  /* Layered grayscale: page < surface < elevated < hover, each one
-     step darker. Not pure white-on-white. */
+  /* Layered grayscale for backgrounds — uses panel grayscale capability
+     for hierarchy. Text colors push much closer to pure black than a
+     screen palette would, because mid-grays appear noticeably fainter
+     on e-ink than on emissive displays. */
   --color-page:       #ffffff;
   --color-surface:    #f5f5f5;
   --color-input:      #ffffff;
@@ -130,26 +132,23 @@ html.eink {
   --color-hover:      #dcdcdc;
   --color-inset:      #ffffff;
 
-  /* Text hierarchy: heading pure black, body near-black, then steps
-     down through darker → mid grays. */
   --color-heading:    #000000;
-  --color-body:       #1a1a1a;
-  --color-label:      #2a2a2a;
-  --color-dim:        #555555;
-  --color-faint:      #777777;
-  --color-ghost:      #999999;
+  --color-body:       #000000;
+  --color-label:      #0a0a0a;
+  --color-dim:        #2a2a2a;
+  --color-faint:      #444444;
+  --color-ghost:      #5a5a5a;
 
-  /* Borders: subtle mid-gray separators, not pure black. */
-  --color-divider:    #c8c8c8;
-  --color-edge:       #999999;
-  --color-ring-hover: #555555;
+  --color-divider:    #b8b8b8;
+  --color-edge:       #6a6a6a;
+  --color-ring-hover: #2a2a2a;
 
-  --color-hint:       #777777;
+  --color-hint:       #444444;
   --color-shadow:     transparent;
   --color-skel:       #d8d8d8;
   --color-glass:      #f5f5f5;
   --color-glass-nav:  #f5f5f5;
-  --color-glass-edge: #999999;
+  --color-glass-edge: #6a6a6a;
 }
 html.eink.dark {
   --color-page:       #000000;
@@ -160,32 +159,39 @@ html.eink.dark {
   --color-inset:      #000000;
 
   --color-heading:    #ffffff;
-  --color-body:       #ededed;
-  --color-label:      #d5d5d5;
-  --color-dim:        #a5a5a5;
-  --color-faint:      #888888;
-  --color-ghost:      #666666;
+  --color-body:       #ffffff;
+  --color-label:      #f5f5f5;
+  --color-dim:        #d5d5d5;
+  --color-faint:      #b5b5b5;
+  --color-ghost:      #959595;
 
-  --color-divider:    #333333;
-  --color-edge:       #555555;
-  --color-ring-hover: #888888;
+  --color-divider:    #444444;
+  --color-edge:       #888888;
+  --color-ring-hover: #d5d5d5;
 
-  --color-hint:       #888888;
+  --color-hint:       #b5b5b5;
   --color-shadow:     transparent;
   --color-skel:       #2a2a2a;
   --color-glass:      #111111;
   --color-glass-nav:  #111111;
-  --color-glass-edge: #555555;
+  --color-glass-edge: #888888;
 }
 
-/* Heavier baseline font weight for crisp strokes on partial refresh.
-   :where() keeps specificity at (0,0,0) so any explicit font-weight
-   utility (font-bold, font-semibold) still wins. */
+/* Heavier baseline font weight + crisper rendering. :where() keeps
+   specificity at (0,0,0) so explicit utilities (font-bold/semibold)
+   still win. */
 html.eink :where(body) {
-  font-weight: 500;
+  font-weight: 600;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: subpixel-antialiased;
 }
 html.eink :where(h1, h2, h3, h4, h5, h6, .font-medium) {
-  font-weight: 700;
+  font-weight: 800;
+}
+/* Monospace tends to be the lightest on e-ink (thinner strokes, smaller
+   x-height). Push those harder. */
+html.eink :where(code, pre, .font-mono, [class*="mono"]) {
+  font-weight: 600;
 }
 
 /* Kill all animations / transitions globally. */
@@ -230,6 +236,19 @@ html.eink :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #
 html.eink.dark :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: #d5d5d5 !important; }
 html.eink :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #2a2a2a !important; }
 html.eink.dark :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: #d5d5d5 !important; }
+
+/* Tailwind direct gray text utilities bypass our token system. File
+   paths, "N tool calls" counters, and other secondary text often use
+   text-gray-{400,500,600} — these appear washed out on e-ink. Pull
+   them all up to the matching token tier. */
+html.eink :where(.text-gray-400, .text-zinc-400, .text-slate-400, .text-neutral-400, .text-stone-400) { color: #444444 !important; }
+html.eink :where(.text-gray-500, .text-zinc-500, .text-slate-500, .text-neutral-500, .text-stone-500) { color: #2a2a2a !important; }
+html.eink :where(.text-gray-600, .text-zinc-600, .text-slate-600, .text-neutral-600, .text-stone-600) { color: #1a1a1a !important; }
+html.eink :where(.text-gray-700, .text-zinc-700, .text-slate-700, .text-neutral-700, .text-stone-700) { color: #0a0a0a !important; }
+html.eink.dark :where(.text-gray-400, .text-zinc-400, .text-slate-400, .text-neutral-400, .text-stone-400) { color: #b5b5b5 !important; }
+html.eink.dark :where(.text-gray-500, .text-zinc-500, .text-slate-500, .text-neutral-500, .text-stone-500) { color: #d5d5d5 !important; }
+html.eink.dark :where(.text-gray-600, .text-zinc-600, .text-slate-600, .text-neutral-600, .text-stone-600) { color: #ededed !important; }
+html.eink.dark :where(.text-gray-300, .text-zinc-300, .text-slate-300, .text-neutral-300, .text-stone-300) { color: #d5d5d5 !important; }
 
 /* SVG <text> doesn't inherit font-family by default in several browsers
    (notably Safari, which falls back to Times). Force inheritance so
