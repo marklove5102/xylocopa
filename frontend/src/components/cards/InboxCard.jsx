@@ -51,6 +51,20 @@ function isImagePath(path) {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(path);
 }
 
+/** Whether (x, y) falls within any rendered text rect of `el`'s contents. */
+function isPointOnText(el, x, y) {
+  if (!el) return false;
+  const range = document.createRange();
+  try {
+    range.selectNodeContents(el);
+    const rects = range.getClientRects();
+    for (const rect of rects) {
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 /** Place the caret inside `el` at the document point (x, y). Falls back to end-of-content. */
 function placeCaretAtPoint(el, x, y) {
   const sel = window.getSelection();
@@ -103,6 +117,11 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
     e.stopPropagation();
     if (!isExpanded || titleEditing) return;
     const { clientX, clientY } = e;
+    // Click on empty space within the title row (past the text) → collapse card
+    if (!isPointOnText(titleRef.current, clientX, clientY)) {
+      onExpand?.(task.id);
+      return;
+    }
     setTitleEditing(true);
     requestAnimationFrame(() => {
       const el = titleRef.current;
