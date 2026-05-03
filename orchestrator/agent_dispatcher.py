@@ -1450,11 +1450,15 @@ def send_tmux_message(pane_id: str, text: str) -> bool:
         return False
 
 
-def send_tmux_keys(pane_id: str, keys: list[str]) -> bool:
+def send_tmux_keys(pane_id: str, keys: list[str], inter_key_delay: float = 0.2) -> bool:
     """Send raw key names to a tmux pane (e.g., 'Down', 'Enter').
 
-    Each key is sent individually with a 200ms delay between them
-    to allow the Ink-based TUI to process each keystroke reliably.
+    Each key is sent individually with `inter_key_delay` seconds between
+    them to give the Ink-based TUI time to process each keystroke. The
+    default 200ms is conservative for Down/Up navigation in menus where
+    each key triggers a re-render. Callers in latency-sensitive paths
+    (e.g. ESC endpoint) can pass a smaller value when they have their
+    own explicit sleeps between key groups.
     """
     import time
 
@@ -1467,7 +1471,8 @@ def send_tmux_keys(pane_id: str, keys: list[str]) -> bool:
             if r.returncode != 0:
                 logger.warning("tmux send-keys %s failed: %s", key, r.stderr)
                 return False
-            time.sleep(0.2)
+            if inter_key_delay > 0:
+                time.sleep(inter_key_delay)
         return True
     except (_sp.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.warning("tmux send_tmux_keys failed: %s", e)

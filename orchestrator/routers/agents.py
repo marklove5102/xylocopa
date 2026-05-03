@@ -3560,7 +3560,10 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     # Escape is context-dependent: with queued prompts it pulls text back to
     # the input bar; in vim mode it switches to NORMAL; in tmux it has a 50ms
     # disambiguation delay.  Ctrl+C always interrupts generation reliably.
-    if not send_tmux_keys(agent.tmux_pane, ["C-c"]):
+    # ESC endpoint manages its own inter-keystroke timing via explicit
+    # sleeps between key groups, so it bypasses send_tmux_keys's default
+    # 200ms-per-key delay (saves ~800ms on the 4-key sequence below).
+    if not send_tmux_keys(agent.tmux_pane, ["C-c"], inter_key_delay=0):
         raise HTTPException(status_code=500, detail="Failed to send interrupt to tmux")
     # C-c interrupt may restore the prompt text to the input bar (CC's
     # behavior varies by version and by whether the prompt was typed vs
@@ -3570,9 +3573,9 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     # C-l worked through v2.1.123 but became a no-op in post-generation
     # state in v2.1.126, leaving residual that corrupted the next message.
     time.sleep(0.3)  # let C-c finish + prompt restore settle
-    send_tmux_keys(agent.tmux_pane, ["Escape", "Escape"])
+    send_tmux_keys(agent.tmux_pane, ["Escape", "Escape"], inter_key_delay=0)
     time.sleep(0.15)  # let Rewind menu render or input clear settle
-    send_tmux_keys(agent.tmux_pane, ["Escape"])
+    send_tmux_keys(agent.tmux_pane, ["Escape"], inter_key_delay=0)
     # tmux send-keys returns when keys are written to the PTY, not when CC
     # finishes rendering them. Give CC time to process the Esc sequence
     # before we transition to IDLE + dispatch the next queued message —
