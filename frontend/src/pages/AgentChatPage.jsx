@@ -2437,19 +2437,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   const location = useLocation();
   const visible = usePageVisible();
   // Seed from the brief cache (populated by AgentsPage / ProjectDetailPage)
-  // briefCache seed lets the chat header (name, project, worktree, status)
-  // paint immediately. The authoritative agentData arrives ~100ms later via
-  // background fetchAgent and overwrites — same field semantics, same UI
-  // shape, so stable text doesn't flicker.
-  //
-  // For dynamic fields where briefCache and agentData CAN drift (starred,
-  // has_pending_suggestions, insight_status, muted, …), we gate the UI that
-  // would visibly swap on `agentDataLoaded` so it only mounts once
-  // authoritative data is in. Single ground truth for the flicker-prone UI:
-  // agentData. briefCache is kept only for the always-identical structural
-  // fields (project / worktree / name / task_id / id / session_id).
+  // so the chat header — agent name, project, status pill — paints
+  // immediately without waiting for fetchAgent. Full agent data still
+  // arrives via loadData() and overwrites this seed.
   const [agent, setAgent] = useState(() => agentBriefCache.get(id) || null);
-  const [agentDataLoaded, setAgentDataLoaded] = useState(false);
   const [taskData, setTaskData] = useState(null);
   // Split source-of-truth: sentMessages mirrors /display/sent (file-backed,
   // append-only, byte-incremental); preSentMessages mirrors /display/pre-sent
@@ -2721,8 +2712,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         : { tailBytes: 50000 };
 
       // Critical-path fetches: only display data is needed for first-bubble.
-      // fetchAgent moves to a background refresh below; briefCache already
-      // covers all stable header fields.
+      // fetchAgent is moved off the critical path — the agent list endpoint
+      // already populated briefCache with everything we need (task_id, muted,
+      // has_pending_suggestions, etc.); the only chat-page-specific extra
+      // field is `successor_id`, which is fine to land a frame later.
       const cachedBrief = agentBriefCache.get(id);
       // Hover-prefetched? Only valid for the no-focus path (prefetch uses
       // default tail params; with ?focus= we need a centered slice).
@@ -2739,11 +2732,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       setHasMore(!!sentData.has_earlier);
       setHasLater(!!sentData.has_later);
 
-      // briefCache populates header text (already seeded into agent state at
-      // mount); fire fetchTaskV2 from briefCache.task_id so the Task chip
-      // resolves alongside messages.
-      if (cachedBrief?.task_id && !taskData) {
-        fetchTaskV2(cachedBrief.task_id).then(t => setTaskData(t)).catch(() => {});
+      // Use briefCache as the agent stand-in if available, so the conditional
+      // UI gates (status pill, ProgressSuggestionsCard, InsightsHistoryCard)
+      // can render correctly without waiting on fetchAgent.
+      if (cachedBrief) {
+        setAgent(cachedBrief);
+        // briefCache already has task_id — fetch the task in parallel with
+        // the background fetchAgent so the Task chip lands at the same time
+        // as messages, not a frame later.
+        if (cachedBrief.task_id && !taskData) {
+          fetchTaskV2(cachedBrief.task_id).then(t => setTaskData(t)).catch(() => {});
+        }
       }
       setCriticalLoadDone(true);
 
@@ -2759,26 +2758,27 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         }
       }
 
-      // Background-refresh the agent record. Authoritative agentData arrives
-      // here ~100ms after first-bubble; setAgentDataLoaded(true) signals to
-      // the flicker-prone UI (cards, star icon, mute icon) that they can
-      // safely render now. Wrap in its own try/catch so a transient failure
-      // doesn't show a "Failed to load" toast when chat is rendered fine
-      // from cached display + briefCache header.
+      // Background-refresh the agent record. If briefCache was cold, this is
+      // also our authoritative load and gates the not-found early-return.
+      // Wrap separately so a transient fetchAgent failure doesn't show a
+      // "Failed to load" toast when display data already rendered fine.
       let agentData = null;
       try {
         agentData = await fetchAgent(id);
       } catch (err) {
         if (controller.signal.aborted) return;
-        if (!cachedBrief) throw err;
+        if (!cachedBrief) throw err; // cold cache → propagate to outer catch
         console.error("AgentChatPage: background fetchAgent failed (using cached brief)", err);
       }
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) {
+        // Only error out if we had nothing to render with in the first place.
         if (!cachedBrief) return;
       } else {
         setAgent(agentData);
-        setAgentDataLoaded(true);
+        // Skip if we already kicked this off from cachedBrief above. Only
+        // refetch when the agent is reporting a different task_id (rare —
+        // e.g. agent reassigned).
         if (
           agentData.task_id &&
           !taskData &&
@@ -2927,11 +2927,6 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
     registerViewing(id);
     initialLoadDone.current = false;
     setLoading(true);
-    // Re-seed agent state from this id's briefCache (the useState initializer
-    // only runs once at mount; without this re-seed, switching between chats
-    // would leave the previous chat's data showing until fetchAgent returns).
-    setAgent(agentBriefCache.get(id) || null);
-    setAgentDataLoaded(false);
     loadData();
     return () => { abortRef.current?.abort(); unregisterViewing(id); };
   }, [loadData, id]);
@@ -4519,7 +4514,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                   console.log('[render] msg', msg.id, 'role=', msg.role, 'kind=', msg.kind);
                   // Case 2: text kind — render as simple ChatBubble
                   if (msg.kind === "text") {
-                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
+                    return <div key={msg.id} data-msg-id={msg.id} data-msg-type="agent_text"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} toolEntries={toolEntriesForText.get(msg.id)} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
                   }
                   // Case 3: null/undefined kind (legacy) — existing splitMessageSegments logic
                   console.log('[render] legacy split for msg', msg.id);
@@ -4530,17 +4525,17 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
                       <div key={msg.id} data-msg-id={msg.id} data-msg-type="legacy_split">
                         {segments.map((seg, i) => {
                           if (seg.type === "tools") return <ToolLogBubble key={`${msg.id}-t${i}`} entries={seg.entries} />;
-                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />;
-                          return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent?.project} />;
+                          if (i === lastTextIdx) return <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride={seg.text} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />;
+                          return <AgentTextSegment key={`${msg.id}-s${i}`} text={seg.text} project={agent.project} />;
                         })}
                         {lastTextIdx === -1 && msg.metadata?.interactive?.length > 0 && (
-                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />
+                          <ChatBubble key={`${msg.id}-c`} message={msg} contentOverride="" project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} />
                         )}
                       </div>
                     );
                   }
                 }
-                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
+                return <div key={msg.id} data-msg-id={msg.id} data-msg-type={msg.role === "USER" ? "user" : msg.role === "SYSTEM" ? "system" : "agent_default"}><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>;
               });
             })()}
 
@@ -4555,10 +4550,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
               return (
                 <>
                   {queued.map((msg, idx) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="queued_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} queuePosition={idx + 1} queueTotal={queued.length} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
                   ))}
                   {scheduled.map((msg) => (
-                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent?.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
+                    <div key={msg.id} data-msg-id={msg.id} data-msg-type="scheduled_msg"><ChatBubble message={msg} project={agent.project} onCancelMessage={handleCancelMessage} onUpdateMessage={handleUpdateMessage} onSendNow={handleSendNow} agentId={id} onRefresh={refreshMessages} openMenuMsgId={openMenuMsgId} setOpenMenuMsgId={setOpenMenuMsgId} bookmarkedSet={bookmarkedSet} onAfterBookmark={handleAfterBookmark} /></div>
                   ))}
                 </>
               );
@@ -4574,10 +4569,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
         {agent?.status === "STOPPED" && agent?.insight_status === "failed" && (
           <InsightStatusCard status="failed" agentId={id} onRetry={loadData} />
         )}
-        {agentDataLoaded && agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
+        {criticalLoadDone && agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <ProgressSuggestionsCard agentId={id} onDone={loadData} />
         )}
-        {agentDataLoaded && !agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
+        {criticalLoadDone && !agent?.has_pending_suggestions && agent?.status === "STOPPED" && !agent?.insight_status && (
           <InsightsHistoryCard agentId={id} />
         )}
 
@@ -4792,7 +4787,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       {fileModal && agent && (
         <ProjectFileModal
-          project={agent?.project}
+          project={agent.project}
           filename={fileModal}
           onClose={() => {
             setFileModal(null);
@@ -4808,7 +4803,7 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       {showBrowser && agent && (
         <ProjectBrowserModal
-          project={agent?.project}
+          project={agent.project}
           agentId={id}
           onClose={() => setShowBrowser(false)}
         />
