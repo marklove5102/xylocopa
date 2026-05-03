@@ -32,7 +32,7 @@ function summarizeMutations(muts) {
       let val = "";
       if (attr === "class") {
         const cls = m.target.className?.toString?.() || "";
-        val = ` "${cls.slice(0, 60)}${cls.length > 60 ? "…" : ""}"`;
+        val = ` "${cls.slice(0, 200)}${cls.length > 200 ? "…" : ""}"`;
       } else if (attr === "style") {
         const stl = m.target.getAttribute?.("style") || "";
         val = ` "${stl.slice(0, 60)}${stl.length > 60 ? "…" : ""}"`;
