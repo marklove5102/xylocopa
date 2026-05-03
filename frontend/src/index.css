@@ -653,6 +653,86 @@ html.eink :where([class~="bg-zinc-400/50"]) {
   border: 1.5px solid var(--color-faint) !important;
 }
 
+/* Information banners — full-width notices like "15 insights applied",
+   "Generating insights", review/discount cards, etc. Codebase pattern:
+     rounded-xl bg-{color}-500/10 border border-{color}-500/20 p-{3|4}
+   The dual presence of a colored bg AND a colored border (both with
+   alpha) is the unambiguous banner signature; small pills/chips don't
+   pair them. With our saturated rule these would render as solid
+   black bars dominating the layout — too heavy. Re-route to outline
+   style: page bg + 1px heading border + heading text + heading icons.
+   Placed last so it wins source-order against the saturated rule
+   AND the universal '*' descendant rule. */
+html.eink :where(
+  [class*="bg-amber-"][class*="border-amber-"],
+  [class*="bg-blue-"][class*="border-blue-"],
+  [class*="bg-cyan-"][class*="border-cyan-"],
+  [class*="bg-indigo-"][class*="border-indigo-"],
+  [class*="bg-violet-"][class*="border-violet-"],
+  [class*="bg-purple-"][class*="border-purple-"],
+  [class*="bg-red-"][class*="border-red-"],
+  [class*="bg-rose-"][class*="border-rose-"],
+  [class*="bg-orange-"][class*="border-orange-"],
+  [class*="bg-emerald-"][class*="border-emerald-"],
+  [class*="bg-green-"][class*="border-green-"],
+  [class*="bg-teal-"][class*="border-teal-"]
+) {
+  background-color: var(--color-page) !important;
+  border-color: var(--color-heading) !important;
+  border-width: 1px !important;
+  color: var(--color-heading) !important;
+}
+/* Banner descendants get heading color (not page color from the
+   universal '*' rule). Catches the bulb icon, label text, etc. */
+html.eink :where(
+  [class*="bg-amber-"][class*="border-amber-"],
+  [class*="bg-blue-"][class*="border-blue-"],
+  [class*="bg-cyan-"][class*="border-cyan-"],
+  [class*="bg-indigo-"][class*="border-indigo-"],
+  [class*="bg-violet-"][class*="border-violet-"],
+  [class*="bg-purple-"][class*="border-purple-"],
+  [class*="bg-red-"][class*="border-red-"],
+  [class*="bg-rose-"][class*="border-rose-"],
+  [class*="bg-orange-"][class*="border-orange-"],
+  [class*="bg-emerald-"][class*="border-emerald-"],
+  [class*="bg-green-"][class*="border-green-"],
+  [class*="bg-teal-"][class*="border-teal-"]
+) * {
+  color: var(--color-heading) !important;
+}
+html.eink :where(
+  [class*="bg-amber-"][class*="border-amber-"],
+  [class*="bg-blue-"][class*="border-blue-"],
+  [class*="bg-cyan-"][class*="border-cyan-"],
+  [class*="bg-indigo-"][class*="border-indigo-"],
+  [class*="bg-violet-"][class*="border-violet-"],
+  [class*="bg-purple-"][class*="border-purple-"],
+  [class*="bg-red-"][class*="border-red-"],
+  [class*="bg-rose-"][class*="border-rose-"],
+  [class*="bg-orange-"][class*="border-orange-"],
+  [class*="bg-emerald-"][class*="border-emerald-"],
+  [class*="bg-green-"][class*="border-green-"],
+  [class*="bg-teal-"][class*="border-teal-"]
+) :where(svg[fill]:not([fill="none"]), svg [fill]:not([fill="none"])) {
+  fill: var(--color-heading) !important;
+}
+html.eink :where(
+  [class*="bg-amber-"][class*="border-amber-"],
+  [class*="bg-blue-"][class*="border-blue-"],
+  [class*="bg-cyan-"][class*="border-cyan-"],
+  [class*="bg-indigo-"][class*="border-indigo-"],
+  [class*="bg-violet-"][class*="border-violet-"],
+  [class*="bg-purple-"][class*="border-purple-"],
+  [class*="bg-red-"][class*="border-red-"],
+  [class*="bg-rose-"][class*="border-rose-"],
+  [class*="bg-orange-"][class*="border-orange-"],
+  [class*="bg-emerald-"][class*="border-emerald-"],
+  [class*="bg-green-"][class*="border-green-"],
+  [class*="bg-teal-"][class*="border-teal-"]
+) :where(svg[stroke]:not([stroke="none"]), svg [stroke]:not([stroke="none"])) {
+  stroke: var(--color-heading) !important;
+}
+
 /* Tailwind direct gray text utilities bypass our token system. File
    paths, "N tool calls" counters, and other secondary text often use
    text-gray-{400,500,600} — these appear washed out on e-ink. Pull
