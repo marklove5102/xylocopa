@@ -429,7 +429,17 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
                     ref={titleRef}
                     contentEditable
                     suppressContentEditableWarning
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // iOS Safari snaps short-tap caret placement to word
+                      // boundaries on contentEditable. Re-place the caret at
+                      // the exact click coords to allow positioning between
+                      // letters within a word.
+                      const { clientX, clientY } = e;
+                      requestAnimationFrame(() => {
+                        if (titleRef.current) placeCaretAtPoint(titleRef.current, clientX, clientY);
+                      });
+                    }}
                     onBlur={saveTitle}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); titleRef.current?.blur(); } }}
                     className="inline-block max-w-full text-base font-semibold leading-snug whitespace-pre-wrap outline-none text-heading cursor-text"
