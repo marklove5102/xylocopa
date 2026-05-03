@@ -32,7 +32,7 @@ export function InboxTasksProvider({ children }) {
   const refetch = useCallback(async () => {
     const t0 = performance.now();
     try {
-      const data = await fetchTasksV2(`statuses=INBOX&limit=100`);
+      const data = await fetchTasksV2(`statuses=INBOX&limit=1000`);
       const t1 = performance.now();
       const list = Array.isArray(data) ? data : [];
       cacheTaskBriefs(list);
