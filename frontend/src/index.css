@@ -291,6 +291,27 @@ html.eink :where(
   border-width: 1px !important;
 }
 
+/* Toast pills (ToastContext.jsx) use inline styles — rgba(255,255,255,0.95)
+   bg + box-shadow as a hairline ring + backdrop-filter blur. With our
+   global no-shadow rule the hairline ring disappears, leaving the
+   toast looking like floating text with no visible boundary. Override
+   with an explicit border + solid bg + disable backdrop-filter. */
+html.eink .toast-pill {
+  background: var(--color-page) !important;
+  border: 1px solid var(--color-heading) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.eink .toast-pill span {
+  color: var(--color-heading) !important;
+}
+/* Toast icon stroke is set inline with hard-coded type colors (#34C759
+   green etc.) — repin to heading so it reads as a clean dark icon
+   on the white toast. */
+html.eink .toast-pill svg {
+  stroke: var(--color-heading) !important;
+}
+
 /* Inline code (formatters.jsx renders <code class="bg-input ...">):
    the auto-border above wraps it in a heavy 1px solid edge box that
    reads as too prominent for inline elements. Drop the border, give
