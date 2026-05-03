@@ -34,6 +34,40 @@ prefetchHeavyChunks();
     if ((isLinux && !isMobile) || isEInk) {
       document.documentElement.classList.add("no-glass");
     }
+
+    // On-screen diagnostic — visit any page with ?eink-diag=1 to see UA +
+    // detection results overlaid (no console / dev tools needed). Only
+    // activates when the param is present, so it's harmless for normal use.
+    if (/[?&]eink-diag=1/.test(location.search)) {
+      const updateSlow = matchMedia("(update: slow)").matches;
+      const monochrome = matchMedia("(monochrome)").matches;
+      const monoDepth = matchMedia("(min-monochrome: 1)").matches;
+      const noGlass = document.documentElement.classList.contains("no-glass");
+      const info = {
+        ua, isMobile, isLinux, isEInk,
+        noGlass, updateSlow, monochrome, monoDepth,
+        colorDepth: screen.colorDepth,
+        dpr: devicePixelRatio,
+        viewport: `${innerWidth}x${innerHeight}`,
+      };
+      const ready = () => {
+        const box = document.createElement("pre");
+        box.textContent = "EINK-DIAG\n" + JSON.stringify(info, null, 2);
+        Object.assign(box.style, {
+          position: "fixed", top: "0", left: "0", right: "0",
+          zIndex: "999999",
+          background: "#fff", color: "#000",
+          font: "12px/1.4 monospace",
+          padding: "12px", margin: "0",
+          border: "2px solid #000",
+          whiteSpace: "pre-wrap", wordBreak: "break-all",
+          maxHeight: "60vh", overflow: "auto",
+        });
+        document.body.appendChild(box);
+      };
+      if (document.body) ready();
+      else document.addEventListener("DOMContentLoaded", ready);
+    }
   } catch { /* best-effort */ }
 })();
 
