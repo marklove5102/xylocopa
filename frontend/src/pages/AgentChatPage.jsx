@@ -2623,7 +2623,9 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
   // initial display load completes — keeps them off the critical path so
   // they don't compete with /display/sent for backend workers.
   const [criticalLoadDone, setCriticalLoadDone] = useState(false);
-  const contextUsage = useContextUsage(criticalLoadDone ? id : null);
+  // Reads from agent.context_* (persisted on the row); no separate fetch.
+  // Header pill renders immediately from briefCache; WS pushes live updates.
+  const contextUsage = useContextUsage(agent);
 
   const showToast = useCallback((message, type = "success") => {
     if (type === "error") toastCtx.error(message);
@@ -2731,6 +2733,12 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       applyPreSentData(preSentData);
       setHasMore(!!sentData.has_earlier);
       setHasLater(!!sentData.has_later);
+      // Unlock auto-scroll / focus-restore / saved-position effects as soon
+      // as messages are renderable. Previously setLoading(false) only fired
+      // in the finally block (after background fetchAgent), so scrollTop=0
+      // stayed visible for ~500ms before scroll snapped to the right place.
+      // fetchAgent is background-only now and shouldn't gate this.
+      setLoading(false);
 
       // Use briefCache as the agent stand-in if available, so the conditional
       // UI gates (status pill, ProgressSuggestionsCard, InsightsHistoryCard)

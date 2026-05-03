@@ -157,10 +157,19 @@ class _AgentBase(BaseModel):
     insight_status: str | None = None
     sort_order: int = 0
     starred: bool = False
+    # Persisted context-usage snapshot. Populated by emit_context_usage on
+    # every assistant turn. Frontend reads these instead of fetching the
+    # /context-usage endpoint on chat-page open. context_breakdown is the
+    # JSON blob with components/suggestions for the popover.
+    context_total: int | None = None
+    context_limit: int | None = None
+    context_percent: float | None = None
+    context_captured_at: datetime | None = None
+    context_breakdown: str | None = None
 
     model_config = {"from_attributes": True}
 
-    @field_validator("created_at", "last_message_at", "deferred_to", mode="before")
+    @field_validator("created_at", "last_message_at", "deferred_to", "context_captured_at", mode="before")
     @classmethod
     def ensure_utc_agent(cls, v):
         """Ensure datetime fields carry UTC tzinfo (SQLite drops it).

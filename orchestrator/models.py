@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from utils import utcnow as _utcnow
@@ -156,6 +156,17 @@ class Agent(Base):
     sync_last_offset: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     sync_last_turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     sync_last_content_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    # Persisted context-usage snapshot. Avoids re-scanning the JSONL +
+    # MCP/memory/agent files on every chat-page open. Updated each time
+    # `emit_context_usage` runs (post-turn, post-stop, sync_engine wake).
+    # Headline columns are queryable for sort/filter; the JSON column
+    # holds the full breakdown for the popover.
+    context_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    context_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    context_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    context_captured_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    context_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def is_generating(self) -> bool:

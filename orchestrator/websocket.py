@@ -421,6 +421,10 @@ async def emit_context_usage(agent_id: str):
     Pushes the full breakdown (5 components + suggestions) on every
     assistant turn so the chat-header pill AND its popover share a
     single source of truth. The popover does not refetch on open.
+
+    Side effect: persists the snapshot onto the Agent row so chat-page
+    open / list endpoints serve the pill data without recomputing the
+    breakdown (which scans JSONL + MCP/memory/agent files, ~100-200ms).
     """
     try:
         from context import get_context_breakdown
@@ -429,6 +433,36 @@ async def emit_context_usage(agent_id: str):
         logger.warning("emit_context_usage: snapshot failed for %s",
                        agent_id[:8], exc_info=True)
         return
+
+    # Persist headline + full breakdown JSON onto the agent row.
+    try:
+        import json
+        from datetime import datetime, timezone
+        from database import SessionLocal
+        from models import Agent
+        db = SessionLocal()
+        try:
+            agent = db.get(Agent, agent_id)
+            if agent is not None:
+                agent.context_total = snap.get("total")
+                agent.context_limit = snap.get("limit")
+                agent.context_percent = snap.get("percent")
+                agent.context_captured_at = datetime.now(timezone.utc)
+                # Strip the headline keys from breakdown JSON — they're
+                # already in their own columns. Keep components/suggestions/etc.
+                breakdown_only = {
+                    k: v for k, v in snap.items()
+                    if k not in ("total", "limit", "percent", "captured_at",
+                                 "model", "has_data", "session_id", "free")
+                }
+                agent.context_breakdown = json.dumps(breakdown_only) if breakdown_only else None
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.warning("emit_context_usage: persist failed for %s",
+                       agent_id[:8], exc_info=True)
+
     payload = {"agent_id": agent_id, **snap}
     await ws_manager.broadcast("context_usage_update", payload)
 

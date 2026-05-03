@@ -578,6 +578,26 @@ def init_db():
             ))
             conn.commit()
 
+        # --- Persisted context-usage snapshot on agents ---
+        # Avoid recomputing get_context_breakdown on every chat-page open;
+        # emit_context_usage writes these alongside its WS broadcast.
+        agent_cols_ctx = _table_columns(conn, "agents")
+        if "context_total" not in agent_cols_ctx:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN context_total INTEGER"))
+            conn.commit()
+        if "context_limit" not in agent_cols_ctx:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN context_limit INTEGER"))
+            conn.commit()
+        if "context_percent" not in agent_cols_ctx:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN context_percent REAL"))
+            conn.commit()
+        if "context_captured_at" not in agent_cols_ctx:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN context_captured_at DATETIME"))
+            conn.commit()
+        if "context_breakdown" not in agent_cols_ctx:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN context_breakdown TEXT"))
+            conn.commit()
+
         # --- progress_insights FTS5 ---
         tables = [r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"
