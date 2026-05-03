@@ -1,27 +1,21 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Sparkles } from "lucide-react";
-import { fetchTasksV2, fetchTaskCounts, dispatchTask, cancelTask, batchProcessTasks, clog } from "../lib/api";
-import { cacheTaskBriefs } from "../lib/detailCache";
+import { dispatchTask, cancelTask, batchProcessTasks, clog } from "../lib/api";
 import PageHeader from "../components/PageHeader";
-import usePageVisible from "../hooks/usePageVisible";
-import useWebSocket, { useWsEvent, registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
+import useWebSocket, { registerViewingTasks, unregisterViewingTasks } from "../hooks/useWebSocket";
 import { useToast } from "../contexts/ToastContext";
+import { useInboxTasks, useInboxTasksActions } from "../contexts/InboxTasksContext";
 import InboxView from "./tasks/InboxView";
 import { CardSwipeContext } from "../components/cards/CardShell";
 import { forwardState } from "../lib/nav";
 
-const INBOX_POLL_INTERVAL = 5000;
-
 export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [counts, setCounts] = useState({});
-  const pollRef = useRef(null);
-  const countPollRef = useRef(null);
-  const visible = usePageVisible();
+  // Read shared list/counts from context — provider owns polling + WS sync.
+  const { tasks, counts, loading } = useInboxTasks();
+  const { refetch: loadTasks, refetchCounts: loadCounts } = useInboxTasksActions();
   useWebSocket(); // ensure connection is alive
 
   // --- Multi-select state ---
@@ -80,50 +74,6 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
     });
   }, []);
 
-  // Fetch counts for all perspectives (server-side)
-  const loadCounts = useCallback(async () => {
-    try {
-      const data = await fetchTaskCounts();
-      setCounts({
-        INBOX: data.INBOX ?? 0,
-        EXECUTING: (data.QUEUE ?? 0) + (data.ACTIVE ?? 0),
-        DONE: data.DONE ?? 0,
-        DONE_COMPLETED: data.DONE_COMPLETED ?? 0,
-      });
-    } catch (err) {
-      console.warn("Failed to load task counts", err);
-    }
-  }, []);
-
-  // Fetch inbox tasks
-  const loadTasks = useCallback(async () => {
-    const t0 = performance.now();
-    try {
-      const data = await fetchTasksV2(`statuses=INBOX&limit=100`);
-      const t1 = performance.now();
-      const list = Array.isArray(data) ? data : [];
-      setTasks(list);
-      // Seed brief cache so TaskDetailPage paints its header from cache.
-      cacheTaskBriefs(list);
-      clog(`[tasks] fetch ${(t1 - t0).toFixed(0)}ms n=${list.length}`);
-    } catch (err) {
-      console.warn("Failed to load tasks", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Refresh on task_update WebSocket events
-  const loadTasksRef = useRef(loadTasks);
-  loadTasksRef.current = loadTasks;
-  const loadCountsRef = useRef(loadCounts);
-  loadCountsRef.current = loadCounts;
-  useWsEvent((event) => {
-    if (event.type !== "task_update") return;
-    loadTasksRef.current();
-    loadCountsRef.current();
-  });
-
   // Register viewing for notification suppression — track isActive transitions,
   // not mount/unmount, since this page is kept mounted across tab switches.
   useEffect(() => {
@@ -131,26 +81,6 @@ export default function TasksPage({ theme, onToggleTheme, isActive = true }) {
     registerViewingTasks();
     return () => unregisterViewingTasks();
   }, [isActive]);
-
-  // Load on mount + poll — gated on visible AND active so hidden tabs don't poll.
-  // Note: do NOT setLoading(true) here. With keep-mounted, this effect re-runs
-  // on every isActive transition; resetting loading would briefly hide
-  // InboxView and cause a perceptible flash. The initial useState(true) is the
-  // only time loading should be true — first fetch flips it false and it stays.
-  useEffect(() => {
-    if (!visible || !isActive) return;
-    const t0 = performance.now();
-    clog(`[tasks] activate visible=${visible} isActive=${isActive}`);
-    loadTasks();
-    loadCounts();
-    pollRef.current = setInterval(loadTasks, INBOX_POLL_INTERVAL);
-    countPollRef.current = setInterval(loadCounts, 10000);
-    return () => {
-      clearInterval(pollRef.current);
-      clearInterval(countPollRef.current);
-      clog(`[tasks] deactivate after ${(performance.now() - t0).toFixed(0)}ms`);
-    };
-  }, [loadTasks, loadCounts, visible, isActive]);
 
   const onRefresh = useCallback(() => {
     loadTasks();

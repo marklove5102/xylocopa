@@ -3,8 +3,7 @@ import { useNavigate, useNavigationType } from "react-router-dom";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { fetchAllFolders, fetchTrashFolders, scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject, clog } from "../lib/api";
-import { cacheProjectBriefs } from "../lib/detailCache";
+import { scanProjects, fetchClaudeMdPending, archiveProject, deleteProject, createProject, clog } from "../lib/api";
 import { relativeTime } from "../lib/formatters";
 import ProjectRing from "../components/ProjectRing";
 import FluentEmoji from "../components/FluentEmoji";
@@ -13,6 +12,7 @@ import useDraft from "../hooks/useDraft";
 import useLongPress from "../hooks/useLongPress";
 import usePageVisible from "../hooks/usePageVisible";
 import { useToast } from "../contexts/ToastContext";
+import { useFolders, useFoldersActions } from "../contexts/FoldersContext";
 
 function DragHandle({ listeners, attributes }) {
   return (
@@ -179,9 +179,9 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
   const navigate = useNavigate();
   const navType = useNavigationType();
   const visible = usePageVisible();
-  const [folders, setFolders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // Read shared folder list from context — provider owns polling + caching.
+  const { folders, trashFolders, loading, error } = useFolders();
+  const { refetch: load } = useFoldersActions();
   const [refreshing, setRefreshing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [filter, setFilter] = useDraft("ui:projects:filter", "ALL");
@@ -217,7 +217,7 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
     };
     clog(`[projects] render #${renderCountRef.current} +${dt.toFixed(1)}ms ${changes.length ? "Δ " + changes.join(", ") : "(no state change — parent re-render)"}`);
   });
-  const [trashCount, setTrashCount] = useState(0);
+  const trashCount = trashFolders.length;
   const [sortMode, setSortMode] = useState(() => localStorage.getItem("projects-sort-mode") || "custom");
   const [customOrder, setCustomOrder] = useState(() => {
     try { return JSON.parse(localStorage.getItem("projects-custom-order")) || []; }
@@ -274,52 +274,12 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
     return () => window.removeEventListener("nav-scroll-to-unread", handler);
   }, []);
 
-  const prevFoldersHashRef = useRef("");
-  const load = useCallback(async () => {
-    const t0 = performance.now();
-    try {
-      const [data, trash] = await Promise.all([
-        fetchAllFolders(),
-        fetchTrashFolders(),
-      ]);
-      const t1 = performance.now();
-      const arr = Array.isArray(data) ? data : [];
-      // Hash by id+last_activity+active+name so we can tell if data actually
-      // changed vs just got a new array reference. If unchanged, skip setState.
-      const hash = arr.map((f) => `${f.name}|${f.last_activity || ""}|${f.active ? 1 : 0}`).join(",");
-      const dataChanged = hash !== prevFoldersHashRef.current;
-      prevFoldersHashRef.current = hash;
-      clog(`[projects] fetch ${(t1 - t0).toFixed(0)}ms n=${arr.length} dataChanged=${dataChanged}`);
-      // Always seed brief cache so ProjectDetailPage can paint its
-      // header from cache even on the first poll where the array
-      // reference itself is unchanged.
-      cacheProjectBriefs(arr);
-      if (dataChanged) {
-        setFolders(arr);
-      }
-      setTrashCount(trash.length);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Cross-pane sync: project list changes
+  // Provider owns folder fetching/polling/caching/cross-pane sync. This
+  // page only needs to log activate/deactivate transitions for traceability.
   useEffect(() => {
-    const onDataChanged = () => load();
-    window.addEventListener("projects-data-changed", onDataChanged);
-    return () => window.removeEventListener("projects-data-changed", onDataChanged);
-  }, [load]);
-
-  useEffect(() => {
-    if (!visible || !isActive) return;
-    clog(`[projects] activate visible=${visible} isActive=${isActive}`);
-    load();
-    const interval = setInterval(load, 10000);
-    return () => clearInterval(interval);
-  }, [load, visible, isActive]);
+    if (!isActive) return;
+    clog(`[projects] activate visible=true isActive=true`);
+  }, [isActive]);
 
   // When user swipes back (POP) to the list, flag it so the tab bar
   // click handler knows to show the list instead of auto-navigating
@@ -501,12 +461,12 @@ export default function ProjectsPage({ theme, onToggleTheme, isActive = true }) 
         setTimeout(() => setScanResult(null), 4000);
       }
     } catch (err) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       // Minimum 400ms spinner display to prevent jarring sub-frame flicker
       setTimeout(() => setRefreshing(false), 400);
     }
-  }, [load]);
+  }, [load, toast]);
 
   const headerButtons = (
     <button

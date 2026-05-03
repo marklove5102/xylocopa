@@ -13,6 +13,8 @@ import { ToastProvider } from "./contexts/ToastContext";
 import { WebSocketProvider } from "./contexts/WebSocketContext";
 import { UnreadProvider, useUnread } from "./contexts/UnreadContext";
 import { AgentsProvider } from "./contexts/AgentsContext";
+import { FoldersProvider } from "./contexts/FoldersContext";
+import { InboxTasksProvider } from "./contexts/InboxTasksContext";
 import { HealthProvider } from "./contexts/HealthContext";
 import AttentionButton from "./components/AttentionButton";
 import BottomNavBar from "./components/BottomNavBar";
@@ -592,7 +594,11 @@ export default function App() {
                 <MonitorProvider>
                 <UnreadProvider>
                 <AgentsProvider>
+                <FoldersProvider>
+                <InboxTasksProvider>
                   <AppChrome themeProps={themeProps} />
+                </InboxTasksProvider>
+                </FoldersProvider>
                 </AgentsProvider>
                 </UnreadProvider>
                 </MonitorProvider>
