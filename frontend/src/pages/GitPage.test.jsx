@@ -29,6 +29,7 @@ vi.mock("../lib/api", () => ({
   fetchStorageStats: vi.fn().mockResolvedValue({}),
   fetchTokenUsage: vi.fn().mockResolvedValue({}),
   fetchTaskCounts: vi.fn().mockResolvedValue({}),
+  clog: vi.fn(),
 }));
 
 import {
