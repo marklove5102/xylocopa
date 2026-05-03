@@ -588,11 +588,15 @@ html.eink :where(.bg-gray-500) { background-color: #999999 !important; }
 /* Status dots that sit INSIDE a saturated pill (e.g. PageHeader OK
    chip dot bg-green-500 inside bg-green-500/15 chip; ContextUsagePill
    bg-cyan-500 dot inside bg-cyan-500/15 chip). Without this override
-   the dot would inherit the saturated rule (bg=heading) AND the
-   health-dot helpers above (bg=heading/gray) — same color as the
-   surrounding pill bg = invisible. Re-pin to page color so the dot
-   reads as the same color as the pill text. Placed AFTER health-dot
-   helpers to win on source order. */
+   the dot would inherit the saturated rule (bg=heading) — same color
+   as the pill bg = invisible. Re-pin to page color so the dot reads
+   as the same color as the pill text. Placed AFTER health-dot
+   helpers to win on source order.
+
+   Narrowed by w-1 / w-1.5 / w-2 / w-2.5 size attribute so it only
+   targets actual dot-sized elements — NOT chip-like nested badges
+   (e.g. source tag <span class='bg-cyan-500/20 text-cyan-300'>web</span>
+   inside the user bubble) which have padding and text. */
 html.eink :where(
   [class*="bg-cyan-500"], [class*="bg-cyan-600"], [class*="bg-cyan-700"],
   [class*="bg-blue-500"], [class*="bg-blue-600"], [class*="bg-blue-700"],
@@ -613,11 +617,10 @@ html.eink :where(
   [class*="bg-fuchsia-500"], [class*="bg-fuchsia-600"], [class*="bg-fuchsia-700"],
   [class*="bg-gradient-"]
 ) :where(
-  [class*="bg-cyan-"], [class*="bg-blue-"], [class*="bg-sky-"], [class*="bg-indigo-"],
-  [class*="bg-emerald-"], [class*="bg-green-"], [class*="bg-red-"], [class*="bg-rose-"],
-  [class*="bg-pink-"], [class*="bg-amber-"], [class*="bg-orange-"], [class*="bg-yellow-"],
-  [class*="bg-lime-"], [class*="bg-teal-"], [class*="bg-violet-"], [class*="bg-purple-"],
-  [class*="bg-fuchsia-"], [class*="bg-gray-"], [class*="bg-zinc-"], [class*="bg-slate-"]
+  [class~="w-1"][class*="bg-"],
+  [class~="w-1.5"][class*="bg-"],
+  [class~="w-2"][class*="bg-"],
+  [class~="w-2.5"][class*="bg-"]
 ) {
   background-color: var(--color-page) !important;
 }
