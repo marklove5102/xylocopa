@@ -125,7 +125,8 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   }, [task.id, task.title, onRefresh]);
 
   // --- inline description editing ---
-  const [editing, setEditing] = useState(false);
+  // Description is always contentEditable when expanded — content is set
+  // imperatively (innerText) so React doesn't fight the user's typing.
   const editRef = useRef(null);
   const fileInputRef = useRef(null);
   const filePickerOpenRef = useRef(false);
@@ -173,10 +174,9 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   // Cleanup debounce timer on unmount
   useEffect(() => () => clearTimeout(saveTimerRef.current), []);
 
-  // Collapse: stop editing + flush to server
+  // Collapse: flush any pending description edits to server
   useEffect(() => {
     if (isExpanded) return;
-    setEditing(false);
     flushServerSave();
   }, [isExpanded, flushServerSave]);
 
@@ -230,22 +230,12 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
     return () => el.removeEventListener("cancel", onCancel);
   }, []);
 
-  const startEditing = (e) => {
+  const handleDescClick = (e) => {
     e.stopPropagation();
-    if (editing) return;
-    const { clientX, clientY } = e;
-    setEditing(true);
-    requestAnimationFrame(() => {
-      const el = editRef.current;
-      if (!el) return;
-      el.innerText = descText; // Restore content (React clears children on editing transition)
-      el.focus();
-      placeCaretAtPoint(el, clientX, clientY);
-    });
+    if (editRef.current) placeCaretAtPoint(editRef.current, e.clientX, e.clientY);
   };
 
   const handleDescBlur = useCallback(() => {
-    setEditing(false);
     flushServerSave();
   }, [flushServerSave]);
 
@@ -397,7 +387,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
           {...(isExpanded ? { onClick: handleCardEmptyClick } : longPressHandlers)}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleClick(); }}
           style={{ WebkitTapHighlightColor: "transparent" }}
         >
           {dragHandleProps && (
@@ -431,17 +421,19 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
                     suppressContentEditableWarning
                     onClick={(e) => {
                       e.stopPropagation();
-                      // iOS Safari snaps short-tap caret placement to word
-                      // boundaries on contentEditable. Re-place the caret at
-                      // the exact click coords to allow positioning between
-                      // letters within a word.
-                      const { clientX, clientY } = e;
-                      requestAnimationFrame(() => {
-                        if (titleRef.current) placeCaretAtPoint(titleRef.current, clientX, clientY);
-                      });
+                      // Synchronously override iOS word-snap caret placement
+                      // with the exact click coords (no RAF — RAF caused a
+                      // visible two-step jump between word-snap and target).
+                      if (titleRef.current) placeCaretAtPoint(titleRef.current, e.clientX, e.clientY);
                     }}
                     onBlur={saveTitle}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); titleRef.current?.blur(); } }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        titleRef.current?.blur();
+                      }
+                    }}
                     className="inline-block max-w-full text-base font-semibold leading-snug whitespace-pre-wrap outline-none text-heading cursor-text"
                   >
                     {task.title}
@@ -457,21 +449,27 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
               </span>
             </div>
 
-            {/* Description — flexible middle, grows to fill space */}
+            {/* Description — always contentEditable when expanded; content
+                is set imperatively (innerText) to avoid React reconciling
+                user-typed text. Placeholder is a sibling overlay so the
+                editable's hit-area maps cleanly to its own bounds. */}
             {isExpanded ? (
-              <div className="min-h-[60px] mt-1.5 cursor-text" onClick={startEditing}>
+              <div className="mt-1.5 relative">
                 <div
                   ref={editRef}
-                  contentEditable={editing}
+                  contentEditable
                   suppressContentEditableWarning
+                  onClick={handleDescClick}
                   onBlur={handleDescBlur}
                   onPaste={handlePaste}
-                  className={`text-sm leading-relaxed outline-none whitespace-pre-wrap ${
-                    editing ? "text-body" : descText ? "text-dim" : "text-faint/40"
-                  }`}
-                >
-                  {editing ? "" : (descText || "Tap to add description...")}
-                </div>
+                  onKeyDown={(e) => { if (e.key === "Enter") e.stopPropagation(); }}
+                  className="text-sm leading-relaxed outline-none whitespace-pre-wrap min-h-[60px] cursor-text text-body"
+                />
+                {!descText && (
+                  <span className="pointer-events-none absolute top-0 left-0 text-sm leading-relaxed text-faint/40">
+                    Tap to add description...
+                  </span>
+                )}
                 {voice.refining && (
                   <div className="px-1 pb-1 text-sm text-cyan-400/80 italic animate-pulse">
                     Refining...
