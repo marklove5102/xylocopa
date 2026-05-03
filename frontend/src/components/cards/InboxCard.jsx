@@ -104,7 +104,11 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   // clicks (timestamp, gap, post-text whitespace) → collapse the card.
   const titleRef = useRef(null);
 
-  const handleTitleRowClick = () => {
+  // Collapse the card when the user clicks any empty area inside the expanded
+  // card (drag-handle padding, title-row gap/timestamp, between sections, etc).
+  // Inner interactive elements (title text, description, buttons, tags) all
+  // call e.stopPropagation, so this only fires for genuine empty space.
+  const handleCardEmptyClick = () => {
     if (!isExpanded) return;
     onExpand?.(task.id);
   };
@@ -390,7 +394,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
           className={`flex items-start gap-3 px-5 cursor-pointer transition-[padding] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] ${
             expanded && !selecting ? "pt-5 pb-3" : cardPadding(expanded, selecting)
           }`}
-          {...(isExpanded ? {} : longPressHandlers)}
+          {...(isExpanded ? { onClick: handleCardEmptyClick } : longPressHandlers)}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === "Enter" && !editing) handleClick(); }}
@@ -418,7 +422,7 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
                 actual text — clicks on the surrounding empty space bubble up
                 to the row's onClick. Native browser cursor placement handles
                 clicks on the text (between letters works as expected). */}
-            <div className="flex items-start justify-between gap-3 shrink-0" onClick={handleTitleRowClick}>
+            <div className="flex items-start justify-between gap-3 shrink-0">
               {isExpanded ? (
                 <div className="flex-1 min-w-0">
                   <div
