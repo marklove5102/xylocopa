@@ -7,6 +7,7 @@ import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 import { setupFrameLogger } from "./lib/frameLogger";
 import { prefetchHeavyChunks } from "./lib/prefetchChunks";
+import { applyEinkModeFromStorage } from "./lib/einkMode";
 
 // Frame-by-frame DOM mutation logger (off by default).
 // Enable: localStorage.setItem("ah:frame-log", "1") then reload.
@@ -34,6 +35,10 @@ prefetchHeavyChunks();
     if ((isLinux && !isMobile) || isEInk) {
       document.documentElement.classList.add("no-glass");
     }
+
+    // User-toggled full e-ink theme (Settings > Display). Independent
+    // from no-glass auto-detection — manual override always honored.
+    applyEinkModeFromStorage();
 
     // On-screen diagnostic — visit any page with ?eink-diag=1 to see UA +
     // detection results overlaid (no console / dev tools needed). Only

@@ -7,6 +7,7 @@ import {
   fetchTelemetryStatus, setTelemetryEnabled,
 } from "../lib/api";
 import { useMonitor } from "../contexts/MonitorContext";
+import { getEinkMode, setEinkMode } from "../lib/einkMode";
 
 const HEALTH_COLORS = {
   ok: "bg-green-500",
@@ -254,6 +255,13 @@ export default function MonitorPage({ theme, onToggleTheme }) {
   const [backupConfigOpen, setBackupConfigOpen] = useState(false);
   const [telemetry, setTelemetry] = useState(null);
   const [telemetryBusy, setTelemetryBusy] = useState(false);
+  const [einkOn, setEinkOn] = useState(() => getEinkMode());
+
+  const handleEinkToggle = useCallback(() => {
+    const next = !einkOn;
+    setEinkOn(next);
+    setEinkMode(next);
+  }, [einkOn]);
 
   const loadTelemetry = useCallback(async () => {
     try {
@@ -716,6 +724,35 @@ export default function MonitorPage({ theme, onToggleTheme }) {
                 : `Freed ${formatBytes(orphanResult.freed_bytes)} (${orphanResult.deleted_sessions} sessions, ${orphanResult.deleted_logs} logs, ${orphanResult.deleted_dirs} dirs, ${orphanResult.deleted_projects || 0} projects)`}
           </p>
         )}
+
+        {/* Display: e-ink mode toggle */}
+        <section className="rounded-xl bg-surface shadow-card p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-heading">墨水屏模式 / E-ink mode</h3>
+              <p className="text-xs text-dim mt-1 leading-relaxed">
+                为低刷新率 / 灰阶屏（Bigme、BOOX、Kindle 等）优化：去除毛玻璃、阴影、动画与渐变，
+                改为纯黑/白高对比 + 实线边框，避免 partial refresh 残影。
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={einkOn ? "true" : "false"}
+              aria-label="Toggle e-ink mode"
+              onClick={handleEinkToggle}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                einkOn ? "bg-cyan-500" : "bg-elevated"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  einkOn ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+        </section>
 
         {/* Help improve Xylocopa (telemetry toggle) */}
         <section className="rounded-xl bg-surface shadow-card p-4">

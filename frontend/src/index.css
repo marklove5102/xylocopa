@@ -103,6 +103,115 @@ html.no-glass.dark {
   }
 }
 
+/* ── E-ink mode (manually toggled in Settings > Display) ───────────────
+   Auto-detection is unreliable: devices like Bigme report a generic
+   Android Chrome UA and don't honor (update: slow) or (monochrome).
+   Users opt in via toggle.
+
+   Design principles (from researching e-ink web frameworks):
+   - Pure black/white; no grayscale fills (e-ink ghosts on partial refresh)
+   - Borders, not shadows (gradients render poorly)
+   - Zero animation/transition (refresh is 120-450ms, motion is jarring)
+   - Static skeletons (shimmer animation = constant repaint)
+   - System fonts only (already the case via Tailwind defaults)
+*/
+html.eink {
+  --color-page:       #ffffff;
+  --color-surface:    #ffffff;
+  --color-input:      #ffffff;
+  --color-elevated:   #ffffff;
+  --color-hover:      #f0f0f0;
+  --color-inset:      #ffffff;
+
+  --color-heading:    #000000;
+  --color-body:       #000000;
+  --color-label:      #000000;
+  --color-dim:        #333333;
+  --color-faint:      #555555;
+  --color-ghost:      #888888;
+
+  --color-divider:    #000000;
+  --color-edge:       #000000;
+  --color-ring-hover: #000000;
+
+  --color-hint:       #555555;
+  --color-shadow:     transparent;
+  --color-skel:       #d0d0d0;
+  --color-glass:      #ffffff;
+  --color-glass-nav:  #ffffff;
+  --color-glass-edge: #000000;
+}
+html.eink.dark {
+  --color-page:       #000000;
+  --color-surface:    #000000;
+  --color-input:      #000000;
+  --color-elevated:   #000000;
+  --color-hover:      #1a1a1a;
+  --color-inset:      #000000;
+
+  --color-heading:    #ffffff;
+  --color-body:       #ffffff;
+  --color-label:      #ffffff;
+  --color-dim:        #cccccc;
+  --color-faint:      #aaaaaa;
+  --color-ghost:      #777777;
+
+  --color-divider:    #ffffff;
+  --color-edge:       #ffffff;
+  --color-ring-hover: #ffffff;
+
+  --color-hint:       #aaaaaa;
+  --color-shadow:     transparent;
+  --color-skel:       #2a2a2a;
+  --color-glass:      #000000;
+  --color-glass-nav:  #000000;
+  --color-glass-edge: #ffffff;
+}
+
+/* Kill all animations / transitions globally. :where() keeps specificity
+   at (0,0,0) so individual component rules can still opt back in if a
+   specific interaction genuinely needs motion. */
+html.eink :where(*),
+html.eink :where(*::before),
+html.eink :where(*::after) {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* No box-shadow — e-ink can't render soft drops, they appear as gray
+   bands. Use border-edge for separation instead. */
+html.eink :where(*) {
+  box-shadow: none !important;
+}
+
+/* Glass utilities collapse to plain bordered surfaces. */
+html.eink .glass-bar,
+html.eink .glass-bar-nav {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--color-page) !important;
+  border: 1px solid var(--color-edge) !important;
+  box-shadow: none !important;
+}
+
+/* Skeleton loading: replace shimmer with a solid block. Shimmer
+   animates background-position, which would trigger continuous e-ink
+   repaint and visible flashing across the screen. */
+html.eink .bg-skel {
+  background-image: none !important;
+  animation: none !important;
+}
+
+/* Reinforce contrast on common Tailwind cyan accents — they show as
+   near-white on grayscale e-ink. Use pure black instead (or pure white
+   in dark mode). */
+html.eink :where(.text-cyan-500, .text-cyan-400, .text-cyan-600) { color: var(--color-heading) !important; }
+html.eink :where(.bg-cyan-500, .bg-cyan-400, .bg-cyan-600) { background-color: var(--color-heading) !important; }
+html.eink :where(.border-cyan-500, .border-cyan-400, .border-cyan-600) { border-color: var(--color-heading) !important; }
+
 /* SVG <text> doesn't inherit font-family by default in several browsers
    (notably Safari, which falls back to Times). Force inheritance so
    inline SVG labels match the rest of the UI's system-ui stack. */
