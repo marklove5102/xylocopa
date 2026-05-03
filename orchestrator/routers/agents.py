@@ -1995,9 +1995,9 @@ async def stop_agent(agent_id: str, request: Request,
                 _retry_project_name = _linked_task.project_name or ""
                 _retry_task_title = _linked_task.title or "Unknown task"
             db.commit()
-            # Flush drop/redo message to display file + notify WS clients
+            # Flush drop/redo message to display file. flush_agent
+            # auto-emits the new_message WS signal — no explicit emit.
             _stop_flush(agent.id)
-            asyncio.ensure_future(_stop_enm(agent.id, "sync", agent.name, agent.project))
             asyncio.ensure_future(emit_task_update(
                 _linked_task.id, _linked_task.status.value, _linked_task.project_name or "",
                 title=_linked_task.title, agent_id=agent.id,
