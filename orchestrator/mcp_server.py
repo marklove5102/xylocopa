@@ -455,7 +455,30 @@ def task_create(
     """Create a task in the Xylocopa inbox.
 
     Tasks land in INBOX status. The user can promote/queue them in the web UI.
-    If model or effort are left empty, the project's defaults apply at launch.
+
+    IMPORTANT — always set the classification tags (model, effort) when
+    creating a task. Leaving them empty falls back to project defaults, which
+    loses the per-task judgment about complexity and which model tier fits
+    the work. Pick deliberately:
+
+      model:
+        - claude-haiku-4-5-20251001  → trivial scripts, single-file edits,
+                                       no cross-module reasoning needed
+        - claude-sonnet-4-6           → most implementation work: bug fixes,
+                                       small features, refactors with clear
+                                       scope, frontend tweaks
+        - claude-opus-4-6             → architectural decisions, multi-file
+                                       redesigns, debugging across layers,
+                                       anything needing deep reasoning
+        - claude-opus-4-7             → same as 4-6 but the latest tier;
+                                       prefer for highest-stakes work
+
+      effort:
+        - low      → < 1 hour, well-scoped (~30 lines or contained tweak)
+        - medium   → 1-3 hours, multiple files but bounded
+        - high     → half-day, cross-cutting changes with research
+        - xhigh    → full day, requires design + implementation + testing
+        - max      → multi-day, needs scope decomposition
 
     Args:
         title: Short task title (required, max 300 chars).
@@ -464,8 +487,9 @@ def task_create(
             which covers worktree subdirectories). Pass explicitly if you
             want a task in a project other than the one you're in.
         description: Longer task body (optional, markdown supported).
-        model: Claude model id, e.g. claude-opus-4-7. Empty = project default.
-        effort: low | medium | high | xhigh | max. Empty = project default.
+        model: Claude model id (see guidance above). Empty = project default.
+        effort: low | medium | high | xhigh | max (see guidance above).
+            Empty = project default.
         priority: 0 (normal) or 1 (high). Default 0.
     """
     # Lazy imports so read-only callers don't pay the cost
@@ -558,13 +582,20 @@ def task_update(
     updated. Status is intentionally NOT mutable here — use task_dispatch to
     queue a task, or other dedicated tools for status changes.
 
+    Common use case: a task was created without explicit model/effort tags
+    (or with wrong ones) and you want to backfill them. See task_create for
+    the full guidance on picking model tier (haiku/sonnet/opus) and effort
+    bucket (low → max) — the same rules apply here.
+
     Args:
         task_id: ID of the task to update (required).
         title: New title. Empty = leave unchanged.
         description: New description. Empty = leave unchanged.
         project: New project name. Must exist in the Project table.
             Empty = leave unchanged.
-        model: New Claude model id. Empty = leave unchanged.
+        model: New Claude model id (claude-haiku-4-5-20251001 |
+            claude-sonnet-4-6 | claude-opus-4-6 | claude-opus-4-7).
+            Empty = leave unchanged.
         effort: New effort level (low|medium|high|xhigh|max).
             Empty = leave unchanged.
         priority: New priority (0 normal, 1 high). None = leave unchanged.
