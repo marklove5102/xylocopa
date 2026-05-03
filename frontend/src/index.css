@@ -323,6 +323,16 @@ html.eink :where(
    browser-level light blue that bypasses Tailwind classes entirely. */
 html.eink :where(a:not([class*="text-"])) { color: var(--color-heading); }
 
+/* Strip browser-default underline on <a>. NavLinks (BottomNavBar tabs:
+   Inbox / Projects / Agents / Git) render as bare <a> — on Bigme's
+   Chromium the user-agent stylesheet underline shows through Tailwind
+   preflight. Explicit `.underline` utility (specificity 0,0,1,0) still
+   wins over this :where() rule (0,0,0,0) so legitimate underlined
+   links (e.g. markdown content) are preserved. */
+html.eink :where(a) {
+  text-decoration: none;
+}
+
 /* Health-status dot helpers (green/red/amber/gray fill circles) defined
    inline at MonitorPage.jsx:11 — flatten to grayscale tones so the
    status dots are still distinguishable but not jarring color blobs. */
