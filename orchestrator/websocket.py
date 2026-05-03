@@ -249,10 +249,10 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
     # Attach mutable list-view fields so the AgentsPage badge/preview
     # update in real-time without a follow-up refetch.  PK lookup is
     # cheap (<1ms) and always reflects latest committed state.
-    # Also short-circuit for subagents: GET /api/agents filters them out
-    # (agents.py:1661), so broadcasting would let PATCH_ONE upsert them
-    # into the AgentsPage store via the unknown-id branch
-    # (AgentsContext.jsx:123-128) — keep HTTP and WS symmetric.
+    # is_subagent is included so AgentsPage can skip subagents at the
+    # receiver (GET /api/agents already filters them out at agents.py:1661);
+    # other subscribers (e.g. AgentChatPage opened directly on a subagent
+    # URL, parent-agent views) still get the event.
     try:
         from database import SessionLocal
         from models import Agent
@@ -260,8 +260,7 @@ async def emit_agent_update(agent_id: str, status: str, project: str,
         try:
             _a = _db.get(Agent, agent_id)
             if _a is not None:
-                if _a.is_subagent:
-                    return
+                data["is_subagent"] = bool(_a.is_subagent)
                 data["unread_count"] = _a.unread_count or 0
                 data["last_message_preview"] = _a.last_message_preview or ""
                 data["last_message_at"] = (

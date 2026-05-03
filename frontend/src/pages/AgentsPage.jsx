@@ -227,6 +227,11 @@ export default function AgentsPage({ theme, onToggleTheme, isActive = true }) {
     const d = event.data || {};
     const { agent_id } = d;
     if (!agent_id) return;
+    // Skip subagents — GET /api/agents filters them out, and PATCH_ONE
+    // would otherwise upsert an unknown subagent id as a partial row
+    // (AgentsContext.jsx:123-128). Other subscribers (AgentChatPage on a
+    // direct subagent URL, parent-view cards) still receive the event.
+    if (d.is_subagent) return;
     const partial = {};
     if (d.status !== undefined) partial.status = d.status;
     if (d.unread_count !== undefined) partial.unread_count = d.unread_count;
