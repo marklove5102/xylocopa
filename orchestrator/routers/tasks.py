@@ -608,24 +608,19 @@ async def batch_process_tasks(request: Request, db: Session = Depends(get_db)):
         }
         tasks_data.append(task_dict)
 
-    # Triage is a meta/global agent — its session should belong to the
-    # self-hosting (Xylocopa) project, not to whichever business project
-    # the dispatcher's cwd happens to sit in.  Resolve the self-project by
-    # matching the orchestrator's install dir against registered project
-    # paths (survives future renames); fall back to an alphabetically
-    # sorted name so at least it's deterministic across restarts.
-    from config import _PROJECT_ROOT
-    _self_root = os.path.realpath(_PROJECT_ROOT)
-    host_project = None
-    for p in projects:
-        if p.path and os.path.realpath(p.path) == _self_root:
-            host_project = p.name
-            break
-    if not host_project:
-        _sorted = sorted(projects, key=lambda p: p.name)
-        host_project = _sorted[0].name if _sorted else None
-    if not host_project:
-        raise HTTPException(400, "No projects available to host the agent")
+    # Triage is a meta/global agent — host it on the synthetic
+    # `.xylo-internal` placeholder so it doesn't pollute any user
+    # project's agents/sessions list.  The placeholder's path
+    # (`<PROJECTS_DIR>/.xylo-internal/`) carries its own absolute-path
+    # `.mcp.json` so triage gets the orchestrator MCP tools regardless of
+    # how/where xylocopa itself is installed.  Bootstrapped at startup by
+    # routers.projects.ensure_internal_project (also runs lazily here as a
+    # safety net for first-call-before-startup-completes edge cases).
+    from routers.projects import (
+        INTERNAL_PROJECT_NAME, ensure_internal_project,
+    )
+    ensure_internal_project(db)
+    host_project = INTERNAL_PROJECT_NAME
 
     prompt = f"""You are a task triage assistant for Xylocopa. Analyze the inbox tasks below, then update each one using the Xylocopa MCP tools.
 

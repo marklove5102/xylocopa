@@ -199,6 +199,9 @@ def session_list(project: str = "") -> str:
             "SELECT id, name, project, session_id, status, "
             "       last_message_preview, last_message_at "
             "FROM agents WHERE session_id IS NOT NULL "
+            # Hide meta-agent sessions hosted on synthetic projects
+            # (e.g. AI triage on `.xylo-internal`).
+            "AND project NOT LIKE '.%' "
         )
         params: tuple = ()
         if project:
@@ -504,7 +507,10 @@ def task_create(
         if project:
             proj = db.query(Project).filter_by(name=project).one_or_none()
             if proj is None:
-                available = sorted(p.name for p in db.query(Project).all())
+                available = sorted(
+                    p.name for p in db.query(Project).all()
+                    if not p.name.startswith(".")
+                )
                 return (
                     f"Project `{project}` not found.\n"
                     f"Available: {', '.join(available)}"
@@ -513,12 +519,14 @@ def task_create(
             cwd = os.getcwd()
             candidates = [
                 p for p in db.query(Project).all()
-                if p.path and (cwd == p.path or cwd.startswith(p.path + "/"))
+                if p.path and not p.name.startswith(".")
+                and (cwd == p.path or cwd.startswith(p.path + "/"))
             ]
             candidates.sort(key=lambda p: len(p.path), reverse=True)
             if not candidates:
                 available = sorted(
                     p.name for p in db.query(Project).all()
+                    if not p.name.startswith(".")
                 )
                 return (
                     f"Could not infer project from cwd ({cwd}).\n"
@@ -613,7 +621,10 @@ def task_update(
         if project:
             proj = db.query(Project).filter_by(name=project).one_or_none()
             if proj is None:
-                available = sorted(p.name for p in db.query(Project).all())
+                available = sorted(
+                    p.name for p in db.query(Project).all()
+                    if not p.name.startswith(".")
+                )
                 return (
                     f"Project `{project}` not found.\n"
                     f"Available: {', '.join(available)}"
@@ -1014,15 +1025,20 @@ def project_list(include_archived: bool = False) -> str:
         return "Xylocopa database not found. Is the orchestrator running?"
 
     try:
+        # `.` prefix is reserved for synthetic system projects (e.g.
+        # `.xylo-internal` hosts AI triage). Hide them from the MCP-facing
+        # list — agents calling project_list shouldn't see internal hosts.
         if include_archived:
             rows = db.execute(
                 "SELECT name, path, git_remote, description, archived, default_model "
-                "FROM projects ORDER BY archived ASC, name ASC"
+                "FROM projects WHERE name NOT LIKE '.%' "
+                "ORDER BY archived ASC, name ASC"
             ).fetchall()
         else:
             rows = db.execute(
                 "SELECT name, path, git_remote, description, archived, default_model "
-                "FROM projects WHERE archived = 0 ORDER BY name ASC"
+                "FROM projects WHERE archived = 0 AND name NOT LIKE '.%' "
+                "ORDER BY name ASC"
             ).fetchall()
     finally:
         db.close()
@@ -1331,7 +1347,10 @@ def agent_list(project: str = "", status: str = "", limit: int = 30) -> str:
         limit = 100
 
     try:
-        clauses: list[str] = []
+        # Hide meta-agents hosted on synthetic projects (e.g. AI triage on
+        # `.xylo-internal`). They aren't user-launched agents and shouldn't
+        # appear in the MCP-facing list.
+        clauses: list[str] = ["project NOT LIKE '.%'"]
         params: list = []
         if project:
             clauses.append("project = ?")
@@ -1345,8 +1364,7 @@ def agent_list(project: str = "", status: str = "", limit: int = 30) -> str:
             "       last_message_preview, last_message_at, created_at "
             "FROM agents"
         )
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
+        query += " WHERE " + " AND ".join(clauses)
         query += (
             " ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?"
         )

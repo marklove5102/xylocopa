@@ -44,15 +44,127 @@ logger = logging.getLogger("orchestrator")
 router = APIRouter(tags=["projects"])
 
 
+# ---- Reserved system project names ---------------------------------------
+# The `.` prefix is reserved for synthetic projects the orchestrator manages
+# itself.  Currently only `.xylo-internal` exists — it hosts meta-agents
+# (e.g. AI triage) so they don't pollute the user's project listings.
+# These rows exist in the projects table for FK reasons (Agent.project is
+# non-nullable) but must not surface in any user-facing list.  Use
+# is_internal_project() / exclude_internal() whenever enumerating projects
+# for a UI / picker / sweep.
+#
+# `.` was chosen over `_` because Unix tooling (and our existing disk
+# scanners in list_folders / scan_projects / reconcile) already skip
+# dot-prefixed entries — so the placeholder is invisible to disk-driven
+# code paths for free, no extra filter required there.
+
+INTERNAL_PROJECT_NAME = ".xylo-internal"
+INTERNAL_PROJECT_DISPLAY = "System (internal)"
+
+
+def is_internal_project(name: str | None) -> bool:
+    """True if `name` is a reserved system project name (currently `.` prefix)."""
+    return bool(name) and name.startswith(".")
+
+
+def exclude_internal(query):
+    """Append the system-project filter to a Project query."""
+    return query.filter(~Project.name.startswith("."))
+
+
+def ensure_internal_project(db: Session) -> Project:
+    """Idempotent bootstrap: ensure the `.xylo-internal` placeholder exists.
+
+    Creates `<PROJECTS_DIR>/.xylo-internal/` on disk with a self-contained
+    `.mcp.json` (absolute path to the orchestrator MCP server) and a
+    minimal `CLAUDE.md`, plus the matching `projects` row.  Triage and
+    other meta-agents launch with this as their host project so they
+    don't appear under any user project.
+
+    Idempotent — safe to call on every startup; no-op if the dir, files,
+    and DB row are already in place.
+
+    Future-proof: when xylocopa moves to pip/brew/docker install (no
+    cloned source tree), this is the seam — the placeholder dir already
+    holds an absolute-path `.mcp.json`, so only the `command`/`args` of
+    that JSON needs to change (e.g. `xylocopa-mcp` console_script entry).
+    """
+    from config import PROJECTS_DIR, _PROJECT_ROOT
+
+    projects_dir = PROJECTS_DIR or "/projects"
+    internal_path = os.path.join(projects_dir, INTERNAL_PROJECT_NAME)
+
+    # 1. Directory
+    os.makedirs(internal_path, exist_ok=True)
+
+    # 2. .mcp.json — absolute path so cwd-independence holds even if the
+    # user moves/renames the xylocopa repo later.
+    mcp_path = os.path.join(internal_path, ".mcp.json")
+    mcp_server_abs = os.path.join(_PROJECT_ROOT, "orchestrator", "mcp_server.py")
+    desired_mcp = {
+        "mcpServers": {
+            "xylocopa": {
+                "command": "python3",
+                "args": [mcp_server_abs],
+            }
+        }
+    }
+    write_mcp = True
+    if os.path.isfile(mcp_path):
+        try:
+            with open(mcp_path) as f:
+                if json.load(f) == desired_mcp:
+                    write_mcp = False
+        except (OSError, json.JSONDecodeError):
+            pass
+    if write_mcp:
+        with open(mcp_path, "w") as f:
+            json.dump(desired_mcp, f, indent=2)
+
+    # 3. CLAUDE.md — one-liner so meta-agents understand context.
+    claudemd_path = os.path.join(internal_path, "CLAUDE.md")
+    if not os.path.isfile(claudemd_path):
+        with open(claudemd_path, "w") as f:
+            f.write(
+                "# .xylo-internal\n\n"
+                "Synthetic host project for xylocopa-managed meta-agents "
+                "(e.g. AI triage). Not a user project — do not edit files "
+                "here directly. Only the orchestrator MCP tools "
+                "(`mcp__xylocopa__*`) are expected to be used from this cwd.\n"
+            )
+
+    # 4. DB row
+    proj = db.get(Project, INTERNAL_PROJECT_NAME)
+    if proj is None:
+        proj = Project(
+            name=INTERNAL_PROJECT_NAME,
+            display_name=INTERNAL_PROJECT_DISPLAY,
+            path=internal_path,
+            archived=False,
+        )
+        db.add(proj)
+        db.commit()
+        logger.info("Bootstrapped internal placeholder project at %s", internal_path)
+    elif proj.path != internal_path or proj.archived:
+        proj.path = internal_path
+        proj.archived = False
+        db.commit()
+        logger.info("Refreshed internal placeholder project row (path=%s)", internal_path)
+    return proj
+
+
 # ---- Canonical "what counts as an active project" -------------------------
 # Single source of truth: a row is active iff it's in the projects table with
-# archived=0 AND its folder still exists on disk.  Use this everywhere instead
-# of rolling your own `Project.archived == False` query — that catches ghost
-# rows (folder deleted out from under the DB) which the orphan-cleanup will
-# eventually hard-delete.
+# archived=0 AND its folder still exists on disk AND it isn't a reserved
+# system project.  Use this everywhere instead of rolling your own
+# `Project.archived == False` query — that catches ghost rows (folder
+# deleted out from under the DB) which the orphan-cleanup will eventually
+# hard-delete, and it auto-hides the synthetic `.xylo-internal` host.
 
 def active_projects(db: Session) -> list[Project]:
-    rows = db.query(Project).filter(Project.archived == False).all()  # noqa: E712
+    rows = exclude_internal(
+        db.query(Project).filter(Project.archived == False)  # noqa: E712
+    ).all()
     return [p for p in rows if os.path.isdir(p.path)]
 
 

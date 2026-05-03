@@ -84,8 +84,12 @@ def _scan_projects(db: SASession) -> dict[str, Any]:
             elif os.path.isdir(full):
                 fs_entries.append(entry)
 
-    # DB snapshot
-    db_rows = db.query(Project).all()
+    # DB snapshot — exclude reserved system projects (`.` prefix). They live
+    # under PROJECTS_DIR but the disk scan above already skips dot-prefixed
+    # entries, so reconciling them would (a) compare to nothing on disk and
+    # (b) always classify them as orphans. The `.xylo-internal` placeholder
+    # is bootstrapped by ensure_internal_project() and managed separately.
+    db_rows = [p for p in db.query(Project).all() if not p.name.startswith(".")]
     db_names = {p.name for p in db_rows}
 
     orphan_rows: list[dict[str, Any]] = []      # DB row, path missing

@@ -298,6 +298,16 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         load_registry(db)
+        # Bootstrap the `.xylo-internal` placeholder project (host for AI
+        # triage and other meta-agents).  Idempotent — creates the dir,
+        # writes a self-contained .mcp.json + CLAUDE.md, and ensures the
+        # DB row.  Must run before any meta-agent dispatch path resolves
+        # its host project.
+        try:
+            from routers.projects import ensure_internal_project
+            ensure_internal_project(db)
+        except Exception:
+            logger.exception("startup ensure_internal_project failed (non-fatal)")
         # Auto-replay any SessionStart events the hook stashed while we were
         # offline. Same logic the Agents page refresh button uses — surfaces
         # unlinked entries on backend restart without requiring a manual click.
