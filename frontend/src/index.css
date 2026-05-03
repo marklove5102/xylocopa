@@ -186,12 +186,54 @@ html.eink :where(body) {
   -webkit-font-smoothing: subpixel-antialiased;
 }
 html.eink :where(h1, h2, h3, h4, h5, h6, .font-medium) {
-  font-weight: 800;
+  /* einkbro uses 700 for reader-view headings; 800 falls back to 700
+     anyway on most system font stacks (no actual 800 cut), so use 700
+     directly for consistency. */
+  font-weight: 700;
 }
 /* Monospace tends to be the lightest on e-ink (thinner strokes, smaller
    x-height). Push those harder. */
 html.eink :where(code, pre, .font-mono, [class*="mono"]) {
   font-weight: 600;
+}
+
+/* Looser line-height for paragraphs / chat content — improves legibility
+   between partial refreshes (einkbro uses 1.5em in reader mode). */
+html.eink :where(p, li, .chat-bubble-content, [class*="markdown"]) {
+  line-height: 1.55;
+}
+
+/* No smooth scroll — e-ink can't keep up; smooth scroll feels like
+   hopping. Plain instant scroll is faster and less janky. */
+html.eink {
+  scroll-behavior: auto !important;
+}
+html.eink :where(*) {
+  scroll-behavior: auto !important;
+}
+
+/* Image rendering: convert color web images to grayscale + slight
+   contrast lift. Keeps photos / avatars / screenshots legible instead
+   of muddy color washes. einkbro exposes this as a 10/30/50/70/100%
+   slider; we apply the equivalent of ~contrast(1.1) which is a subtle
+   but visible improvement on e-ink. Excludes SVG icons (currentColor)
+   so they retain their token colors. */
+html.eink :where(img:not([src*=".svg"])) {
+  filter: grayscale(100%) contrast(1.1);
+}
+
+/* Links must stay visually distinct without relying on color (cyan
+   collapses into mid-gray on grayscale e-ink). Force underline. */
+html.eink :where(a) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Disable video autoplay-driven repaint. Even if we don't ship videos,
+   any embedded video would otherwise force constant full-screen
+   refresh on e-ink. */
+html.eink :where(video) {
+  animation: none !important;
 }
 
 /* Kill all animations / transitions globally. */

@@ -30,6 +30,16 @@ export function setEinkMode(on) {
 export function applyEinkMode(on) {
   if (typeof document === "undefined") return;
   document.documentElement.classList.toggle("eink", !!on);
+  // Defensive: pause any auto-playing media so it doesn't trigger
+  // continuous e-ink repaints. einkbro does this via a JS injection.
+  if (on) {
+    try {
+      document.querySelectorAll("video, audio").forEach((el) => {
+        if (!el.paused) el.pause();
+        el.removeAttribute("autoplay");
+      });
+    } catch { /* best-effort */ }
+  }
 }
 
 export function applyEinkModeFromStorage() {
