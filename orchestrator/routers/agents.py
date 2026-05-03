@@ -3573,6 +3573,12 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     send_tmux_keys(agent.tmux_pane, ["Escape", "Escape"])
     time.sleep(0.15)  # let Rewind menu render or input clear settle
     send_tmux_keys(agent.tmux_pane, ["Escape"])
+    # tmux send-keys returns when keys are written to the PTY, not when CC
+    # finishes rendering them. Give CC time to process the Esc sequence
+    # before we transition to IDLE + dispatch the next queued message —
+    # otherwise the next send_tmux_message can paste while CC's input bar
+    # is still mid-transition, leaving residual.
+    time.sleep(0.1)
 
     # Escape is a privileged terminal signal: a user-initiated interrupt
     # is itself authoritative, on par with stop_hook/interrupt/rate_limit.
