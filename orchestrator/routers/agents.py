@@ -2007,6 +2007,13 @@ async def stop_agent(agent_id: str, request: Request,
     if _should_summarize:
         agent.insight_status = "generating"
         db.commit()
+        # Push insight_status=generating so other clients flip the pill
+        # immediately. The earlier STOPPED emit (line ~1946 / cleanup path)
+        # fires before this assignment and carries the stale value.
+        asyncio.ensure_future(emit_agent_update(
+            agent.id, "STOPPED", agent.project,
+            insight_status="generating",
+        ))
         thread = threading.Thread(
             target=_run_agent_summary_background,
             args=(agent.id, agent.name, _task_title, agent.project, _project_path),
@@ -2385,8 +2392,12 @@ async def resume_agent(agent_id: str, request: Request, db: Session = Depends(ge
     agent.status = AgentStatus.STARTING
     db.commit()
     db.refresh(agent)
+    # Pass insight_status="" so other clients clear any stale "failed"/
+    # "generating" state in their store (has_pending_suggestions is
+    # auto-fetched by emit_agent_update, but insight_status is not).
     asyncio.ensure_future(
-        emit_agent_update(agent.id, agent.status.value, agent.project)
+        emit_agent_update(agent.id, agent.status.value, agent.project,
+                          insight_status="")
     )
 
     resumed_sync = False
