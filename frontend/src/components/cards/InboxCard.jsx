@@ -51,20 +51,6 @@ function isImagePath(path) {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(path);
 }
 
-/** Whether (x, y) falls within any rendered text rect of `el`'s contents. */
-function isPointOnText(el, x, y) {
-  if (!el) return false;
-  const range = document.createRange();
-  try {
-    range.selectNodeContents(el);
-    const rects = range.getClientRects();
-    for (const rect of rects) {
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true;
-    }
-  } catch { /* ignore */ }
-  return false;
-}
-
 /** Place the caret inside `el` at the document point (x, y). Falls back to end-of-content. */
 function placeCaretAtPoint(el, x, y) {
   const sel = window.getSelection();
@@ -110,32 +96,16 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   const [previewIndex, setPreviewIndex] = useState(null);
 
   // --- inline title editing ---
-  const [titleEditing, setTitleEditing] = useState(false);
+  // Title is rendered as `inline-block max-w-full contentEditable` when the
+  // card is expanded — the element box hugs the actual text, so empty space
+  // within the title row is *outside* the editable element. Native browser
+  // cursor placement handles clicks on text (between letters works exactly
+  // as in any contentEditable). The flex-row's onClick handles empty-area
+  // clicks (timestamp, gap, post-text whitespace) → collapse the card.
   const titleRef = useRef(null);
 
-  const startTitleEditing = (e) => {
-    e.stopPropagation();
-    if (!isExpanded || titleEditing) return;
-    const { clientX, clientY } = e;
-    // Click on empty space within the title row (past the text) → collapse card
-    if (!isPointOnText(titleRef.current, clientX, clientY)) {
-      onExpand?.(task.id);
-      return;
-    }
-    setTitleEditing(true);
-    requestAnimationFrame(() => {
-      const el = titleRef.current;
-      if (!el) return;
-      el.focus();
-      placeCaretAtPoint(el, clientX, clientY);
-    });
-  };
-
-  // Click on the timestamp / gap area of the title row (anywhere not on the
-  // title text or timestamp text) → collapse card. Title's own onClick stops
-  // propagation, so clicks on the title text won't bubble here.
-  const handleTitleRowClick = (e) => {
-    if (!isExpanded || titleEditing) return;
+  const handleTitleRowClick = () => {
+    if (!isExpanded) return;
     onExpand?.(task.id);
   };
 
@@ -143,7 +113,6 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
     const el = titleRef.current;
     if (!el) return;
     const text = el.innerText.trim();
-    setTitleEditing(false);
     if (text && text !== task.title) {
       await updateTaskV2(task.id, { title: text });
       onRefresh?.();
@@ -204,7 +173,6 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
   useEffect(() => {
     if (isExpanded) return;
     setEditing(false);
-    setTitleEditing(false);
     flushServerSave();
   }, [isExpanded, flushServerSave]);
 
@@ -444,21 +412,26 @@ export default memo(function InboxCard({ task, selecting, selected, onToggle, on
             </button>
           )}
           <div className={`flex-1 min-w-0 ${isExpanded ? "flex flex-col" : ""}`}>
-            {/* Title + time — pinned to top */}
+            {/* Title + time — pinned to top.
+                Outer flex row collapses card on click. Title is inline-block
+                inside a flex-1 wrapper so the editable element only spans the
+                actual text — clicks on the surrounding empty space bubble up
+                to the row's onClick. Native browser cursor placement handles
+                clicks on the text (between letters works as expected). */}
             <div className="flex items-start justify-between gap-3 shrink-0" onClick={handleTitleRowClick}>
               {isExpanded ? (
-                <div
-                  ref={titleRef}
-                  contentEditable={titleEditing}
-                  suppressContentEditableWarning
-                  onClick={startTitleEditing}
-                  onBlur={saveTitle}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); titleRef.current?.blur(); } }}
-                  className={`text-base font-semibold leading-snug whitespace-pre-wrap outline-none flex-1 min-w-0 ${
-                    titleEditing ? "text-heading cursor-text" : "text-heading cursor-pointer"
-                  }`}
-                >
-                  {task.title}
+                <div className="flex-1 min-w-0">
+                  <div
+                    ref={titleRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={saveTitle}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); titleRef.current?.blur(); } }}
+                    className="inline-block max-w-full text-base font-semibold leading-snug whitespace-pre-wrap outline-none text-heading cursor-text"
+                  >
+                    {task.title}
+                  </div>
                 </div>
               ) : (
                 <p className="text-base font-medium leading-snug text-heading truncate transition-all duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)]">
