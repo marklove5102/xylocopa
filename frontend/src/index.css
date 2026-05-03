@@ -222,12 +222,6 @@ html.eink :where(img:not([src*=".svg"])) {
   filter: grayscale(100%) contrast(1.1);
 }
 
-/* Links must stay visually distinct without relying on color (cyan
-   collapses into mid-gray on grayscale e-ink). Force underline. */
-html.eink :where(a) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
 
 /* Disable video autoplay-driven repaint. Even if we don't ship videos,
    any embedded video would otherwise force constant full-screen
