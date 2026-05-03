@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-02
+
+### Added
+
+- **Context usage pill** on the chat header. Live per-agent context-window meter with a tap-to-expand breakdown (system / tools / MCP / messages / cache split, free vs. used). Counts come straight from the Claude Code session JSONL, not estimated. Inline suggestions appear when usage gets high. Pushed over WebSocket and persisted on the agent row so the value paints immediately on chat open. Resolves [#3](https://github.com/jyao97/xylocopa/issues/3) point 1.
+- **System / meta-agents on `.xylo-internal`.** System-level sessions (Task-AI, merge agents, insights generation, etc.) are now hosted on a synthetic `.xylo-internal` project placeholder — they no longer need to be bound to a real project to run. Templates (`CLAUDE.md`, `PROGRESS.md`, agent-hooks JSON) moved to `.xylo-internal/templates/` and loaders fail-fast if `PROJECTS_DIR` is unset. Resolves [#3](https://github.com/jyao97/xylocopa/issues/3) point 4.
+- **E-ink display mode.** Manual toggle in **Settings → Display**, plus user-agent auto-detect for BOOX / Onyx / Kindle / Bigme / Hisense / Meebook / iReader. Flattens glass surfaces to a single page color, collapses colored badges/tags to grayscale, switches saturated bubbles to outlined style, drops gradients, and bumps secondary-text weight for readable contrast on e-paper. Includes an `?eink-diag=1` overlay for on-device detection debugging and an auto-fullscreen step on first toggle.
+- **Subagent visibility.** Sub-sessions spawned via Claude Code's `Agent` tool are now discovered under `<session>/subagents/` and surfaced as a Task → Xylo session → CC session → Sub-session hierarchy in the UI; receiver-side filter on the Agents page hides synthetic subagent rows from the main list while preserving the parent linkage in chat.
+- **Lifetime cost tracking** for xylo-agents. Per-agent cumulative spend, deduped by message id (so resumes don't double-count), with corrected Opus prices and 5m / 1h cache-read split.
+- **Task graph visualization** on the project dashboard, with task chips on the graph tab.
+- **Bookmarks (continued from 0.9.x).** Project rename data-migration chain now includes `bookmarked_messages` (FK deferred for safe rename).
+- **Frame-by-frame DOM mutation logger** (`frameLogger.js`) for diagnosing UI flicker.
+
+### Changed
+
+- **Chat-page open is faster.** Parallel fetches, hover prefetch, idle-prefetch of heavy lazy chunks (chat / project / task / new-task), `briefCache` so detail pages paint a real header instead of a centered spinner. Route-aware skeletons replace top-level "Loading…" spinners on main tabs. Main tabs stay mounted across navigation (visibility instead of `display:none`).
+- **AgentsContext / context-provider refactor.** Folders, inbox-tasks, agents, and health-status polling lifted into shared providers; AgentsPage / ProjectDetailPage / ProjectsPage read from context instead of duplicating fetches. Agents-page tasks fetch limit raised from 100 to the backend max (1000).
+- **Inbox card UX overhaul.** Title becomes inline-block `contentEditable` for native cursor placement; click on empty title-row / timestamp / gap / any empty area collapses the expanded card; iOS word-snap caret placement overridden; transitions tightened to avoid jitter.
+- **MCP enforcement.** `task_create` / `task_update` now require `model` and `effort` tags.
+- **WebSocket realtime.** `emit_agent_update` short-circuits for synthetic subagents; `agent_update` re-emitted on insights apply / discard / generate-done so other clients flip the pill without a refetch; `new_message` emit centralized in `flush_agent`.
+- **ESC endpoint.** Latency cut from ~1.4s to ~570ms; double-tap Esc + safety Esc replaces `C-l`; 100ms buffer before status flips to IDLE and dispatch fires.
+- **Skeletons** leave the middle blank while keeping header + composer chrome, so the chat shell paints instantly.
+- **Token-counts popover** notes that values come directly from the CC session JSONL, and labels Xylo vs. CC sessions explicitly.
+
+### Fixed
+
+- `stop_agent` `NameError` on the retry path.
+- Project rename: `bookmarked_messages` rows were not being migrated.
+- Lifetime cost double-counting on resumed agents (now deduped by message id).
+- Various e-ink-mode contrast and badge-rendering edge cases (saturated bg → light text/SVG, status dots inside saturated pills, popover/toast borders, inline code styling).
+- `frameLogger.js`: bumped class-attr truncation 60 → 200 chars so longer Tailwind utility chains aren't cut off in mutation logs.
+
 ## [0.9.3] - 2026-04-29
 
 ### Changed

@@ -59,7 +59,9 @@ Watch everything in real time, from desk or phone.
 
   ![CLI sync demo](docs/cli-sync.gif)
 - **Smart notifications**: Web Push, suppressed when you're already viewing the agent (WebSocket or tmux). Permission requests always cut through.
-- **System monitoring**: disk, memory, GPU, token usage.
+- **Context usage pill**: per-agent context-window meter on the chat header — live percentage with a tap-to-expand breakdown (system / tools / MCP / messages / cache split, free vs. used). Inline suggestion when usage gets high. Counts come straight from the Claude Code session JSONL, not estimated.
+- **System monitoring**: disk, memory, GPU, token usage. Per-agent **lifetime cost** (cumulative spend across resumes, deduped by message id; Opus / Sonnet / Haiku priced separately, with 5m/1h cache split).
+- **E-ink display mode**: a Settings → Display toggle (and auto-detect for BOOX / Onyx / Kindle / Bigme / Hisense / Meebook / iReader user agents) that flattens glass effects, collapses colored badges to grayscale, and switches saturated bubbles to outlined style for readable contrast on e-paper screens.
 
 ### 4. Review
 
@@ -138,10 +140,10 @@ Nothing you run through Xylocopa is ephemeral. Every layer is designed to surviv
 |---|---|
 | **Smart Notifications** | Hook-based notification system with dual-channel in-use detection, automatically notifies when you're away and stays quiet when you're present. Web Push (VAPID). Per-agent mute, global toggles. |
 | **Task Management** | Inbox with drag-to-reorder. Voice input. Lightning capture. Draft persistence. Per-project organization. Retry with auto-summarization. |
-| **Agent Control** | Start, stop, **one-click resume** of STOPPED/ERROR agents (re-sync to existing tmux or relaunch via `claude --resume`). Per-agent model selection (Opus/Sonnet/Haiku). Configurable timeouts and permission modes. AI batch dispatch. RAG-powered context from past sessions. Cross-session reference via MCP, agents read each other's curated display files (~54× fewer tokens than raw JSONL), keeping cross-references fast and context-window-friendly. |
+| **Agent Control** | Start, stop, **one-click resume** of STOPPED/ERROR agents (re-sync to existing tmux or relaunch via `claude --resume`). Per-agent model selection (Opus/Sonnet/Haiku). Configurable timeouts and permission modes. AI batch dispatch. RAG-powered context from past sessions. Cross-session reference via MCP, agents read each other's curated display files (~54× fewer tokens than raw JSONL), keeping cross-references fast and context-window-friendly. **Context usage pill** with breakdown (system/tools/MCP/messages/cache) read from session JSONL. Per-agent **lifetime cost** tracking. **Subagent visibility**: `Agent`-tool sub-sessions discovered under `<session>/subagents/` and surfaced in a Task → Xylo → CC → Sub-session hierarchy. **System / meta-agents** (Task-AI, merge, etc.) hosted on a synthetic `.xylo-internal` placeholder, no longer required to be bound to a real project. |
 | **Chat Interface** | Rich markdown rendering (code blocks, tables, images). Inline media preview. Plan mode with approve/reject. Interactive tool confirmation cards. |
 | **Monitoring** | Split screen (up to 4 panes). Real-time WebSocket streaming. System monitor (disk, memory, GPU, tokens). Weekly progress stats. |
-| **Mobile PWA** | Add to Home Screen on iOS/Android. Full functionality, voice input, push notifications, task management. |
+| **Mobile PWA** | Add to Home Screen on iOS/Android. Full functionality, voice input, push notifications, task management. **E-ink display mode** (manual toggle in Settings → Display, plus auto-detect for BOOX / Onyx / Kindle / Bigme / Hisense / Meebook / iReader user agents) for high-contrast rendering on e-paper readers. |
 | **CLI Session Sync** | Dual-directional: CLI sessions in the web app, web app sessions resumable from CLI. |
 | **Git Integration** | Commit history, diffs, branch status per project. Agents work in isolated worktrees. One-click cleanup and push. |
 | **Session History** | Every conversation persisted and searchable. Star sessions. Resume any agent anytime. Full-text search. |
