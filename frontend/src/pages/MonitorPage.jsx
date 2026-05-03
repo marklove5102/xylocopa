@@ -733,8 +733,11 @@ export default function MonitorPage({ theme, onToggleTheme }) {
               <p className="text-xs text-dim mt-1 leading-relaxed">
                 Optimized for low-refresh-rate grayscale displays (Bigme, BOOX,
                 Kindle, reMarkable). Disables blur, shadows, animations and
-                gradients; uses a layered grayscale palette and slightly heavier
-                font weight to keep strokes crisp under partial refresh.
+                gradients; uses a layered grayscale palette and heavier font
+                weight to keep strokes crisp under partial refresh. Also
+                requests browser fullscreen to reclaim the address bar /
+                tab bar (Android Chrome has no built-in fullscreen toggle);
+                press Back or swipe down to exit fullscreen.
               </p>
             </div>
             <button
