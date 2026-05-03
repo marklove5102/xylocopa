@@ -155,6 +155,119 @@ def _generate_retry_summary_background(*args, **kwargs):
 # Hooks config helpers (called from lifespan too)
 # ---------------------------------------------------------------------------
 
+# Bundled fallback — identical structure to .xylo-internal/templates/agent-hooks.json
+# with {{BASE_URL}} and {{HOOK_SCRIPT}} as substitution placeholders.
+_DEFAULT_AGENT_HOOKS_JSON = """\
+{
+  "PreToolUse": [
+    {
+      "matcher": "Bash|Write|Edit",
+      "hooks": [{"type": "command", "command": "{{HOOK_SCRIPT}}"}]
+    },
+    {
+      "hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                 "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                 "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]
+    },
+    {
+      "hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-permission",
+                 "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                 "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
+                 "timeout": 86400}]
+    }
+  ],
+  "PostToolUse": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "PostToolUseFailure": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "SubagentStart": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "SubagentStop": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "Notification": [
+    {"matcher": "permission_prompt",
+     "hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "PreCompact": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-tool-activity",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "PostCompact": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-post-compact",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "PermissionRequest": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-permission-request",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
+                "timeout": 86400}]}
+  ],
+  "Stop": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-stop",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "SessionEnd": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-session-end",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ],
+  "UserPromptSubmit": [
+    {"hooks": [{"type": "http", "url": "{{BASE_URL}}/agent-user-prompt",
+                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
+                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"]}]}
+  ]
+}
+"""
+
+
+def _load_agent_hooks_template(base_url: str, hook_script: str) -> dict:
+    """Load the agent-hooks template from .xylo-internal/templates/agent-hooks.json,
+    substitute {{BASE_URL}} and {{HOOK_SCRIPT}} placeholders, and return the dict.
+
+    Falls back to _DEFAULT_AGENT_HOOKS_JSON if the file is missing or corrupt,
+    and self-heals by writing the bundled default to disk so subsequent reads
+    succeed without a fallback.
+    """
+    from config import PROJECTS_DIR
+    template_path = os.path.join(
+        PROJECTS_DIR, ".xylo-internal", "templates", "agent-hooks.json",
+    )
+    raw: str | None = None
+    try:
+        with open(template_path) as f:
+            raw = f.read()
+        json.loads(raw)  # validate before substitution
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        logger.warning("agent-hooks template unavailable (%s), using built-in default", exc)
+        raw = _DEFAULT_AGENT_HOOKS_JSON
+        try:
+            os.makedirs(os.path.dirname(template_path), exist_ok=True)
+            with open(template_path, "w") as f:
+                f.write(raw)
+            logger.info("agent-hooks template written to %s", template_path)
+        except OSError as write_exc:
+            logger.warning("Could not write agent-hooks template: %s", write_exc)
+    substituted = raw.replace("{{BASE_URL}}", base_url).replace("{{HOOK_SCRIPT}}", hook_script)
+    return json.loads(substituted)
+
+
 def _write_agent_hooks_config(project_path: str):
     """Write project-level hooks (PreToolUse safety + activity, PostToolUse, Stop)
     to settings.local.json.
@@ -169,108 +282,7 @@ def _write_agent_hooks_config(project_path: str):
         "..", "hooks", "pretooluse-safety.py",
     )
 
-    _tool_activity_hook = {
-        "type": "http",
-        "url": f"{base_url}/agent-tool-activity",
-        "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-        "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-    }
-
-    # Permission gate hook — separate URL so Claude Code doesn't dedup
-    # with the activity hook.  Large timeout (24h) so it can block
-    # indefinitely until the user responds from the web UI.
-    _permission_hook = {
-        "type": "http",
-        "url": f"{base_url}/agent-permission",
-        "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-        "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-        "timeout": 86400,
-    }
-
-    # PermissionRequest hook — auto-allow native CC permission prompts
-    # (supervised agents already went through our PreToolUse gate)
-    _permission_request_hook = {
-        "type": "http",
-        "url": f"{base_url}/agent-permission-request",
-        "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-        "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-        "timeout": 86400,
-    }
-
-    desired_hooks = {
-        "PreToolUse": [
-            # Safety guardrails (Bash/Write/Edit only)
-            {
-                "matcher": "Bash|Write|Edit",
-                "hooks": [{
-                    "type": "command",
-                    "command": hook_script,
-                }],
-            },
-            # Tool activity broadcast (all tools)
-            {
-                "hooks": [_tool_activity_hook],
-            },
-            # Permission gate for supervised agents (all tools)
-            {
-                "hooks": [_permission_hook],
-            },
-        ],
-        "PostToolUse": [{
-            "hooks": [_tool_activity_hook],
-        }],
-        "PostToolUseFailure": [{
-            "hooks": [_tool_activity_hook],
-        }],
-        "SubagentStart": [{
-            "hooks": [_tool_activity_hook],
-        }],
-        "SubagentStop": [{
-            "hooks": [_tool_activity_hook],
-        }],
-        "Notification": [{
-            "matcher": "permission_prompt",
-            "hooks": [_tool_activity_hook],
-        }],
-        "PreCompact": [{
-            "hooks": [_tool_activity_hook],
-        }],
-        "PostCompact": [{
-            "hooks": [{
-                "type": "http",
-                "url": f"{base_url}/agent-post-compact",
-                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-            }],
-        }],
-        "PermissionRequest": [{
-            "hooks": [_permission_request_hook],
-        }],
-        "Stop": [{
-            "hooks": [{
-                "type": "http",
-                "url": f"{base_url}/agent-stop",
-                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-            }],
-        }],
-        "SessionEnd": [{
-            "hooks": [{
-                "type": "http",
-                "url": f"{base_url}/agent-session-end",
-                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-            }],
-        }],
-        "UserPromptSubmit": [{
-            "hooks": [{
-                "type": "http",
-                "url": f"{base_url}/agent-user-prompt",
-                "headers": {"X-Agent-Id": "$XY_AGENT_ID"},
-                "allowedEnvVars": ["XY_AGENT_ID", "AHIVE_AGENT_ID"],
-            }],
-        }],
-    }
+    desired_hooks = _load_agent_hooks_template(base_url, hook_script)
 
     settings_local_dir = os.path.join(project_path, ".claude")
     settings_local_path = os.path.join(settings_local_dir, "settings.local.json")
