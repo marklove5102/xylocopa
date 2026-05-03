@@ -2735,7 +2735,15 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       // Use briefCache as the agent stand-in if available, so the conditional
       // UI gates (status pill, ProgressSuggestionsCard, InsightsHistoryCard)
       // can render correctly without waiting on fetchAgent.
-      if (cachedBrief) setAgent(cachedBrief);
+      if (cachedBrief) {
+        setAgent(cachedBrief);
+        // briefCache already has task_id — fetch the task in parallel with
+        // the background fetchAgent so the Task chip lands at the same time
+        // as messages, not a frame later.
+        if (cachedBrief.task_id && !taskData) {
+          fetchTaskV2(cachedBrief.task_id).then(t => setTaskData(t)).catch(() => {});
+        }
+      }
       setCriticalLoadDone(true);
 
       // Restore active tool state — check the last tool_activity in the
@@ -2752,14 +2760,30 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
 
       // Background-refresh the agent record. If briefCache was cold, this is
       // also our authoritative load and gates the not-found early-return.
-      const agentData = await fetchAgent(id);
+      // Wrap separately so a transient fetchAgent failure doesn't show a
+      // "Failed to load" toast when display data already rendered fine.
+      let agentData = null;
+      try {
+        agentData = await fetchAgent(id);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (!cachedBrief) throw err; // cold cache → propagate to outer catch
+        console.error("AgentChatPage: background fetchAgent failed (using cached brief)", err);
+      }
       if (controller.signal.aborted) return;
       if (!agentData || !agentData.id) {
         // Only error out if we had nothing to render with in the first place.
         if (!cachedBrief) return;
       } else {
         setAgent(agentData);
-        if (agentData.task_id && !taskData) {
+        // Skip if we already kicked this off from cachedBrief above. Only
+        // refetch when the agent is reporting a different task_id (rare —
+        // e.g. agent reassigned).
+        if (
+          agentData.task_id &&
+          !taskData &&
+          agentData.task_id !== cachedBrief?.task_id
+        ) {
           fetchTaskV2(agentData.task_id).then(t => setTaskData(t)).catch(() => {});
         }
         if (!initialLoadDone.current && agentData.muted != null) {

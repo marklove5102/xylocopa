@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Hourglass } from "lucide-react";
 import { relativeTime } from "../lib/formatters";
@@ -66,6 +66,25 @@ const AgentRow = memo(function AgentRow({
     }
   };
 
+  // Touch prefetch: schedule on touchstart, cancel on touchmove. This
+  // avoids firing a wasted fetch whenever the user touches a row just to
+  // begin scrolling past it. Mouse hover doesn't need this — mousemove
+  // doesn't carry the same scroll-intent ambiguity.
+  const touchPrefetchRef = useRef(null);
+  const onTouchStartPrefetch = () => {
+    if (touchPrefetchRef.current) clearTimeout(touchPrefetchRef.current);
+    touchPrefetchRef.current = setTimeout(() => {
+      prefetchChatData(agent.id);
+      touchPrefetchRef.current = null;
+    }, 100);
+  };
+  const onTouchMovePrefetch = () => {
+    if (touchPrefetchRef.current) {
+      clearTimeout(touchPrefetchRef.current);
+      touchPrefetchRef.current = null;
+    }
+  };
+
   // Long-press → enter multi-select; ignore presses on inner interactive
   // elements (project tag, etc) so they keep their own click handlers.
   const isInner = (e) => !!e?.target?.closest?.("[data-no-longpress]");
@@ -85,7 +104,9 @@ const AgentRow = memo(function AgentRow({
       data-agent-id={agent.id}
       data-unread={agent.unread_count > 0 ? "1" : undefined}
       onMouseEnter={() => prefetchChatData(agent.id)}
-      onTouchStart={() => prefetchChatData(agent.id)}
+      onTouchStart={onTouchStartPrefetch}
+      onTouchMove={onTouchMovePrefetch}
+      onTouchCancel={onTouchMovePrefetch}
       {...longPressHandlers}
       style={{ WebkitTapHighlightColor: "transparent" }}
       className={`w-full text-left rounded-2xl bg-surface shadow-card overflow-hidden transform-gpu transition-[transform,box-shadow,ring-color,opacity,background-color,filter] duration-400 ease-[cubic-bezier(0.22,1.15,0.36,1)] active:bg-input focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 hover:ring-1 hover:ring-ring-hover ${
