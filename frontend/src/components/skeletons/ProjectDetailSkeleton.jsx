@@ -1,18 +1,5 @@
-// Suspense fallback for ProjectDetailPage. Header (emoji + name +
-// stats ring) + filter tabs + agent list placeholders.
-
-function AgentRowSkel() {
-  return (
-    <div className="rounded-2xl bg-surface px-5 py-[18px] flex items-start gap-3 animate-pulse">
-      <div className="shrink-0 w-2.5 h-2.5 rounded-full bg-input self-center" />
-      <div className="flex-1 space-y-2">
-        <div className="h-4 w-1/2 rounded bg-input" />
-        <div className="h-3 w-3/4 rounded bg-input" />
-      </div>
-      <div className="w-4 h-4 rounded bg-input self-center" />
-    </div>
-  );
-}
+// Suspense fallback for ProjectDetailPage. Header + filter tabs only —
+// agent list area left blank so users don't see ghost-rows flash in.
 
 export default function ProjectDetailSkeleton() {
   return (
@@ -29,13 +16,8 @@ export default function ProjectDetailSkeleton() {
           <div key={i} className="h-9 rounded-full bg-input animate-pulse" style={{ width: w }} />
         ))}
       </div>
-      {/* Body */}
-      <div className="flex-1 overflow-hidden px-4 pt-3 pb-24 space-y-3">
-        <AgentRowSkel />
-        <AgentRowSkel />
-        <AgentRowSkel />
-        <AgentRowSkel />
-      </div>
+      {/* Empty body — no placeholder agent rows */}
+      <div className="flex-1" />
     </div>
   );
 }

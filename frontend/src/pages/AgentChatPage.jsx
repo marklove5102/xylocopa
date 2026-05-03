@@ -4324,23 +4324,10 @@ export default function AgentChatPage({ theme, onToggleTheme, agentId: propAgent
       >
         <div className="mt-auto" />
         {loading && messages.length === 0 ? (
-          // Header rendered already (agent seeded from brief cache); just
-          // fill the scroll area with placeholder bubbles until /display/
-          // sent + /display/pre-sent resolve. Mirrors the bubble layout
-          // in ChatSkeleton so the transition is layout-stable.
-          <div className="space-y-3">
-            {[
-              { side: "left", w: "70%" },
-              { side: "right", w: "55%" },
-              { side: "left", w: "80%" },
-              { side: "right", w: "40%" },
-              { side: "left", w: "65%" },
-            ].map((b, i) => (
-              <div key={i} className={b.side === "right" ? "ml-auto" : ""} style={{ maxWidth: "85%", width: b.w }}>
-                <div className="rounded-2xl bg-surface animate-pulse" style={{ height: 56 }} />
-              </div>
-            ))}
-          </div>
+          // Header rendered already (agent seeded from brief cache); leave
+          // the scroll area blank until /display/sent + /display/pre-sent
+          // resolve — no placeholder bubbles.
+          null
         ) : messages.length === 0 && agent.status === "STARTING" ? (
           <InitializingIndicator />
         ) : messages.length === 0 && agent.status === "IDLE" ? (

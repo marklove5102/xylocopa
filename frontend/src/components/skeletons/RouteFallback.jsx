@@ -25,11 +25,7 @@ export default function RouteFallback() {
       <div className="shrink-0 bg-page border-b border-divider px-4 py-3 flex items-center">
         <div className="h-5 w-24 rounded bg-input animate-pulse" />
       </div>
-      <div className="flex-1 overflow-hidden p-4 space-y-3">
-        <div className="h-16 rounded-2xl bg-surface animate-pulse" />
-        <div className="h-16 rounded-2xl bg-surface animate-pulse" />
-        <div className="h-16 rounded-2xl bg-surface animate-pulse" />
-      </div>
+      <div className="flex-1" />
     </div>
   );
 }

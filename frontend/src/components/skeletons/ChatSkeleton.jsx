@@ -1,17 +1,7 @@
 // Pure-CSS placeholder for AgentChatPage's Suspense fallback.
-// Mirrors the broad shape (header bar, message stream, composer) so the
-// transition from skeleton → real chat is layout-stable. No API calls,
-// no markdown, no lazy imports — paints in the same frame as the click.
-
-function Bubble({ side, width }) {
-  const align = side === "right" ? "ml-auto" : "";
-  return (
-    <div className={`${align} mb-3`} style={{ maxWidth: "85%", width }}>
-      <div className="rounded-2xl bg-surface animate-pulse"
-        style={{ height: 56 }} />
-    </div>
-  );
-}
+// Header + composer placeholders only — middle scroll area is left
+// blank (bg-page) so users don't see ghost-bubbles flash in. Layout
+// remains stable because the middle is a flex-1 spacer.
 
 export default function ChatSkeleton() {
   return (
@@ -23,14 +13,8 @@ export default function ChatSkeleton() {
         <div className="ml-auto h-5 w-12 rounded-full bg-input animate-pulse" />
       </div>
 
-      {/* Scrollable message area with placeholder bubbles */}
-      <div className="flex-1 overflow-hidden px-4 pt-4 pb-4">
-        <Bubble side="left" width="70%" />
-        <Bubble side="right" width="55%" />
-        <Bubble side="left" width="80%" />
-        <Bubble side="right" width="40%" />
-        <Bubble side="left" width="65%" />
-      </div>
+      {/* Empty middle — no placeholder bubbles */}
+      <div className="flex-1" />
 
       {/* Composer placeholder */}
       <div className="shrink-0 px-4 pb-4">

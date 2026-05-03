@@ -1,4 +1,5 @@
-// Suspense fallback for TaskDetailPage. Title bar + meta chips + body.
+// Suspense fallback for TaskDetailPage. Header + meta chips only —
+// body area left blank so users don't see ghost-lines flash in.
 
 export default function TaskDetailSkeleton() {
   return (
@@ -14,15 +15,8 @@ export default function TaskDetailSkeleton() {
         <div className="h-6 w-20 rounded-full bg-input animate-pulse" />
         <div className="h-6 w-14 rounded-full bg-input animate-pulse" />
       </div>
-      {/* Body content */}
-      <div className="flex-1 overflow-hidden px-4 pt-2 pb-24 space-y-3">
-        <div className="h-4 rounded bg-input animate-pulse" />
-        <div className="h-4 w-5/6 rounded bg-input animate-pulse" />
-        <div className="h-4 w-2/3 rounded bg-input animate-pulse" />
-        <div className="h-32 rounded-xl bg-surface animate-pulse" />
-        <div className="h-4 w-3/4 rounded bg-input animate-pulse" />
-        <div className="h-4 w-1/2 rounded bg-input animate-pulse" />
-      </div>
+      {/* Empty body — no placeholder lines */}
+      <div className="flex-1" />
     </div>
   );
 }
