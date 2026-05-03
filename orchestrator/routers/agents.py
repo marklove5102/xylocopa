@@ -246,6 +246,16 @@ def _load_agent_hooks_template(base_url: str, hook_script: str) -> dict:
     succeed without a fallback.
     """
     from config import PROJECTS_DIR
+    # Hard-fail if PROJECTS_DIR is unset: os.path.join("", ...) returns a
+    # relative path, and the loader's self-heal would silently write the
+    # bundled template to whatever the process cwd happens to be (worktree
+    # subdir, /tmp, etc.) instead of the canonical
+    # `<PROJECTS_DIR>/.xylo-internal/templates/`.
+    assert PROJECTS_DIR, (
+        "PROJECTS_DIR is empty — cannot resolve .xylo-internal templates dir. "
+        "Ensure HOST_PROJECTS_DIR or PROJECTS_DIR is exported in the orchestrator "
+        "process env (run.sh handles this; manual python invocations need it set)."
+    )
     template_path = os.path.join(
         PROJECTS_DIR, ".xylo-internal", "templates", "agent-hooks.json",
     )

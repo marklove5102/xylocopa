@@ -91,8 +91,16 @@ def ensure_internal_project(db: Session) -> Project:
     """
     from config import PROJECTS_DIR, _PROJECT_ROOT
 
-    projects_dir = PROJECTS_DIR or "/projects"
-    internal_path = os.path.join(projects_dir, INTERNAL_PROJECT_NAME)
+    # Hard-fail if PROJECTS_DIR is unset: a relative or `/projects` fallback
+    # would either silently write the placeholder somewhere unexpected or
+    # fail with a confusing permission error. Loud failure here surfaces the
+    # real misconfig (HOST_PROJECTS_DIR not exported) before it propagates.
+    assert PROJECTS_DIR, (
+        "PROJECTS_DIR is empty — cannot bootstrap .xylo-internal placeholder. "
+        "Ensure HOST_PROJECTS_DIR or PROJECTS_DIR is exported in the orchestrator "
+        "process env (run.sh handles this; manual python invocations need it set)."
+    )
+    internal_path = os.path.join(PROJECTS_DIR, INTERNAL_PROJECT_NAME)
 
     # 1. Directory
     os.makedirs(internal_path, exist_ok=True)

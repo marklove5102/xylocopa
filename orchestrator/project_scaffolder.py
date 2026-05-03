@@ -88,8 +88,17 @@ def _load_template(name: str, default: str) -> str:
     from config import PROJECTS_DIR
     from routers.projects import INTERNAL_PROJECT_NAME
 
-    projects_dir = PROJECTS_DIR or "/projects"
-    tmpl_path = os.path.join(projects_dir, INTERNAL_PROJECT_NAME, "templates", name)
+    # Hard-fail if PROJECTS_DIR is unset: silently degrading to a relative
+    # path would write the self-healed template to whatever the process
+    # cwd happens to be (worktree subdir, /tmp, etc.) — not the canonical
+    # `<PROJECTS_DIR>/.xylo-internal/templates/`. Use the loud error
+    # instead of the misleading "/projects" fallback that used to live here.
+    assert PROJECTS_DIR, (
+        "PROJECTS_DIR is empty — cannot resolve .xylo-internal templates dir. "
+        "Ensure HOST_PROJECTS_DIR or PROJECTS_DIR is exported in the orchestrator "
+        "process env (run.sh handles this; manual python invocations need it set)."
+    )
+    tmpl_path = os.path.join(PROJECTS_DIR, INTERNAL_PROJECT_NAME, "templates", name)
 
     try:
         with open(tmpl_path, "r", encoding="utf-8") as f:
