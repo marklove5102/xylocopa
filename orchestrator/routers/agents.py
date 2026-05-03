@@ -3562,12 +3562,17 @@ async def send_escape_to_agent(agent_id: str, request: Request, db: Session = De
     # disambiguation delay.  Ctrl+C always interrupts generation reliably.
     if not send_tmux_keys(agent.tmux_pane, ["C-c"]):
         raise HTTPException(status_code=500, detail="Failed to send interrupt to tmux")
-    # CC v2.1.83 restores the interrupted prompt text to its input bar after
-    # C-c. C-l clears the input buffer and forces a redraw — works for
-    # single-line, multi-line, and any cursor position; End+C-u only kills
-    # the current line so multi-line input leaves residual on lines above.
+    # C-c interrupt may restore the prompt text to the input bar (CC's
+    # behavior varies by version and by whether the prompt was typed vs
+    # pasted). Clear the input via CC's official "double-tap Esc" shortcut
+    # (per /help in v2.1.126); the trailing single Esc backs out of the
+    # Rewind menu in case the input was already empty (no-op otherwise).
+    # C-l worked through v2.1.123 but became a no-op in post-generation
+    # state in v2.1.126, leaving residual that corrupted the next message.
     time.sleep(0.3)  # let C-c finish + prompt restore settle
-    send_tmux_keys(agent.tmux_pane, ["C-l"])
+    send_tmux_keys(agent.tmux_pane, ["Escape", "Escape"])
+    time.sleep(0.15)  # let Rewind menu render or input clear settle
+    send_tmux_keys(agent.tmux_pane, ["Escape"])
 
     # Escape is a privileged terminal signal: a user-initiated interrupt
     # is itself authoritative, on par with stop_hook/interrupt/rate_limit.
